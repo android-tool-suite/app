@@ -1,0 +1,11 @@
+/.gradle/
+/build/
+/app/build/
+/local.properties
+/screen.png
+*.iml
+.idea/
+.vscode/
+.agents/
+.codex/
+.github/modernize/
