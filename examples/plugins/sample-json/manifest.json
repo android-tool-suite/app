@@ -1,0 +1,15 @@
+{
+  "format": "ats-plugin",
+  "formatVersion": "1",
+  "plugin": {
+    "id": "sample_notes",
+    "title": "示例插件",
+    "description": "这是一个用于测试导入、删除和权限管理流程的外部插件清单。",
+    "version": "1.0",
+    "author": "Local"
+  },
+  "permissions": [
+    "file.picker",
+    "package.query"
+  ]
+}

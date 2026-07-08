@@ -1,0 +1,15 @@
+{
+  "format": "ats-plugin",
+  "formatVersion": "1",
+  "plugin": {
+    "id": "sample_package",
+    "title": "示例包插件",
+    "description": "这是一个 .atsplugin 打包示例。",
+    "version": "1.0",
+    "author": "Local"
+  },
+  "permissions": [
+    "file.picker",
+    "package.query"
+  ]
+}

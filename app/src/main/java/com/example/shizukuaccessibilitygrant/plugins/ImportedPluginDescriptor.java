@@ -1,0 +1,140 @@
+package com.example.shizukuaccessibilitygrant.plugins;
+
+import org.json.JSONException;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
+public final class ImportedPluginDescriptor {
+    public final String id;
+    public final String title;
+    public final String description;
+    public final String version;
+    public final String author;
+    public final String formatVersion;
+    public final Set<String> requestedPermissions;
+    public final Set<String> grantedPermissions;
+
+    public ImportedPluginDescriptor(
+            String id,
+            String title,
+            String description,
+            String version,
+            String author,
+            String formatVersion,
+            Set<String> requestedPermissions,
+            Set<String> grantedPermissions
+    ) {
+        this.id = id;
+        this.title = title;
+        this.description = description;
+        this.version = version;
+        this.author = author;
+        this.formatVersion = formatVersion;
+        this.requestedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(requestedPermissions));
+        this.grantedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(grantedPermissions));
+    }
+
+    public static ImportedPluginDescriptor fromJson(String rawJson) throws JSONException {
+        JSONObject root = new JSONObject(rawJson);
+        JSONObject json = root.optJSONObject("plugin");
+        if (json == null) {
+            json = root;
+        }
+
+        String id = clean(json.optString("id"));
+        String title = clean(json.optString("title"));
+        if (id.isEmpty()) {
+            throw new JSONException("缺少插件 id");
+        }
+        if (title.isEmpty()) {
+            throw new JSONException("缺少插件 title");
+        }
+        return new ImportedPluginDescriptor(
+                id,
+                title,
+                clean(json.optString("description", "外部导入插件")),
+                clean(json.optString("version", "1.0")),
+                clean(json.optString("author", "未知作者")),
+                clean(root.optString("formatVersion", "1")),
+                readStringSet(firstArray(root, json, "permissions", "requestedPermissions")),
+                readStringSet(json.optJSONArray("grantedPermissions"))
+        );
+    }
+
+    public String toJson() throws JSONException {
+        JSONObject root = new JSONObject();
+        root.put("format", "ats-plugin");
+        root.put("formatVersion", formatVersion.isEmpty() ? "1" : formatVersion);
+
+        JSONObject plugin = new JSONObject();
+        plugin.put("id", id);
+        plugin.put("title", title);
+        plugin.put("description", description);
+        plugin.put("version", version);
+        plugin.put("author", author);
+        plugin.put("grantedPermissions", toArray(grantedPermissions));
+
+        root.put("plugin", plugin);
+        root.put("permissions", toArray(requestedPermissions));
+        return root.toString();
+    }
+
+    public ImportedPluginDescriptor withGrantedPermissions(Set<String> permissions) {
+        return new ImportedPluginDescriptor(
+                id,
+                title,
+                description,
+                version,
+                author,
+                formatVersion,
+                requestedPermissions,
+                permissions
+        );
+    }
+
+    private static JSONArray firstArray(JSONObject root, JSONObject plugin, String first, String second) {
+        JSONArray array = root.optJSONArray(first);
+        if (array != null) {
+            return array;
+        }
+        array = root.optJSONArray(second);
+        if (array != null) {
+            return array;
+        }
+        array = plugin.optJSONArray(first);
+        if (array != null) {
+            return array;
+        }
+        return plugin.optJSONArray(second);
+    }
+
+    private static Set<String> readStringSet(JSONArray array) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (array == null) {
+            return values;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            String value = clean(array.optString(i));
+            if (!value.isEmpty()) {
+                values.add(value);
+            }
+        }
+        return values;
+    }
+
+    private static JSONArray toArray(Set<String> values) {
+        JSONArray array = new JSONArray();
+        for (String value : values) {
+            array.put(value);
+        }
+        return array;
+    }
+
+    private static String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+}
