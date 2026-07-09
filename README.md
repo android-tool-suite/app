@@ -8,7 +8,7 @@
 2. 用 Android Studio 打开本项目。
 3. 构建并安装 `app` 模块。
 4. 打开 App，授予 Shizuku 权限。
-5. 在顶部插件栏选择工具。
+5. 在底部导航进入“主页”“插件”或“管理”。
 6. “无障碍授权”是外部插件，首次启动会作为外部插件登记，可在“插件管理”里删除。
 7. 使用前，在“插件管理”里给“无障碍授权”授予 `shizuku`、`shell.exec`、`accessibility.settings`、`package.query` 权限。
 8. 授权后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
@@ -20,11 +20,16 @@
 插件实现 `ToolPlugin` 接口。宿主内置插件在 `ToolRegistry.createRequiredBuiltInPlugins()` 中注册；外部插件通过 `.atsplugin`/JSON 清单登记，并由 `ExternalToolFactory` 映射到可执行插件实现。
 
 ```text
-app/src/main/java/com/example/shizukuaccessibilitygrant/plugins/
-  ToolPlugin.java
-  PluginHost.java
-  ToolRegistry.java
-  AccessibilityGrantPlugin.java
+app/src/main/java/com/example/shizukuaccessibilitygrant/
+  host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
+  plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、权限目录
+  plugin/model/         插件清单和主页小部件描述模型
+  plugin/store/         插件状态、外部插件清单存储
+  plugin/runtime/       插件注册器和外部插件工厂
+  plugins/              具体插件实现
+    accessibility/      无障碍授权外部插件实现
+    builtin/shizuku/    Shizuku 授权内置插件
+    external/           未知外部插件的清单展示页
 ```
 
 需要 Shizuku shell 能力的外部插件必须先声明并获授 `shizuku` 与 `shell.exec` 权限，再通过 `PluginHost.runShellCommand(...)` 复用宿主已经绑定好的 Shizuku UserService。

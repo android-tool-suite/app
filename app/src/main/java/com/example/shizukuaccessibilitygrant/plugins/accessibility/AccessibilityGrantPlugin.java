@@ -1,5 +1,10 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugins.accessibility;
 
+import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget;
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog;
+import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
+import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
 import android.Manifest;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;

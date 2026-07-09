@@ -1,5 +1,7 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugins.accessibility;
 
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog;
+import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 

@@ -1,5 +1,7 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugin.runtime;
 
+import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
+import com.example.shizukuaccessibilitygrant.plugins.builtin.shizuku.ShizukuPlugin;
 import java.util.ArrayList;
 import java.util.List;
 

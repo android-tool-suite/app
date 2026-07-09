@@ -1,4 +1,4 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugin.api;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;

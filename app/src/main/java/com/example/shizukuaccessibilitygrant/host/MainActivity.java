@@ -1,5 +1,7 @@
-package com.example.shizukuaccessibilitygrant;
+package com.example.shizukuaccessibilitygrant.host;
 
+import com.example.shizukuaccessibilitygrant.BuildConfig;
+import com.example.shizukuaccessibilitygrant.IShellService;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -21,16 +23,16 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.example.shizukuaccessibilitygrant.plugins.BuiltInPluginStateStore;
-import com.example.shizukuaccessibilitygrant.plugins.ExternalPluginStore;
-import com.example.shizukuaccessibilitygrant.plugins.ExternalToolFactory;
-import com.example.shizukuaccessibilitygrant.plugins.HomeWidget;
-import com.example.shizukuaccessibilitygrant.plugins.ImportedPluginDescriptor;
-import com.example.shizukuaccessibilitygrant.plugins.PluginHost;
-import com.example.shizukuaccessibilitygrant.plugins.PluginManagerPlugin;
-import com.example.shizukuaccessibilitygrant.plugins.ShizukuPlugin;
-import com.example.shizukuaccessibilitygrant.plugins.ToolPlugin;
-import com.example.shizukuaccessibilitygrant.plugins.ToolRegistry;
+import com.example.shizukuaccessibilitygrant.plugin.store.BuiltInPluginStateStore;
+import com.example.shizukuaccessibilitygrant.plugin.store.ExternalPluginStore;
+import com.example.shizukuaccessibilitygrant.plugin.runtime.ExternalToolFactory;
+import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget;
+import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
+import com.example.shizukuaccessibilitygrant.host.management.PluginManagerPlugin;
+import com.example.shizukuaccessibilitygrant.plugins.builtin.shizuku.ShizukuPlugin;
+import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
+import com.example.shizukuaccessibilitygrant.plugin.runtime.ToolRegistry;
 import com.example.shizukuaccessibilitygrant.ui.UiKit;
 
 import org.json.JSONException;

@@ -1,5 +1,6 @@
-package com.example.shizukuaccessibilitygrant;
+package com.example.shizukuaccessibilitygrant.host;
 
+import com.example.shizukuaccessibilitygrant.IShellService;
 import android.content.Context;
 import android.os.RemoteException;
 

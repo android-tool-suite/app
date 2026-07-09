@@ -1,4 +1,4 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugin.model;
 
 import org.json.JSONException;
 import org.json.JSONArray;

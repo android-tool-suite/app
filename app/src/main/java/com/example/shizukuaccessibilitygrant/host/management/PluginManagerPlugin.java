@@ -1,5 +1,10 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.host.management;
 
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog;
+import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
+import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
+import com.example.shizukuaccessibilitygrant.plugin.store.ExternalPluginStore;
 import android.app.Activity;
 import android.graphics.Typeface;
 import android.view.Gravity;

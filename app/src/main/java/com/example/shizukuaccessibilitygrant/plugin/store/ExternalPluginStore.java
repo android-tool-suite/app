@@ -1,5 +1,7 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugin.store;
 
+import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
+import com.example.shizukuaccessibilitygrant.plugins.accessibility.AccessibilityGrantPluginDescriptor;
 import android.content.Context;
 import android.content.SharedPreferences;
 

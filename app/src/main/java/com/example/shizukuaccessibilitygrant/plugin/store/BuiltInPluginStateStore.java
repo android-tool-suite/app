@@ -1,4 +1,4 @@
-package com.example.shizukuaccessibilitygrant.plugins;
+package com.example.shizukuaccessibilitygrant.plugin.store;
 
 import android.content.Context;
 import android.content.SharedPreferences;
