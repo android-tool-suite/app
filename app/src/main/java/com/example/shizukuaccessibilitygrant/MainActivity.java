@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
@@ -14,18 +15,23 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.widget.Button;
-import android.widget.HorizontalScrollView;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import com.example.shizukuaccessibilitygrant.plugins.BuiltInPluginStateStore;
 import com.example.shizukuaccessibilitygrant.plugins.ExternalPluginStore;
 import com.example.shizukuaccessibilitygrant.plugins.ExternalToolFactory;
+import com.example.shizukuaccessibilitygrant.plugins.HomeWidget;
 import com.example.shizukuaccessibilitygrant.plugins.ImportedPluginDescriptor;
 import com.example.shizukuaccessibilitygrant.plugins.PluginHost;
-import com.example.shizukuaccessibilitygrant.plugins.ToolRegistry;
+import com.example.shizukuaccessibilitygrant.plugins.PluginManagerPlugin;
+import com.example.shizukuaccessibilitygrant.plugins.ShizukuPlugin;
 import com.example.shizukuaccessibilitygrant.plugins.ToolPlugin;
+import com.example.shizukuaccessibilitygrant.plugins.ToolRegistry;
+import com.example.shizukuaccessibilitygrant.ui.UiKit;
 
 import org.json.JSONException;
 
@@ -33,10 +39,15 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -45,17 +56,28 @@ import rikka.shizuku.Shizuku;
 public class MainActivity extends Activity implements PluginHost {
     private static final int REQUEST_SHIZUKU = 3001;
     private static final int REQUEST_IMPORT_PLUGIN = 4001;
+    private static final int REQUEST_EXPORT_PLUGIN = 4002;
+
+    private static final int SECTION_DASHBOARD = 0;
+    private static final int SECTION_PLUGINS = 1;
+    private static final int SECTION_MANAGER = 2;
+
+    private static final String PREFS_NAME = "main_ui";
+    private static final String PREF_HIDDEN_WIDGETS = "hidden_widgets";
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
-    private final List<Button> pluginButtons = new ArrayList<>();
+    private final List<Button> bottomButtons = new ArrayList<>();
+    private final PluginManagerPlugin pluginManagerPlugin = new PluginManagerPlugin();
 
-    private LinearLayout pluginBar;
-    private LinearLayout pluginContainer;
-    private TextView hostStatusView;
-    private TextView pluginCountView;
+    private LinearLayout contentRoot;
+    private LinearLayout bottomBar;
     private ToolPlugin selectedPlugin;
     private ExternalPluginStore externalPluginStore;
     private BuiltInPluginStateStore builtInPluginStateStore;
+    private SharedPreferences uiPreferences;
+    private String pendingExportPluginId;
+    private int currentSection = SECTION_DASHBOARD;
+
     private IShellService shellService;
     private Shizuku.UserServiceArgs shellServiceArgs;
     private boolean shellServiceBinding;
@@ -93,6 +115,7 @@ public class MainActivity extends Activity implements PluginHost {
         externalPluginStore = new ExternalPluginStore(this);
         seedBundledExternalPlugins();
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
+        uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadPlugins();
         setContentView(createContentView());
 
@@ -100,7 +123,7 @@ public class MainActivity extends Activity implements PluginHost {
         Shizuku.addBinderDeadListener(binderDeadListener);
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
 
-        selectPlugin(plugins.get(0));
+        showDashboard();
         notifyHostStateChanged();
     }
 
@@ -109,6 +132,7 @@ public class MainActivity extends Activity implements PluginHost {
         for (ToolPlugin plugin : plugins) {
             plugin.onDestroy();
         }
+        pluginManagerPlugin.onDestroy();
         Shizuku.removeBinderReceivedListener(binderReceivedListener);
         Shizuku.removeBinderDeadListener(binderDeadListener);
         Shizuku.removeRequestPermissionResultListener(permissionResultListener);
@@ -118,8 +142,9 @@ public class MainActivity extends Activity implements PluginHost {
 
     private View createContentView() {
         int horizontal = dp(16);
-        int topPadding = dp(18);
-        int background = 0xFFF8FAF9;
+        int topPadding = dp(10);
+        int bottomPadding = dp(10);
+        int background = UiKit.COLOR_BACKGROUND;
 
         Window window = getWindow();
         window.setStatusBarColor(background);
@@ -131,46 +156,323 @@ public class MainActivity extends Activity implements PluginHost {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(background);
-        root.setPadding(horizontal, topPadding, horizontal, dp(12));
+        root.setPadding(horizontal, topPadding, horizontal, bottomPadding);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(horizontal, topPadding + insets.getSystemWindowInsetTop(), horizontal, dp(12));
+            view.setPadding(horizontal, topPadding + insets.getSystemWindowInsetTop(), horizontal, bottomPadding + insets.getSystemWindowInsetBottom());
             return insets.consumeSystemWindowInsets();
         });
 
+        contentRoot = new LinearLayout(this);
+        contentRoot.setOrientation(LinearLayout.VERTICAL);
+        root.addView(contentRoot, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setGravity(Gravity.CENTER);
+        bottomBar.setPadding(dp(8), dp(8), dp(8), dp(8));
+        bottomBar.setBackground(UiKit.roundedStroke(0xF7FFFFFF, UiKit.COLOR_BORDER, 28, this));
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(70));
+        barParams.topMargin = dp(10);
+        root.addView(bottomBar, barParams);
+
+        addBottomButton("主页", SECTION_DASHBOARD);
+        addBottomButton("插件", SECTION_PLUGINS);
+        addBottomButton("管理", SECTION_MANAGER);
+        return root;
+    }
+
+    private void addBottomButton(String text, int section) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setOnClickListener(v -> {
+            if (section == SECTION_DASHBOARD) {
+                showDashboard();
+            } else if (section == SECTION_PLUGINS) {
+                showPluginList();
+            } else {
+                showPluginManager();
+            }
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
+        if (!bottomButtons.isEmpty()) {
+            params.leftMargin = dp(6);
+        }
+        bottomBar.addView(button, params);
+        bottomButtons.add(button);
+    }
+
+    private void showDashboard() {
+        currentSection = SECTION_DASHBOARD;
+        selectedPlugin = null;
+        contentRoot.removeAllViews();
+        contentRoot.addView(createDashboardView(), new LinearLayout.LayoutParams(-1, -1));
+        updateBottomButtons();
+    }
+
+    private View createDashboardView() {
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(0, dp(8), 0, dp(8));
+        scrollView.addView(root, new ScrollView.LayoutParams(-1, -2));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+
+        TextView date = new TextView(this);
+        date.setText(new SimpleDateFormat("yyyy年M月d日", Locale.CHINA).format(new Date()));
+        UiKit.styleCaption(date);
+        header.addView(date, new LinearLayout.LayoutParams(-1, -2));
+
         TextView title = new TextView(this);
-        title.setText("安卓工具合集");
-        title.setTextSize(26);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        title.setTextColor(0xFF10201D);
+        title.setText("工具台");
+        UiKit.styleTitle(title, 30);
+        header.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText(String.format(Locale.US, "%d 个插件 · %d 个主页小部件", plugins.size(), collectWidgets().size()));
+        UiKit.styleBody(subtitle);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subtitleParams.topMargin = dp(2);
+        header.addView(subtitle, subtitleParams);
+        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout quick = UiKit.card(this);
+        quick.setBackground(UiKit.roundedStroke(0xFFEAF6F4, 0xFFD2E8E4, 8, this));
+        LinearLayout.LayoutParams quickParams = new LinearLayout.LayoutParams(-1, -2);
+        quickParams.topMargin = dp(18);
+
+        TextView quickTitle = new TextView(this);
+        quickTitle.setText("运行概览");
+        UiKit.styleTitle(quickTitle, 18);
+        quick.addView(quickTitle, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView quickText = new TextView(this);
+        quickText.setText(buildDashboardSummary());
+        UiKit.styleBody(quickText);
+        LinearLayout.LayoutParams quickTextParams = new LinearLayout.LayoutParams(-1, -2);
+        quickTextParams.topMargin = dp(6);
+        quick.addView(quickText, quickTextParams);
+        root.addView(quick, quickParams);
+
+        addSectionLabel(root, "主页小部件", dp(20));
+        List<WidgetRegistration> widgets = collectWidgets();
+        boolean hasVisibleWidget = false;
+        for (WidgetRegistration registration : widgets) {
+            if (isWidgetVisible(registration.key)) {
+                LinearLayout.LayoutParams widgetParams = new LinearLayout.LayoutParams(-1, -2);
+                widgetParams.bottomMargin = dp(10);
+                root.addView(registration.widget.createView(this, this), widgetParams);
+                hasVisibleWidget = true;
+            }
+        }
+        if (!hasVisibleWidget) {
+            root.addView(createEmptyCard("还没有启用主页小部件。你可以在下方自由组合插件的小部件。"), new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        addSectionLabel(root, "自定义主页", dp(12));
+        LinearLayout customizer = UiKit.card(this);
+        for (WidgetRegistration registration : widgets) {
+            CheckBox checkBox = new CheckBox(this);
+            checkBox.setText(registration.widget.title() + " · " + registration.pluginTitle);
+            checkBox.setTextSize(14);
+            checkBox.setTextColor(UiKit.COLOR_TEXT);
+            checkBox.setChecked(isWidgetVisible(registration.key));
+            checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                setWidgetVisible(registration.key, isChecked);
+                showDashboard();
+            });
+            customizer.addView(checkBox, new LinearLayout.LayoutParams(-1, -2));
+        }
+        if (widgets.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("插件还没有注册主页小部件。");
+            UiKit.styleBody(empty);
+            customizer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        }
+        root.addView(customizer, new LinearLayout.LayoutParams(-1, -2));
+        return scrollView;
+    }
+
+    private void showPluginList() {
+        currentSection = SECTION_PLUGINS;
+        selectedPlugin = null;
+        contentRoot.removeAllViews();
+        contentRoot.addView(createPluginListView(), new LinearLayout.LayoutParams(-1, -1));
+        updateBottomButtons();
+    }
+
+    private View createPluginListView() {
+        ScrollView scrollView = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(0, dp(8), 0, dp(8));
+        scrollView.addView(root, new ScrollView.LayoutParams(-1, -2));
+
+        TextView title = new TextView(this);
+        title.setText("插件");
+        UiKit.styleTitle(title, 30);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        pluginCountView = new TextView(this);
-        pluginCountView.setTextSize(13);
-        pluginCountView.setTextColor(0xFF64706D);
-        pluginCountView.setPadding(0, dp(4), 0, 0);
-        root.addView(pluginCountView, new LinearLayout.LayoutParams(-1, -2));
+        TextView subtitle = new TextView(this);
+        subtitle.setText("每个插件都有自己的页面。点开插件即可进入它的功能界面。");
+        UiKit.styleBody(subtitle);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subtitleParams.topMargin = dp(4);
+        root.addView(subtitle, subtitleParams);
 
-        hostStatusView = new TextView(this);
-        hostStatusView.setTextSize(14);
-        hostStatusView.setTextColor(0xFF0F3B35);
-        hostStatusView.setPadding(0, dp(8), 0, dp(10));
-        root.addView(hostStatusView, new LinearLayout.LayoutParams(-1, -2));
+        for (ToolPlugin plugin : plugins) {
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.topMargin = dp(12);
+            root.addView(createPluginRow(plugin), rowParams);
+        }
+        return scrollView;
+    }
 
-        HorizontalScrollView pluginScroll = new HorizontalScrollView(this);
-        pluginScroll.setHorizontalScrollBarEnabled(false);
-        pluginBar = new LinearLayout(this);
-        pluginBar.setOrientation(LinearLayout.HORIZONTAL);
-        pluginScroll.addView(pluginBar, new HorizontalScrollView.LayoutParams(-2, -2));
-        root.addView(pluginScroll, new LinearLayout.LayoutParams(-1, dp(54)));
+    private View createPluginRow(ToolPlugin plugin) {
+        LinearLayout row = UiKit.card(this);
+        row.setOnClickListener(v -> openPlugin(plugin));
 
-        pluginContainer = new LinearLayout(this);
-        pluginContainer.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams containerParams = new LinearLayout.LayoutParams(-1, 0, 1);
-        containerParams.topMargin = dp(10);
-        root.addView(pluginContainer, containerParams);
+        TextView title = new TextView(this);
+        title.setText(plugin.title());
+        UiKit.styleTitle(title, 18);
+        row.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        renderPluginButtons();
-        return root;
+        TextView description = new TextView(this);
+        description.setText(plugin.description());
+        UiKit.styleBody(description);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2);
+        descriptionParams.topMargin = dp(4);
+        row.addView(description, descriptionParams);
+
+        TextView meta = new TextView(this);
+        meta.setText((plugin.removable() ? "外部插件" : "内置插件")
+                + " · 权限 " + plugin.requestedPermissions().size()
+                + " · 小部件 " + plugin.createHomeWidgets(this, this).size());
+        UiKit.styleCaption(meta);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.topMargin = dp(8);
+        row.addView(meta, metaParams);
+
+        Button open = new Button(this);
+        open.setText("打开");
+        UiKit.styleSecondaryButton(open);
+        open.setOnClickListener(v -> openPlugin(plugin));
+        LinearLayout.LayoutParams openParams = new LinearLayout.LayoutParams(-1, dp(44));
+        openParams.topMargin = dp(10);
+        row.addView(open, openParams);
+        return row;
+    }
+
+    private void openPlugin(ToolPlugin plugin) {
+        currentSection = SECTION_PLUGINS;
+        selectedPlugin = plugin;
+        contentRoot.removeAllViews();
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(0, dp(8), 0, 0);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button back = new Button(this);
+        back.setText("返回");
+        UiKit.styleSecondaryButton(back);
+        back.setOnClickListener(v -> showPluginList());
+        header.addView(back, new LinearLayout.LayoutParams(dp(88), dp(44)));
+
+        TextView title = new TextView(this);
+        title.setText(plugin.title());
+        UiKit.styleTitle(title, 22);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
+        titleParams.leftMargin = dp(12);
+        header.addView(title, titleParams);
+        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        View pluginView = plugin.createView(this, this);
+        LinearLayout.LayoutParams pluginParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        pluginParams.topMargin = dp(14);
+        root.addView(pluginView, pluginParams);
+        contentRoot.addView(root, new LinearLayout.LayoutParams(-1, -1));
+
+        updateBottomButtons();
+        plugin.onSelected();
+    }
+
+    private void showPluginManager() {
+        currentSection = SECTION_MANAGER;
+        selectedPlugin = null;
+        contentRoot.removeAllViews();
+        contentRoot.addView(pluginManagerPlugin.createView(this, this), new LinearLayout.LayoutParams(-1, -1));
+        pluginManagerPlugin.onSelected();
+        updateBottomButtons();
+    }
+
+    private void updateBottomButtons() {
+        for (int i = 0; i < bottomButtons.size(); i++) {
+            UiKit.styleTab(bottomButtons.get(i), i == currentSection);
+        }
+    }
+
+    private void addSectionLabel(LinearLayout root, String text, int topMargin) {
+        TextView label = new TextView(this);
+        label.setText(text);
+        UiKit.styleTitle(label, 18);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.topMargin = topMargin;
+        params.bottomMargin = dp(8);
+        root.addView(label, params);
+    }
+
+    private View createEmptyCard(String message) {
+        LinearLayout card = UiKit.card(this);
+        TextView text = new TextView(this);
+        text.setText(message);
+        text.setGravity(Gravity.CENTER);
+        UiKit.styleBody(text);
+        card.addView(text, new LinearLayout.LayoutParams(-1, -2));
+        return card;
+    }
+
+    private String buildDashboardSummary() {
+        int external = 0;
+        for (ToolPlugin plugin : plugins) {
+            if (plugin.removable()) {
+                external++;
+            }
+        }
+        return "内置插件 " + (plugins.size() - external)
+                + " 个，外部插件 " + external
+                + " 个。插件管理负责导入、导出、删除和权限授予。";
+    }
+
+    private List<WidgetRegistration> collectWidgets() {
+        List<WidgetRegistration> widgets = new ArrayList<>();
+        for (ToolPlugin plugin : plugins) {
+            for (HomeWidget widget : plugin.createHomeWidgets(this, this)) {
+                widgets.add(new WidgetRegistration(plugin.title(), plugin.id() + ":" + widget.id(), widget));
+            }
+        }
+        return widgets;
+    }
+
+    private boolean isWidgetVisible(String key) {
+        Set<String> hidden = uiPreferences.getStringSet(PREF_HIDDEN_WIDGETS, new LinkedHashSet<>());
+        return !hidden.contains(key);
+    }
+
+    private void setWidgetVisible(String key, boolean visible) {
+        Set<String> hidden = new LinkedHashSet<>(uiPreferences.getStringSet(PREF_HIDDEN_WIDGETS, new LinkedHashSet<>()));
+        if (visible) {
+            hidden.remove(key);
+        } else {
+            hidden.add(key);
+        }
+        uiPreferences.edit().putStringSet(PREF_HIDDEN_WIDGETS, hidden).apply();
     }
 
     private void loadPlugins() {
@@ -201,20 +503,16 @@ public class MainActivity extends Activity implements PluginHost {
             plugin.onDestroy();
         }
         loadPlugins();
-        if (pluginBar != null) {
-            renderPluginButtons();
+        selectedPlugin = findPlugin(preferredPluginId);
+        if (currentSection == SECTION_DASHBOARD) {
+            showDashboard();
+        } else if (currentSection == SECTION_MANAGER) {
+            showPluginManager();
+        } else if (selectedPlugin != null) {
+            openPlugin(selectedPlugin);
+        } else {
+            showPluginList();
         }
-        updatePluginCount();
-
-        if (pluginContainer == null || plugins.isEmpty()) {
-            return;
-        }
-
-        ToolPlugin next = findPlugin(preferredPluginId);
-        if (next == null) {
-            next = plugins.get(0);
-        }
-        selectPlugin(next);
     }
 
     private ToolPlugin findPlugin(String pluginId) {
@@ -229,75 +527,16 @@ public class MainActivity extends Activity implements PluginHost {
         return null;
     }
 
-    private void renderPluginButtons() {
-        pluginBar.removeAllViews();
-        pluginButtons.clear();
-        for (ToolPlugin plugin : plugins) {
-            Button button = new Button(this);
-            button.setText(plugin.title());
-            button.setAllCaps(false);
-            button.setOnClickListener(v -> selectPlugin(plugin));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(164), dp(48));
-            params.rightMargin = dp(8);
-            pluginBar.addView(button, params);
-            pluginButtons.add(button);
-        }
-        updatePluginCount();
-    }
-
-    private void selectPlugin(ToolPlugin plugin) {
-        selectedPlugin = plugin;
-        pluginContainer.removeAllViews();
-        pluginContainer.addView(plugin.createView(this, this), new LinearLayout.LayoutParams(-1, -1));
-        updatePluginButtons();
-        plugin.onSelected();
-    }
-
-    private void updatePluginButtons() {
-        for (int i = 0; i < plugins.size(); i++) {
-            Button button = pluginButtons.get(i);
-            boolean selected = plugins.get(i) == selectedPlugin;
-            button.setEnabled(!selected);
-            button.setGravity(Gravity.CENTER);
-        }
-    }
-
     private void notifyHostStateChanged() {
-        hostStatusView.setText(buildHostStatus());
-        updatePluginCount();
+        if (currentSection == SECTION_DASHBOARD && contentRoot != null) {
+            showDashboard();
+        }
         if (selectedPlugin != null) {
             selectedPlugin.onHostStateChanged();
         }
-    }
-
-    private void updatePluginCount() {
-        if (pluginCountView == null) {
-            return;
+        if (currentSection == SECTION_MANAGER) {
+            pluginManagerPlugin.onHostStateChanged();
         }
-        int external = 0;
-        int optional = 0;
-        for (ToolPlugin plugin : plugins) {
-            if (plugin.removable()) {
-                external++;
-            }
-            if (isOptionalBuiltInPluginId(plugin.id())) {
-                optional++;
-            }
-        }
-        pluginCountView.setText(String.format(Locale.US, "%d 个工具 · %d 个可选插件 · %d 个外部插件", plugins.size(), optional, external));
-    }
-
-    private String buildHostStatus() {
-        if (!isShizukuReady()) {
-            return "Shizuku 未连接。打开需要 Shizuku 的工具前，请先启动 Shizuku。";
-        }
-        if (!hasShizukuPermission()) {
-            return "Shizuku 已连接，尚未授权本合集。";
-        }
-        if (!isShellServiceConnected()) {
-            return String.format(Locale.US, "Shizuku 已授权，等待 UserService，当前 UID: %d", Shizuku.getUid());
-        }
-        return String.format(Locale.US, "Shizuku 已授权，UserService 已连接，当前 UID: %d", Shizuku.getUid());
     }
 
     @Override
@@ -393,12 +632,26 @@ public class MainActivity extends Activity implements PluginHost {
     }
 
     @Override
+    public void exportPlugin(String pluginId) {
+        ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
+        if (descriptor == null) {
+            showToast("只能导出外部插件清单");
+            return;
+        }
+        pendingExportPluginId = pluginId;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, descriptor.id + ".atsplugin.json");
+        startActivityForResult(intent, REQUEST_EXPORT_PLUGIN);
+    }
+
+    @Override
     public void deleteImportedPlugin(String pluginId) {
         try {
             externalPluginStore.delete(pluginId);
             showToast("已删除插件");
-            String nextId = selectedPlugin == null || selectedPlugin.id().equals(pluginId) ? "plugin_manager" : selectedPlugin.id();
-            reloadPlugins(nextId);
+            reloadPlugins(selectedPlugin == null || selectedPlugin.id().equals(pluginId) ? null : selectedPlugin.id());
         } catch (JSONException e) {
             showToast("删除失败：" + e.getMessage());
         }
@@ -412,10 +665,17 @@ public class MainActivity extends Activity implements PluginHost {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_IMPORT_PLUGIN || resultCode != RESULT_OK || data == null || data.getData() == null) {
+        if (requestCode == REQUEST_IMPORT_PLUGIN) {
+            handleImportResult(resultCode, data);
+        } else if (requestCode == REQUEST_EXPORT_PLUGIN) {
+            handleExportResult(resultCode, data);
+        }
+    }
+
+    private void handleImportResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             return;
         }
-
         try {
             ImportedPluginDescriptor descriptor = readPluginDescriptor(data.getData());
             if (isBuiltInPluginId(descriptor.id)) {
@@ -427,6 +687,28 @@ public class MainActivity extends Activity implements PluginHost {
             reloadPlugins(descriptor.id);
         } catch (IOException | JSONException e) {
             showToast("导入失败：" + e.getMessage());
+        }
+    }
+
+    private void handleExportResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null || pendingExportPluginId == null) {
+            pendingExportPluginId = null;
+            return;
+        }
+        ImportedPluginDescriptor descriptor = findImportedDescriptor(pendingExportPluginId);
+        pendingExportPluginId = null;
+        if (descriptor == null) {
+            showToast("导出失败：插件不存在");
+            return;
+        }
+        try (OutputStream outputStream = getContentResolver().openOutputStream(data.getData())) {
+            if (outputStream == null) {
+                throw new IOException("无法写入文件");
+            }
+            outputStream.write(descriptor.toJson().getBytes(StandardCharsets.UTF_8));
+            showToast("已导出插件清单");
+        } catch (IOException | JSONException e) {
+            showToast("导出失败：" + e.getMessage());
         }
     }
 
@@ -452,6 +734,11 @@ public class MainActivity extends Activity implements PluginHost {
     }
 
     @Override
+    public List<ToolPlugin> installedPlugins() {
+        return new ArrayList<>(plugins);
+    }
+
+    @Override
     public boolean isBuiltInPluginEnabled(String pluginId) {
         return builtInPluginStateStore.isEnabled(pluginId);
     }
@@ -460,27 +747,31 @@ public class MainActivity extends Activity implements PluginHost {
     public void setBuiltInPluginEnabled(String pluginId, boolean enabled) {
         builtInPluginStateStore.setEnabled(pluginId, enabled);
         showToast(enabled ? "已启用插件" : "已停用插件");
-        String currentId = selectedPlugin == null ? "plugin_manager" : selectedPlugin.id();
-        String nextId = enabled ? pluginId : (currentId.equals(pluginId) ? "plugin_manager" : currentId);
-        reloadPlugins(nextId);
+        reloadPlugins(enabled ? pluginId : null);
     }
 
     private boolean isBuiltInPluginId(String pluginId) {
+        if ("plugin_manager".equals(pluginId)) {
+            return true;
+        }
         for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
             if (plugin.id().equals(pluginId)) {
                 return true;
             }
         }
-        return false;
+        return ShizukuPlugin.ID.equals(pluginId);
     }
 
-    private boolean isOptionalBuiltInPluginId(String pluginId) {
-        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
-            if (plugin.id().equals(pluginId)) {
-                return true;
+    private ImportedPluginDescriptor findImportedDescriptor(String pluginId) {
+        if (pluginId == null) {
+            return null;
+        }
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            if (descriptor.id.equals(pluginId)) {
+                return descriptor;
             }
         }
-        return false;
+        return null;
     }
 
     private ImportedPluginDescriptor readPluginDescriptor(Uri uri) throws IOException, JSONException {
@@ -548,5 +839,17 @@ public class MainActivity extends Activity implements PluginHost {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static final class WidgetRegistration {
+        final String pluginTitle;
+        final String key;
+        final HomeWidget widget;
+
+        WidgetRegistration(String pluginTitle, String key, HomeWidget widget) {
+            this.pluginTitle = pluginTitle;
+            this.key = key;
+            this.widget = widget;
+        }
     }
 }

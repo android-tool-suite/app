@@ -5,7 +5,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 public final class ImportedPluginDescriptor {
@@ -17,6 +19,7 @@ public final class ImportedPluginDescriptor {
     public final String formatVersion;
     public final Set<String> requestedPermissions;
     public final Set<String> grantedPermissions;
+    public final List<ImportedWidgetDescriptor> widgets;
 
     public ImportedPluginDescriptor(
             String id,
@@ -26,7 +29,8 @@ public final class ImportedPluginDescriptor {
             String author,
             String formatVersion,
             Set<String> requestedPermissions,
-            Set<String> grantedPermissions
+            Set<String> grantedPermissions,
+            List<ImportedWidgetDescriptor> widgets
     ) {
         this.id = id;
         this.title = title;
@@ -36,6 +40,7 @@ public final class ImportedPluginDescriptor {
         this.formatVersion = formatVersion;
         this.requestedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(requestedPermissions));
         this.grantedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(grantedPermissions));
+        this.widgets = Collections.unmodifiableList(new ArrayList<>(widgets));
     }
 
     public static ImportedPluginDescriptor fromJson(String rawJson) throws JSONException {
@@ -61,7 +66,8 @@ public final class ImportedPluginDescriptor {
                 clean(json.optString("author", "未知作者")),
                 clean(root.optString("formatVersion", "1")),
                 readStringSet(firstArray(root, json, "permissions", "requestedPermissions")),
-                readStringSet(json.optJSONArray("grantedPermissions"))
+                readStringSet(json.optJSONArray("grantedPermissions")),
+                readWidgets(firstArray(root, json, "widgets", "homeWidgets"))
         );
     }
 
@@ -80,6 +86,7 @@ public final class ImportedPluginDescriptor {
 
         root.put("plugin", plugin);
         root.put("permissions", toArray(requestedPermissions));
+        root.put("widgets", widgetsToArray(widgets));
         return root.toString();
     }
 
@@ -92,8 +99,27 @@ public final class ImportedPluginDescriptor {
                 author,
                 formatVersion,
                 requestedPermissions,
-                permissions
+                permissions,
+                widgets
         );
+    }
+
+    private static List<ImportedWidgetDescriptor> readWidgets(JSONArray array) {
+        List<ImportedWidgetDescriptor> widgets = new ArrayList<>();
+        if (array == null) {
+            return widgets;
+        }
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject json = array.optJSONObject(i);
+            if (json == null) {
+                continue;
+            }
+            try {
+                widgets.add(ImportedWidgetDescriptor.fromJson(json));
+            } catch (JSONException ignored) {
+            }
+        }
+        return widgets;
     }
 
     private static JSONArray firstArray(JSONObject root, JSONObject plugin, String first, String second) {
@@ -130,6 +156,14 @@ public final class ImportedPluginDescriptor {
         JSONArray array = new JSONArray();
         for (String value : values) {
             array.put(value);
+        }
+        return array;
+    }
+
+    private static JSONArray widgetsToArray(List<ImportedWidgetDescriptor> widgets) throws JSONException {
+        JSONArray array = new JSONArray();
+        for (ImportedWidgetDescriptor widget : widgets) {
+            array.put(widget.toJson());
         }
         return array;
     }

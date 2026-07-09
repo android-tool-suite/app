@@ -36,6 +36,14 @@ tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile 
   "permissions": [
     "file.picker",
     "package.query"
+  ],
+  "widgets": [
+    {
+      "id": "summary",
+      "title": "示例状态",
+      "value": "已安装",
+      "subtitle": "这个信息会作为主页小部件显示"
+    }
   ]
 }
 ```
@@ -51,6 +59,17 @@ tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile 
 - `file.picker`：请求宿主打开系统文件选择器。
 
 导入后权限默认不授予，需要用户在“插件管理”里逐项开启。
+
+## 主页小部件
+
+插件可以通过 `widgets` 或 `homeWidgets` 注册主页信息小部件。当前外部插件清单支持静态信息字段：
+
+- `id`：插件内唯一的小部件 ID。
+- `title`：小部件标题。
+- `value`：小部件主数值或状态。
+- `subtitle`：小部件说明。
+
+用户可以在主页的“自定义主页”区域自由显示或隐藏这些小部件。内置 Java 插件可以通过 `ToolPlugin.createHomeWidgets()` 注册动态小部件。
 
 ## 兼容
 

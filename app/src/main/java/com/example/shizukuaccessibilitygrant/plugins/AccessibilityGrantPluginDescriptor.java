@@ -1,5 +1,6 @@
 package com.example.shizukuaccessibilitygrant.plugins;
 
+import java.util.Collections;
 import java.util.LinkedHashSet;
 
 public final class AccessibilityGrantPluginDescriptor {
@@ -22,7 +23,8 @@ public final class AccessibilityGrantPluginDescriptor {
                 "Android Tool Suite",
                 "1",
                 permissions,
-                new LinkedHashSet<>()
+                new LinkedHashSet<>(),
+                Collections.emptyList()
         );
     }
 }

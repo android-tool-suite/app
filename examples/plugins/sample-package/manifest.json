@@ -11,5 +11,13 @@
   "permissions": [
     "file.picker",
     "package.query"
+  ],
+  "widgets": [
+    {
+      "id": "package_status",
+      "title": "包插件",
+      "value": "就绪",
+      "subtitle": "来自 .atsplugin 包的主页小部件。"
+    }
   ]
 }

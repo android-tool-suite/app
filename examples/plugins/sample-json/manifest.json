@@ -11,5 +11,13 @@
   "permissions": [
     "file.picker",
     "package.query"
+  ],
+  "widgets": [
+    {
+      "id": "summary",
+      "title": "示例状态",
+      "value": "已导入",
+      "subtitle": "这是由插件清单注册的主页小部件。"
+    }
   ]
 }

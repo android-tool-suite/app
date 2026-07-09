@@ -24,6 +24,8 @@ public interface PluginHost {
 
     void importPlugin();
 
+    void exportPlugin(String pluginId);
+
     void deleteImportedPlugin(String pluginId);
 
     void setImportedPluginPermission(String pluginId, String permission, boolean granted);
@@ -31,6 +33,8 @@ public interface PluginHost {
     boolean hasImportedPluginPermission(String pluginId, String permission);
 
     List<ToolPlugin> optionalBuiltInPlugins();
+
+    List<ToolPlugin> installedPlugins();
 
     boolean isBuiltInPluginEnabled(String pluginId);
 

@@ -27,6 +27,8 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.example.shizukuaccessibilitygrant.ui.UiKit;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,6 +38,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -55,7 +59,6 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
     private SharedPreferences preferences;
     private Set<String> favoriteComponents = new LinkedHashSet<>();
     private List<AccessibilityServiceEntry> allServices = new ArrayList<>();
-    private TextView statusView;
     private LinearLayout serviceList;
     private Button permissionButton;
     private Button refreshButton;
@@ -88,6 +91,59 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
     @Override
     public boolean removable() {
         return true;
+    }
+
+    @Override
+    public Set<String> requestedPermissions() {
+        return descriptor.requestedPermissions;
+    }
+
+    @Override
+    public List<HomeWidget> createHomeWidgets(Activity activity, PluginHost host) {
+        return Collections.singletonList(new HomeWidget() {
+            @Override
+            public String id() {
+                return "favorite_services";
+            }
+
+            @Override
+            public String title() {
+                return "无障碍收藏";
+            }
+
+            @Override
+            public String pluginId() {
+                return AccessibilityGrantPlugin.this.id();
+            }
+
+            @Override
+            public View createView(Activity activity, PluginHost host) {
+                SharedPreferences prefs = activity.getSharedPreferences(PREFS_NAME, Activity.MODE_PRIVATE);
+                Set<String> favorites = prefs.getStringSet(PREF_FAVORITES, Collections.emptySet());
+                boolean autoGrant = prefs.getBoolean(PREF_AUTO_GRANT, false);
+                LinearLayout card = UiKit.card(activity);
+
+                TextView title = new TextView(activity);
+                title.setText("无障碍授权");
+                UiKit.styleCaption(title);
+                card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+                TextView value = new TextView(activity);
+                value.setText(favorites.size() + " 个收藏服务");
+                UiKit.styleTitle(value, 20);
+                LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(-1, -2);
+                valueParams.topMargin = UiKit.dp(activity, 4);
+                card.addView(value, valueParams);
+
+                TextView subtitle = new TextView(activity);
+                subtitle.setText(autoGrant ? "启动时会自动启用收藏服务" : "自动启用未开启");
+                UiKit.styleBody(subtitle);
+                LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+                subtitleParams.topMargin = UiKit.dp(activity, 4);
+                card.addView(subtitle, subtitleParams);
+                return card;
+            }
+        });
     }
 
     @Override
@@ -125,41 +181,39 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
 
         TextView title = new TextView(activity);
         title.setText("Shizuku 无障碍授权");
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(0xFF10201D);
+        UiKit.styleTitle(title, 22);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView warning = new TextView(activity);
         warning.setText("只给你完全信任的应用开启无障碍权限。该权限可读取屏幕内容并执行点击、滑动等操作。");
         warning.setTextSize(14);
-        warning.setTextColor(0xFF5B6663);
+        warning.setTextColor(UiKit.COLOR_WARN);
+        warning.setPadding(dp(12), dp(10), dp(12), dp(10));
+        warning.setBackground(UiKit.rounded(0xFFFFF7ED, 8, activity));
         LinearLayout.LayoutParams warningParams = new LinearLayout.LayoutParams(-1, -2);
-        warningParams.topMargin = dp(6);
+        warningParams.topMargin = dp(10);
         root.addView(warning, warningParams);
-
-        statusView = new TextView(activity);
-        statusView.setTextSize(14);
-        statusView.setTextColor(0xFF0F3B35);
-        statusView.setPadding(0, gap, 0, gap);
-        root.addView(statusView, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout actions = new LinearLayout(activity);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, -2);
+        actionsParams.topMargin = gap;
 
         permissionButton = new Button(activity);
         permissionButton.setText("授权 Shizuku");
+        UiKit.stylePrimaryButton(permissionButton);
         permissionButton.setOnClickListener(v -> host.requestShizukuPermission());
         actions.addView(permissionButton, new LinearLayout.LayoutParams(0, dp(46), 1));
 
         refreshButton = new Button(activity);
         refreshButton.setText("刷新");
+        UiKit.styleSecondaryButton(refreshButton);
         refreshButton.setOnClickListener(v -> refreshState());
         LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(0, dp(46), 1);
         refreshParams.leftMargin = gap;
         actions.addView(refreshButton, refreshParams);
-        root.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(actions, actionsParams);
 
         searchBox = new EditText(activity);
         searchBox.setSingleLine(true);
@@ -167,6 +221,7 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
         searchBox.setHint("搜索应用、服务或包名");
         searchBox.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         searchBox.setPadding(dp(12), 0, dp(12), 0);
+        searchBox.setBackground(UiKit.roundedStroke(UiKit.COLOR_SURFACE, UiKit.COLOR_BORDER, 8, activity));
         searchBox.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
@@ -192,14 +247,14 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
         favoritesOnlyCheckBox = new CheckBox(activity);
         favoritesOnlyCheckBox.setText("仅显示收藏");
         favoritesOnlyCheckBox.setTextSize(14);
-        favoritesOnlyCheckBox.setTextColor(0xFF344541);
+        favoritesOnlyCheckBox.setTextColor(UiKit.COLOR_TEXT);
         favoritesOnlyCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> showServices(allServices));
         options.addView(favoritesOnlyCheckBox, new LinearLayout.LayoutParams(-1, -2));
 
         autoGrantCheckBox = new CheckBox(activity);
         autoGrantCheckBox.setText("启动时自动启用收藏服务");
         autoGrantCheckBox.setTextSize(14);
-        autoGrantCheckBox.setTextColor(0xFF344541);
+        autoGrantCheckBox.setTextColor(UiKit.COLOR_TEXT);
         autoGrantCheckBox.setChecked(preferences.getBoolean(PREF_AUTO_GRANT, false));
         autoGrantCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
             preferences.edit().putBoolean(PREF_AUTO_GRANT, isChecked).apply();
@@ -224,6 +279,7 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
         serviceList.setOrientation(LinearLayout.VERTICAL);
         serviceList.setPadding(0, gap, 0, 0);
         scrollView.addView(serviceList, new ScrollView.LayoutParams(-1, -2));
+        scrollView.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(-1, 0, 1);
         scrollParams.topMargin = dp(4);
         root.addView(scrollView, scrollParams);
@@ -232,44 +288,42 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
     }
 
     private void refreshState() {
-        if (statusView == null || host == null) {
+        if (serviceList == null || host == null) {
             return;
         }
         if (!hasRequiredPluginPermissions()) {
-            permissionButton.setEnabled(false);
-            refreshButton.setEnabled(false);
-            statusView.setText("插件权限未授予。请到“插件管理”授予 Shizuku、执行 Shell、修改无障碍设置和读取应用列表权限。");
+            UiKit.setEnabledVisual(permissionButton, false);
+            UiKit.setEnabledVisual(refreshButton, false);
             serviceList.removeAllViews();
-            addPermissionMessage();
+            addPermissionMessage("插件权限未授予。请到“插件管理”授予 Shizuku、执行 Shell、修改无障碍设置和读取应用列表权限。");
             return;
         }
 
         boolean binderAlive = host.isShizukuReady();
         boolean granted = binderAlive && host.hasShizukuPermission();
 
-        permissionButton.setEnabled(binderAlive && !granted);
-        refreshButton.setEnabled(granted);
+        UiKit.setEnabledVisual(permissionButton, binderAlive && !granted);
+        UiKit.setEnabledVisual(refreshButton, granted);
 
         if (!binderAlive) {
-            statusView.setText("Shizuku 未连接。请先安装并启动 Shizuku。");
             serviceList.removeAllViews();
+            addMessage("Shizuku 未连接。请先安装并启动 Shizuku。");
             return;
         }
 
         if (!granted) {
-            statusView.setText("Shizuku 已连接，尚未授权本工具合集。");
             serviceList.removeAllViews();
+            addMessage("Shizuku 已连接，尚未授权本工具合集。");
             return;
         }
 
         if (!host.isShellServiceConnected()) {
-            statusView.setText(String.format(Locale.US, "Shizuku 已授权，正在连接 UserService，当前身份 UID: %d", host.shizukuUid()));
             serviceList.removeAllViews();
+            addMessage("正在连接 Shizuku UserService...");
             host.ensureShellService();
             return;
         }
 
-        statusView.setText(String.format(Locale.US, "Shizuku 已授权，UserService 已连接，当前身份 UID: %d", host.shizukuUid()));
         loadAccessibilityServices();
     }
 
@@ -280,13 +334,14 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
                 && host.hasImportedPluginPermission(id(), PluginPermissionCatalog.PACKAGE_QUERY);
     }
 
-    private void addPermissionMessage() {
+    private void addPermissionMessage(String message) {
         TextView textView = new TextView(activity);
-        textView.setText("当前插件作为外部插件运行，必须先在插件管理中授予声明权限。宿主负责获取 Shizuku 权限，插件只有获得授权后才能调用宿主的 Shizuku 能力。");
-        textView.setTextColor(0xFF7C2D12);
+        textView.setText(message + "\n\n当前插件作为外部插件运行，宿主负责获取 Shizuku 权限，插件只有获得授权后才能调用宿主的 Shizuku 能力。");
+        textView.setTextColor(UiKit.COLOR_WARN);
         textView.setTextSize(14);
         textView.setGravity(Gravity.CENTER);
-        textView.setPadding(0, dp(32), 0, 0);
+        textView.setPadding(dp(14), dp(14), dp(14), dp(14));
+        textView.setBackground(UiKit.rounded(0xFFFFF7ED, 8, activity));
         serviceList.addView(textView, new LinearLayout.LayoutParams(-1, -2));
     }
 
@@ -424,27 +479,22 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
     }
 
     private View createServiceRow(AccessibilityServiceEntry entry) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackgroundColor(0xFFFFFFFF);
+        LinearLayout row = UiKit.card(activity);
 
         TextView appName = new TextView(activity);
         appName.setText(entry.appLabel);
-        appName.setTextColor(0xFF10201D);
-        appName.setTextSize(16);
-        appName.setTypeface(Typeface.DEFAULT_BOLD);
+        UiKit.styleTitle(appName, 16);
         row.addView(appName, new LinearLayout.LayoutParams(-1, -2));
 
         TextView serviceName = new TextView(activity);
         serviceName.setText(entry.serviceLabel);
-        serviceName.setTextColor(0xFF344541);
+        serviceName.setTextColor(UiKit.COLOR_TEXT);
         serviceName.setTextSize(14);
         row.addView(serviceName, new LinearLayout.LayoutParams(-1, -2));
 
         TextView component = new TextView(activity);
         component.setText(entry.component);
-        component.setTextColor(0xFF687572);
+        component.setTextColor(UiKit.COLOR_MUTED);
         component.setTextSize(12);
         component.setSingleLine(false);
         row.addView(component, new LinearLayout.LayoutParams(-1, -2));
@@ -457,17 +507,23 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
 
         TextView state = new TextView(activity);
         state.setText(entry.enabled ? "已启用" : "未启用");
-        state.setTextColor(entry.enabled ? 0xFF047857 : 0xFF7C2D12);
+        state.setTextColor(entry.enabled ? UiKit.COLOR_PRIMARY : UiKit.COLOR_WARN);
         state.setTextSize(14);
         bottom.addView(state, new LinearLayout.LayoutParams(0, -2, 1));
 
         Button favorite = new Button(activity);
         favorite.setText(entry.favorite ? "取消收藏" : "收藏");
+        UiKit.styleSecondaryButton(favorite);
         favorite.setOnClickListener(v -> toggleFavorite(entry.component));
         bottom.addView(favorite, new LinearLayout.LayoutParams(dp(120), dp(44)));
 
         Button action = new Button(activity);
         action.setText(entry.enabled ? "停用" : "启用");
+        if (entry.enabled) {
+            UiKit.styleDangerButton(action);
+        } else {
+            UiKit.stylePrimaryButton(action);
+        }
         action.setOnClickListener(v -> setServiceEnabled(entry.component, !entry.enabled));
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(dp(96), dp(44));
         actionParams.leftMargin = dp(8);
@@ -579,7 +635,7 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
     private void addMessage(String message) {
         TextView textView = new TextView(activity);
         textView.setText(message);
-        textView.setTextColor(0xFF5B6663);
+        textView.setTextColor(UiKit.COLOR_MUTED);
         textView.setTextSize(14);
         textView.setGravity(Gravity.CENTER);
         textView.setPadding(0, dp(32), 0, 0);
@@ -588,7 +644,7 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
 
     private void setLoading(boolean loading) {
         progressBar.setVisibility(loading ? View.VISIBLE : View.GONE);
-        refreshButton.setEnabled(!loading && host.hasShizukuPermission());
+        UiKit.setEnabledVisual(refreshButton, !loading && host.hasShizukuPermission());
     }
 
     private int dp(int value) {

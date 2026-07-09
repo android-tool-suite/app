@@ -9,7 +9,7 @@ public final class ToolRegistry {
 
     public static List<ToolPlugin> createRequiredBuiltInPlugins() {
         List<ToolPlugin> plugins = new ArrayList<>();
-        plugins.add(new PluginManagerPlugin());
+        plugins.add(new ShizukuPlugin());
         return plugins;
     }
 

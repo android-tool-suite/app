@@ -9,6 +9,12 @@ import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.example.shizukuaccessibilitygrant.ui.UiKit;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
 public final class ImportedToolPlugin implements ToolPlugin {
     private final ImportedPluginDescriptor descriptor;
     private PluginHost host;
@@ -38,6 +44,20 @@ public final class ImportedToolPlugin implements ToolPlugin {
     }
 
     @Override
+    public Set<String> requestedPermissions() {
+        return descriptor.requestedPermissions;
+    }
+
+    @Override
+    public List<HomeWidget> createHomeWidgets(Activity activity, PluginHost host) {
+        List<HomeWidget> widgets = new ArrayList<>();
+        for (ImportedWidgetDescriptor widget : descriptor.widgets) {
+            widgets.add(new ImportedHomeWidget(descriptor, widget));
+        }
+        return widgets;
+    }
+
+    @Override
     public View createView(Activity activity, PluginHost host) {
         this.host = host;
         int gap = dp(activity, 12);
@@ -45,30 +65,23 @@ public final class ImportedToolPlugin implements ToolPlugin {
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
 
-        LinearLayout panel = new LinearLayout(activity);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 16));
-        panel.setBackgroundColor(0xFFFFFFFF);
+        LinearLayout panel = UiKit.card(activity);
 
         TextView title = new TextView(activity);
         title.setText(descriptor.title);
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(0xFF10201D);
+        UiKit.styleTitle(title, 22);
         panel.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView meta = new TextView(activity);
         meta.setText("版本 " + descriptor.version + " · " + descriptor.author);
-        meta.setTextSize(13);
-        meta.setTextColor(0xFF64706D);
+        UiKit.styleCaption(meta);
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
         metaParams.topMargin = dp(activity, 6);
         panel.addView(meta, metaParams);
 
         TextView description = new TextView(activity);
         description.setText(descriptor.description);
-        description.setTextSize(15);
-        description.setTextColor(0xFF344541);
+        UiKit.styleBody(description);
         LinearLayout.LayoutParams descParams = new LinearLayout.LayoutParams(-1, -2);
         descParams.topMargin = gap;
         panel.addView(description, descParams);
@@ -76,7 +89,9 @@ public final class ImportedToolPlugin implements ToolPlugin {
         TextView note = new TextView(activity);
         note.setText("这是导入的插件清单。当前版本支持导入、展示和删除外部插件；可执行插件需要作为内置 Java 插件接入 ToolRegistry。");
         note.setTextSize(14);
-        note.setTextColor(0xFF7C2D12);
+        note.setTextColor(UiKit.COLOR_WARN);
+        note.setBackground(UiKit.rounded(0xFFFFF7ED, 8, activity));
+        note.setPadding(dp(activity, 12), dp(activity, 10), dp(activity, 12), dp(activity, 10));
         LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(-1, -2);
         noteParams.topMargin = gap;
         panel.addView(note, noteParams);
@@ -85,7 +100,7 @@ public final class ImportedToolPlugin implements ToolPlugin {
         permissionsTitle.setText("权限");
         permissionsTitle.setTextSize(16);
         permissionsTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        permissionsTitle.setTextColor(0xFF10201D);
+        permissionsTitle.setTextColor(UiKit.COLOR_TEXT);
         LinearLayout.LayoutParams permissionsTitleParams = new LinearLayout.LayoutParams(-1, -2);
         permissionsTitleParams.topMargin = gap;
         panel.addView(permissionsTitle, permissionsTitleParams);
@@ -94,7 +109,7 @@ public final class ImportedToolPlugin implements ToolPlugin {
             TextView empty = new TextView(activity);
             empty.setText("该插件未声明额外权限。");
             empty.setTextSize(14);
-            empty.setTextColor(0xFF64706D);
+            empty.setTextColor(UiKit.COLOR_MUTED);
             panel.addView(empty, new LinearLayout.LayoutParams(-1, -2));
         } else {
             for (String permission : descriptor.requestedPermissions) {
@@ -104,6 +119,7 @@ public final class ImportedToolPlugin implements ToolPlugin {
 
         Button delete = new Button(activity);
         delete.setText("删除插件");
+        UiKit.styleDangerButton(delete);
         delete.setOnClickListener(v -> host.deleteImportedPlugin(descriptor.id));
         LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(-1, dp(activity, 46));
         deleteParams.topMargin = dp(activity, 18);
@@ -114,7 +130,7 @@ public final class ImportedToolPlugin implements ToolPlugin {
         footer.setGravity(Gravity.CENTER);
         footer.setText("插件 ID: " + descriptor.id);
         footer.setTextSize(12);
-        footer.setTextColor(0xFF7A8582);
+        footer.setTextColor(UiKit.COLOR_MUTED);
         LinearLayout.LayoutParams footerParams = new LinearLayout.LayoutParams(-1, -2);
         footerParams.topMargin = gap;
         root.addView(footer, footerParams);
@@ -129,7 +145,7 @@ public final class ImportedToolPlugin implements ToolPlugin {
         CheckBox checkBox = new CheckBox(activity);
         checkBox.setText(PluginPermissionCatalog.label(permission));
         checkBox.setTextSize(14);
-        checkBox.setTextColor(0xFF344541);
+        checkBox.setTextColor(UiKit.COLOR_TEXT);
         checkBox.setChecked(descriptor.grantedPermissions.contains(permission));
         checkBox.setOnCheckedChangeListener((buttonView, isChecked) ->
                 host.setImportedPluginPermission(descriptor.id, permission, isChecked));
@@ -138,7 +154,7 @@ public final class ImportedToolPlugin implements ToolPlugin {
         TextView description = new TextView(activity);
         description.setText(PluginPermissionCatalog.description(permission));
         description.setTextSize(12);
-        description.setTextColor(0xFF64706D);
+        description.setTextColor(UiKit.COLOR_MUTED);
         description.setPadding(dp(activity, 42), 0, 0, 0);
         row.addView(description, new LinearLayout.LayoutParams(-1, -2));
         return row;
@@ -158,5 +174,55 @@ public final class ImportedToolPlugin implements ToolPlugin {
 
     private int dp(Activity activity, int value) {
         return Math.round(value * activity.getResources().getDisplayMetrics().density);
+    }
+
+    private static final class ImportedHomeWidget implements HomeWidget {
+        private final ImportedPluginDescriptor plugin;
+        private final ImportedWidgetDescriptor widget;
+
+        ImportedHomeWidget(ImportedPluginDescriptor plugin, ImportedWidgetDescriptor widget) {
+            this.plugin = plugin;
+            this.widget = widget;
+        }
+
+        @Override
+        public String id() {
+            return widget.id;
+        }
+
+        @Override
+        public String title() {
+            return widget.title;
+        }
+
+        @Override
+        public String pluginId() {
+            return plugin.id;
+        }
+
+        @Override
+        public View createView(Activity activity, PluginHost host) {
+            LinearLayout card = UiKit.card(activity);
+
+            TextView title = new TextView(activity);
+            title.setText(widget.title);
+            UiKit.styleCaption(title);
+            card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+            TextView value = new TextView(activity);
+            value.setText(widget.value.isEmpty() ? plugin.title : widget.value);
+            UiKit.styleTitle(value, 20);
+            LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(-1, -2);
+            valueParams.topMargin = UiKit.dp(activity, 4);
+            card.addView(value, valueParams);
+
+            TextView subtitle = new TextView(activity);
+            subtitle.setText(widget.subtitle.isEmpty() ? plugin.description : widget.subtitle);
+            UiKit.styleBody(subtitle);
+            LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+            subtitleParams.topMargin = UiKit.dp(activity, 4);
+            card.addView(subtitle, subtitleParams);
+            return card;
+        }
     }
 }
