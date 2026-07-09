@@ -84,6 +84,7 @@ public final class ExternalPluginStore {
         try (FileOutputStream output = new FileOutputStream(codeFile)) {
             output.write(bytes);
         }
+        codeFile.setReadOnly();
     }
 
     public void setPermission(String pluginId, String permission, boolean granted) throws JSONException {

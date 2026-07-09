@@ -30,6 +30,9 @@ public final class ExternalToolFactory {
         if (!codeFile.exists()) {
             return null;
         }
+        if (codeFile.canWrite()) {
+            codeFile.setReadOnly();
+        }
         try {
             File optimizedDir = context.getDir("plugin_dex", Context.MODE_PRIVATE);
             DexClassLoader classLoader = new DexClassLoader(
