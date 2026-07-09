@@ -27,6 +27,7 @@ android {
 
 dependencies {
     def shizukuVersion = "13.1.5"
+    implementation project(":plugin-sdk")
     implementation "androidx.annotation:annotation:1.9.1"
     implementation "dev.rikka.shizuku:api:$shizukuVersion"
     implementation "dev.rikka.shizuku:provider:$shizukuVersion"

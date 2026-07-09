@@ -17,6 +17,8 @@ public final class ImportedPluginDescriptor {
     public final String version;
     public final String author;
     public final String formatVersion;
+    public final String entryClass;
+    public final String codePath;
     public final Set<String> requestedPermissions;
     public final Set<String> grantedPermissions;
     public final List<ImportedWidgetDescriptor> widgets;
@@ -28,6 +30,8 @@ public final class ImportedPluginDescriptor {
             String version,
             String author,
             String formatVersion,
+            String entryClass,
+            String codePath,
             Set<String> requestedPermissions,
             Set<String> grantedPermissions,
             List<ImportedWidgetDescriptor> widgets
@@ -38,6 +42,8 @@ public final class ImportedPluginDescriptor {
         this.version = version;
         this.author = author;
         this.formatVersion = formatVersion;
+        this.entryClass = entryClass;
+        this.codePath = codePath;
         this.requestedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(requestedPermissions));
         this.grantedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(grantedPermissions));
         this.widgets = Collections.unmodifiableList(new ArrayList<>(widgets));
@@ -65,6 +71,8 @@ public final class ImportedPluginDescriptor {
                 clean(json.optString("version", "1.0")),
                 clean(json.optString("author", "未知作者")),
                 clean(root.optString("formatVersion", "1")),
+                clean(json.optString("entryClass")),
+                "",
                 readStringSet(firstArray(root, json, "permissions", "requestedPermissions")),
                 readStringSet(json.optJSONArray("grantedPermissions")),
                 readWidgets(firstArray(root, json, "widgets", "homeWidgets"))
@@ -82,6 +90,9 @@ public final class ImportedPluginDescriptor {
         plugin.put("description", description);
         plugin.put("version", version);
         plugin.put("author", author);
+        if (!entryClass.isEmpty()) {
+            plugin.put("entryClass", entryClass);
+        }
         plugin.put("grantedPermissions", toArray(grantedPermissions));
 
         root.put("plugin", plugin);
@@ -98,8 +109,26 @@ public final class ImportedPluginDescriptor {
                 version,
                 author,
                 formatVersion,
+                entryClass,
+                codePath,
                 requestedPermissions,
                 permissions,
+                widgets
+        );
+    }
+
+    public ImportedPluginDescriptor withCodePath(String path) {
+        return new ImportedPluginDescriptor(
+                id,
+                title,
+                description,
+                version,
+                author,
+                formatVersion,
+                entryClass,
+                path,
+                requestedPermissions,
+                grantedPermissions,
                 widgets
         );
     }

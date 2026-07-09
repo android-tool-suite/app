@@ -1,6 +1,6 @@
 # Android Tool Suite
 
-一个插件式安卓工具合集。宿主内置“插件管理”和 Shizuku 授权/绑定能力；“无障碍授权”作为外部插件加载，通过权限管理申请使用宿主的 Shizuku 能力。
+一个插件式安卓工具合集。宿主内置“插件管理”和 Shizuku 授权/绑定能力；“无障碍授权”是独立插件模块，构建为 `.atsplugin` 后导入宿主，通过权限管理申请使用宿主的 Shizuku 能力。
 
 ## 使用方式
 
@@ -9,7 +9,7 @@
 3. 构建并安装 `app` 模块。
 4. 打开 App，授予 Shizuku 权限。
 5. 在底部导航进入“主页”“插件”或“管理”。
-6. “无障碍授权”是外部插件，首次启动会作为外部插件登记，可在“插件管理”里删除。
+6. 构建无障碍授权插件并在“插件管理”中导入 `.atsplugin`。
 7. 使用前，在“插件管理”里给“无障碍授权”授予 `shizuku`、`shell.exec`、`accessibility.settings`、`package.query` 权限。
 8. 授权后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
 9. 可用搜索框按应用名、服务名或包名过滤列表。
@@ -23,20 +23,26 @@
 app/src/main/java/com/example/shizukuaccessibilitygrant/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
   plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、权限目录
-  plugin/model/         插件清单和主页小部件描述模型
   plugin/store/         插件状态、外部插件清单存储
   plugin/runtime/       插件注册器和外部插件工厂
   plugins/              具体插件实现
-    accessibility/      无障碍授权外部插件实现
     builtin/shizuku/    Shizuku 授权内置插件
     external/           未知外部插件的清单展示页
+
+plugin-sdk/
+  src/main/java/...     插件开发 SDK：API、清单模型、共享 UI 工具
+
+plugins/accessibility-grant/
+  src/main/java/...     无障碍授权插件源码
+  manifest.json         插件清单
+  build.gradle          独立插件构建和 packagePlugin 打包任务
 ```
 
 需要 Shizuku shell 能力的外部插件必须先声明并获授 `shizuku` 与 `shell.exec` 权限，再通过 `PluginHost.runShellCommand(...)` 复用宿主已经绑定好的 Shizuku UserService。
 
 ## 导入插件
 
-当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中删除和授权。
+当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中导出、删除和授权。带 `plugin.apk` 和 `entryClass` 的 `.atsplugin` 会作为可执行插件动态加载；纯 JSON 清单只展示插件信息和权限。
 
 示例清单见：
 
@@ -66,7 +72,19 @@ JSON 清单字段格式：
 
 完整包格式见 `docs/plugin-package-format.md`。
 
-说明：为了避免任意导入文件直接获得 shell 执行能力，外部导入插件声明的权限默认不授予，需要用户在“插件管理”里逐项开启。当前无障碍授权是一个受信任的外部插件 ID，由 `ExternalToolFactory` 映射到应用内实现；其他未知外部插件只支持清单展示、权限管理和删除。
+构建无障碍授权插件：
+
+```powershell
+gradle :plugins:accessibility-grant:packagePlugin
+```
+
+插件包输出：
+
+```text
+plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugin
+```
+
+说明：为了避免任意导入文件直接获得 shell 执行能力，外部导入插件声明的权限默认不授予，需要用户在“插件管理”里逐项开启。
 
 ## 构建要求
 

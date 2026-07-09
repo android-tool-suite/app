@@ -1,16 +1,18 @@
 # ATS Plugin Package Format
 
 插件包推荐使用 `.atsplugin` 扩展名。本质是 zip 文件，根目录必须包含 `manifest.json`。
+如果插件包含可执行代码，根目录还应包含 `plugin.apk`。
 
 ## 目录结构
 
 ```text
 example.atsplugin
   manifest.json
+  plugin.apk
   assets/
 ```
 
-当前版本只解析 `manifest.json`，其他文件会保留为未来扩展约定。
+宿主会解析 `manifest.json`，并把可选的 `plugin.apk` 复制到应用内部目录，再按清单中的 `entryClass` 动态加载插件入口类。
 
 ## 打包
 
@@ -18,6 +20,18 @@ PowerShell:
 
 ```powershell
 tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile dist/sample-package.atsplugin
+```
+
+可执行插件推荐使用独立 Gradle 模块，例如本仓库的无障碍授权插件：
+
+```powershell
+gradle :plugins:accessibility-grant:packagePlugin
+```
+
+输出文件：
+
+```text
+plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugin
 ```
 
 ## manifest.json
@@ -31,7 +45,8 @@ tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile 
     "title": "示例插件",
     "description": "这是一个示例插件。",
     "version": "1.0",
-    "author": "Local"
+    "author": "Local",
+    "entryClass": "com.example.plugins.sample.SamplePlugin"
   },
   "permissions": [
     "file.picker",
@@ -70,6 +85,17 @@ tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile 
 - `subtitle`：小部件说明。
 
 用户可以在主页的“自定义主页”区域自由显示或隐藏这些小部件。内置 Java 插件可以通过 `ToolPlugin.createHomeWidgets()` 注册动态小部件。
+
+## 可执行插件
+
+可执行插件的入口类必须：
+
+- 编译进插件包根目录的 `plugin.apk`。
+- 实现 `com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin`。
+- 提供 public 无参构造方法。
+- 在 `plugin.entryClass` 中声明完整类名。
+
+插件工程只依赖 `:plugin-sdk`，不依赖 `:app`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
 
 ## 兼容
 

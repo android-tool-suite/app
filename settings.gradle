@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "ShizukuAccessibilityGrant"
 include ":app"
+include ":plugin-sdk"
+include ":plugins:accessibility-grant"

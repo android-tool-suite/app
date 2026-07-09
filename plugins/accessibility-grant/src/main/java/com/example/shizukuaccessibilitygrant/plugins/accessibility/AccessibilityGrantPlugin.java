@@ -74,6 +74,10 @@ public final class AccessibilityGrantPlugin implements ToolPlugin {
     private boolean autoGrantAttempted;
     private View rootView;
 
+    public AccessibilityGrantPlugin() {
+        this(AccessibilityGrantPluginDescriptor.create());
+    }
+
     public AccessibilityGrantPlugin(ImportedPluginDescriptor descriptor) {
         this.descriptor = descriptor;
     }

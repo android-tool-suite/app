@@ -1,12 +1,15 @@
 package com.example.shizukuaccessibilitygrant.plugin.store;
 
-import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
-import com.example.shizukuaccessibilitygrant.plugins.accessibility.AccessibilityGrantPluginDescriptor;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
+
 import org.json.JSONException;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -16,11 +19,12 @@ import java.util.Set;
 public final class ExternalPluginStore {
     private static final String PREFS_NAME = "external_plugins";
     private static final String PREF_PLUGIN_JSON_SET = "plugin_json_set";
-    private static final String PREF_SEEDED_ACCESSIBILITY = "seeded_accessibility_grant";
 
+    private final Context context;
     private final SharedPreferences preferences;
 
     public ExternalPluginStore(Context context) {
+        this.context = context.getApplicationContext();
         preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 
@@ -29,26 +33,17 @@ public final class ExternalPluginStore {
         List<ImportedPluginDescriptor> plugins = new ArrayList<>();
         for (String raw : rawSet) {
             try {
-                plugins.add(ImportedPluginDescriptor.fromJson(raw));
+                ImportedPluginDescriptor descriptor = ImportedPluginDescriptor.fromJson(raw);
+                File codeFile = pluginCodeFile(descriptor.id);
+                if (codeFile.exists()) {
+                    descriptor = descriptor.withCodePath(codeFile.getAbsolutePath());
+                }
+                plugins.add(descriptor);
             } catch (JSONException ignored) {
             }
         }
         Collections.sort(plugins, (a, b) -> a.title.compareToIgnoreCase(b.title));
         return plugins;
-    }
-
-    public void seedAccessibilityGrantPluginIfNeeded() throws JSONException {
-        if (preferences.getBoolean(PREF_SEEDED_ACCESSIBILITY, false)) {
-            return;
-        }
-        for (ImportedPluginDescriptor plugin : load()) {
-            if (AccessibilityGrantPluginDescriptor.ID.equals(plugin.id)) {
-                preferences.edit().putBoolean(PREF_SEEDED_ACCESSIBILITY, true).apply();
-                return;
-            }
-        }
-        save(AccessibilityGrantPluginDescriptor.create());
-        preferences.edit().putBoolean(PREF_SEEDED_ACCESSIBILITY, true).apply();
     }
 
     public void save(ImportedPluginDescriptor descriptor) throws JSONException {
@@ -77,6 +72,18 @@ public final class ExternalPluginStore {
             }
         }
         preferences.edit().putStringSet(PREF_PLUGIN_JSON_SET, rawSet).apply();
+        deleteRecursively(pluginDir(pluginId));
+    }
+
+    public void savePluginCode(String pluginId, byte[] bytes) throws IOException {
+        File codeFile = pluginCodeFile(pluginId);
+        File parent = codeFile.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IOException("无法创建插件目录");
+        }
+        try (FileOutputStream output = new FileOutputStream(codeFile)) {
+            output.write(bytes);
+        }
     }
 
     public void setPermission(String pluginId, String permission, boolean granted) throws JSONException {
@@ -105,5 +112,28 @@ public final class ExternalPluginStore {
             }
         }
         return false;
+    }
+
+    private File pluginDir(String pluginId) {
+        return new File(context.getFilesDir(), "plugins/" + pluginId);
+    }
+
+    private File pluginCodeFile(String pluginId) {
+        return new File(pluginDir(pluginId), "plugin.apk");
+    }
+
+    private void deleteRecursively(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursively(child);
+                }
+            }
+        }
+        file.delete();
     }
 }

@@ -24,6 +24,8 @@ public final class AccessibilityGrantPluginDescriptor {
                 "1.0",
                 "Android Tool Suite",
                 "1",
+                "com.example.shizukuaccessibilitygrant.plugins.accessibility.AccessibilityGrantPlugin",
+                "",
                 permissions,
                 new LinkedHashSet<>(),
                 Collections.emptyList()

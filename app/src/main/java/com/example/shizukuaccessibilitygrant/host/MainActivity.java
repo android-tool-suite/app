@@ -39,6 +39,8 @@ import org.json.JSONException;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -52,6 +54,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 import rikka.shizuku.Shizuku;
 
@@ -115,7 +118,6 @@ public class MainActivity extends Activity implements PluginHost {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         externalPluginStore = new ExternalPluginStore(this);
-        seedBundledExternalPlugins();
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
         uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadPlugins();
@@ -488,15 +490,7 @@ public class MainActivity extends Activity implements PluginHost {
             }
         }
         for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            plugins.add(ExternalToolFactory.create(descriptor));
-        }
-    }
-
-    private void seedBundledExternalPlugins() {
-        try {
-            externalPluginStore.seedAccessibilityGrantPluginIfNeeded();
-        } catch (JSONException e) {
-            Toast.makeText(this, "初始化外部插件失败：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+            plugins.add(ExternalToolFactory.create(this, descriptor));
         }
     }
 
@@ -643,8 +637,8 @@ public class MainActivity extends Activity implements PluginHost {
         pendingExportPluginId = pluginId;
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/json");
-        intent.putExtra(Intent.EXTRA_TITLE, descriptor.id + ".atsplugin.json");
+        intent.setType("application/zip");
+        intent.putExtra(Intent.EXTRA_TITLE, descriptor.id + ".atsplugin");
         startActivityForResult(intent, REQUEST_EXPORT_PLUGIN);
     }
 
@@ -679,10 +673,14 @@ public class MainActivity extends Activity implements PluginHost {
             return;
         }
         try {
-            ImportedPluginDescriptor descriptor = readPluginDescriptor(data.getData());
+            PluginImport pluginImport = readPluginPackage(data.getData());
+            ImportedPluginDescriptor descriptor = pluginImport.descriptor;
             if (isBuiltInPluginId(descriptor.id)) {
                 showToast("插件 ID 与内置插件冲突");
                 return;
+            }
+            if (pluginImport.codeBytes != null) {
+                externalPluginStore.savePluginCode(descriptor.id, pluginImport.codeBytes);
             }
             externalPluginStore.save(descriptor);
             showToast("已导入插件：" + descriptor.title);
@@ -707,8 +705,8 @@ public class MainActivity extends Activity implements PluginHost {
             if (outputStream == null) {
                 throw new IOException("无法写入文件");
             }
-            outputStream.write(descriptor.toJson().getBytes(StandardCharsets.UTF_8));
-            showToast("已导出插件清单");
+            writePluginPackage(outputStream, descriptor);
+            showToast("已导出插件包");
         } catch (IOException | JSONException e) {
             showToast("导出失败：" + e.getMessage());
         }
@@ -776,15 +774,18 @@ public class MainActivity extends Activity implements PluginHost {
         return null;
     }
 
-    private ImportedPluginDescriptor readPluginDescriptor(Uri uri) throws IOException, JSONException {
+    private PluginImport readPluginPackage(Uri uri) throws IOException, JSONException {
         byte[] bytes = readBytes(uri);
         String manifestJson;
+        byte[] codeBytes = null;
         if (isZip(bytes)) {
-            manifestJson = readManifestFromZip(bytes);
+            ZipPluginPackage zipPackage = readPackageFromZip(bytes);
+            manifestJson = zipPackage.manifestJson;
+            codeBytes = zipPackage.codeBytes;
         } else {
             manifestJson = new String(bytes, StandardCharsets.UTF_8);
         }
-        return ImportedPluginDescriptor.fromJson(manifestJson);
+        return new PluginImport(ImportedPluginDescriptor.fromJson(manifestJson), codeBytes);
     }
 
     private byte[] readBytes(Uri uri) throws IOException {
@@ -806,23 +807,61 @@ public class MainActivity extends Activity implements PluginHost {
         return bytes.length >= 2 && bytes[0] == 'P' && bytes[1] == 'K';
     }
 
-    private String readManifestFromZip(byte[] bytes) throws IOException {
+    private ZipPluginPackage readPackageFromZip(byte[] bytes) throws IOException {
+        String manifestJson = null;
+        byte[] codeBytes = null;
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
                 if (!entry.isDirectory() && "manifest.json".equals(entry.getName())) {
-                    ByteArrayOutputStream output = new ByteArrayOutputStream();
-                    byte[] buffer = new byte[4096];
-                    int read;
-                    while ((read = zip.read(buffer)) != -1) {
-                        output.write(buffer, 0, read);
-                    }
-                    return new String(output.toByteArray(), StandardCharsets.UTF_8);
+                    manifestJson = new String(readZipEntry(zip), StandardCharsets.UTF_8);
+                } else if (!entry.isDirectory() && isPluginCodeEntry(entry.getName())) {
+                    codeBytes = readZipEntry(zip);
                 }
                 zip.closeEntry();
             }
         }
-        throw new IOException("插件包缺少 manifest.json");
+        if (manifestJson == null) {
+            throw new IOException("插件包缺少 manifest.json");
+        }
+        return new ZipPluginPackage(manifestJson, codeBytes);
+    }
+
+    private byte[] readZipEntry(ZipInputStream zip) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = zip.read(buffer)) != -1) {
+            output.write(buffer, 0, read);
+        }
+        return output.toByteArray();
+    }
+
+    private boolean isPluginCodeEntry(String name) {
+        return "plugin.apk".equals(name) || name.endsWith("/plugin.apk");
+    }
+
+    private void writePluginPackage(OutputStream outputStream, ImportedPluginDescriptor descriptor) throws IOException, JSONException {
+        try (ZipOutputStream zip = new ZipOutputStream(outputStream)) {
+            zip.putNextEntry(new ZipEntry("manifest.json"));
+            zip.write(descriptor.toJson().getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+
+            if (!descriptor.codePath.isEmpty()) {
+                File codeFile = new File(descriptor.codePath);
+                if (codeFile.exists()) {
+                    zip.putNextEntry(new ZipEntry("plugin.apk"));
+                    try (FileInputStream input = new FileInputStream(codeFile)) {
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = input.read(buffer)) != -1) {
+                            zip.write(buffer, 0, read);
+                        }
+                    }
+                    zip.closeEntry();
+                }
+            }
+        }
     }
 
     private void unbindShellService() {
@@ -852,6 +891,26 @@ public class MainActivity extends Activity implements PluginHost {
             this.pluginTitle = pluginTitle;
             this.key = key;
             this.widget = widget;
+        }
+    }
+
+    private static final class PluginImport {
+        final ImportedPluginDescriptor descriptor;
+        final byte[] codeBytes;
+
+        PluginImport(ImportedPluginDescriptor descriptor, byte[] codeBytes) {
+            this.descriptor = descriptor;
+            this.codeBytes = codeBytes;
+        }
+    }
+
+    private static final class ZipPluginPackage {
+        final String manifestJson;
+        final byte[] codeBytes;
+
+        ZipPluginPackage(String manifestJson, byte[] codeBytes) {
+            this.manifestJson = manifestJson;
+            this.codeBytes = codeBytes;
         }
     }
 }
