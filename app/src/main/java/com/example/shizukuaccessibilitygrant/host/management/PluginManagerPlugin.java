@@ -189,6 +189,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
 
         TextView meta = new TextView(activity);
         boolean enabled = host.isBuiltInPluginEnabled(plugin.id());
+        boolean dependenciesSatisfied = activePluginIds.containsAll(plugin.dependencies());
         meta.setText((enabled ? "已启用" : "已停用")
                 + " · 内置插件 · 权限 " + plugin.requestedPermissions().size()
                 + " · 小部件 " + plugin.createHomeWidgets(activity, host).size()
@@ -201,6 +202,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         enabledCheckBox.setTextSize(14);
         enabledCheckBox.setTextColor(UiKit.COLOR_TEXT);
         enabledCheckBox.setChecked(enabled);
+        enabledCheckBox.setEnabled(enabled || dependenciesSatisfied);
         enabledCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
             host.setBuiltInPluginEnabled(plugin.id(), isChecked);
             renderList();
@@ -208,6 +210,10 @@ public final class PluginManagerPlugin implements ToolPlugin {
         LinearLayout.LayoutParams enabledParams = new LinearLayout.LayoutParams(-1, -2);
         enabledParams.topMargin = dp(8);
         row.addView(enabledCheckBox, enabledParams);
+
+        if (!dependenciesSatisfied) {
+            addPermissionNote(row, "依赖未满足，请先启用：" + dependencyNames(plugin.dependencies(), graph));
+        }
 
         addDependencyDetails(row, plugin.id(), plugin.dependencies(), graph);
 
@@ -246,6 +252,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
 
         TextView meta = new TextView(activity);
         boolean enabled = host.isImportedPluginEnabled(descriptor.id);
+        boolean dependenciesSatisfied = activePluginIds.containsAll(descriptor.dependencies);
         meta.setText((enabled ? "已启用" : "已停用")
                 + " · 版本 " + descriptor.version
                 + " · 权限 " + descriptor.grantedPermissions.size() + "/" + descriptor.requestedPermissions.size()
@@ -254,7 +261,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         UiKit.styleCaption(meta);
         row.addView(meta, new LinearLayout.LayoutParams(-1, -2));
 
-        if (!descriptor.dependencies.isEmpty() && !activePluginIds.containsAll(descriptor.dependencies)) {
+        if (!descriptor.dependencies.isEmpty() && !dependenciesSatisfied) {
             addPermissionNote(row, "依赖未满足，插件暂不会出现在插件列表和主页中。");
         }
         if (!enabled) {
@@ -266,6 +273,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         enabledCheckBox.setTextSize(14);
         enabledCheckBox.setTextColor(UiKit.COLOR_TEXT);
         enabledCheckBox.setChecked(enabled);
+        enabledCheckBox.setEnabled(enabled || dependenciesSatisfied);
         enabledCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
             host.setImportedPluginEnabled(descriptor.id, isChecked);
             renderList();
@@ -273,6 +281,10 @@ public final class PluginManagerPlugin implements ToolPlugin {
         LinearLayout.LayoutParams enabledParams = new LinearLayout.LayoutParams(-1, -2);
         enabledParams.topMargin = dp(8);
         row.addView(enabledCheckBox, enabledParams);
+
+        if (!dependenciesSatisfied) {
+            addPermissionNote(row, "依赖满足后才能启用：" + dependencyNames(descriptor.dependencies, graph));
+        }
 
         addDependencyDetails(row, descriptor.id, descriptor.dependencies, graph);
 

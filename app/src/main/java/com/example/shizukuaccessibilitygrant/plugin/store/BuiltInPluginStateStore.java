@@ -9,7 +9,7 @@ import java.util.Set;
 
 public final class BuiltInPluginStateStore {
     private static final String PREFS_NAME = "built_in_plugins";
-    private static final String PREF_DISABLED_IDS = "disabled_ids";
+    private static final String PREF_ENABLED_IDS = "enabled_ids";
 
     private final SharedPreferences preferences;
 
@@ -18,20 +18,20 @@ public final class BuiltInPluginStateStore {
     }
 
     public boolean isEnabled(String pluginId) {
-        return !disabledIds().contains(pluginId);
+        return enabledIds().contains(pluginId);
     }
 
     public void setEnabled(String pluginId, boolean enabled) {
-        LinkedHashSet<String> ids = new LinkedHashSet<>(disabledIds());
+        LinkedHashSet<String> ids = new LinkedHashSet<>(enabledIds());
         if (enabled) {
-            ids.remove(pluginId);
-        } else {
             ids.add(pluginId);
+        } else {
+            ids.remove(pluginId);
         }
-        preferences.edit().putStringSet(PREF_DISABLED_IDS, ids).apply();
+        preferences.edit().putStringSet(PREF_ENABLED_IDS, ids).apply();
     }
 
-    public Set<String> disabledIds() {
-        return new LinkedHashSet<>(preferences.getStringSet(PREF_DISABLED_IDS, Collections.emptySet()));
+    public Set<String> enabledIds() {
+        return new LinkedHashSet<>(preferences.getStringSet(PREF_ENABLED_IDS, Collections.emptySet()));
     }
 }

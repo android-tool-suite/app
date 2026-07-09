@@ -19,7 +19,7 @@ import java.util.Set;
 public final class ExternalPluginStore {
     private static final String PREFS_NAME = "external_plugins";
     private static final String PREF_PLUGIN_JSON_SET = "plugin_json_set";
-    private static final String PREF_DISABLED_IDS = "disabled_ids";
+    private static final String PREF_ENABLED_IDS = "enabled_ids";
 
     private final Context context;
     private final SharedPreferences preferences;
@@ -72,11 +72,11 @@ public final class ExternalPluginStore {
                 rawSet.add(plugin.toJson());
             }
         }
-        LinkedHashSet<String> disabledIds = new LinkedHashSet<>(disabledIds());
-        disabledIds.remove(pluginId);
+        LinkedHashSet<String> enabledIds = new LinkedHashSet<>(enabledIds());
+        enabledIds.remove(pluginId);
         preferences.edit()
                 .putStringSet(PREF_PLUGIN_JSON_SET, rawSet)
-                .putStringSet(PREF_DISABLED_IDS, disabledIds)
+                .putStringSet(PREF_ENABLED_IDS, enabledIds)
                 .apply();
         deleteRecursively(pluginDir(pluginId));
     }
@@ -122,21 +122,21 @@ public final class ExternalPluginStore {
     }
 
     public boolean isEnabled(String pluginId) {
-        return !disabledIds().contains(pluginId);
+        return enabledIds().contains(pluginId);
     }
 
     public void setEnabled(String pluginId, boolean enabled) {
-        LinkedHashSet<String> ids = new LinkedHashSet<>(disabledIds());
+        LinkedHashSet<String> ids = new LinkedHashSet<>(enabledIds());
         if (enabled) {
-            ids.remove(pluginId);
-        } else {
             ids.add(pluginId);
+        } else {
+            ids.remove(pluginId);
         }
-        preferences.edit().putStringSet(PREF_DISABLED_IDS, ids).apply();
+        preferences.edit().putStringSet(PREF_ENABLED_IDS, ids).apply();
     }
 
-    public Set<String> disabledIds() {
-        return new LinkedHashSet<>(preferences.getStringSet(PREF_DISABLED_IDS, Collections.emptySet()));
+    public Set<String> enabledIds() {
+        return new LinkedHashSet<>(preferences.getStringSet(PREF_ENABLED_IDS, Collections.emptySet()));
     }
 
     private File pluginDir(String pluginId) {

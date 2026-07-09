@@ -716,7 +716,7 @@ public class MainActivity extends Activity implements PluginHost {
                 externalPluginStore.savePluginCode(descriptor.id, pluginImport.codeBytes);
             }
             externalPluginStore.save(descriptor);
-            showToast("已导入插件：" + descriptor.title);
+            showToast("已导入插件，默认停用：" + descriptor.title);
             reloadPlugins(descriptor.id);
         } catch (IOException | JSONException e) {
             showToast("导入失败：" + e.getMessage());
@@ -752,7 +752,18 @@ public class MainActivity extends Activity implements PluginHost {
 
     @Override
     public void setImportedPluginEnabled(String pluginId, boolean enabled) {
-        if (!enabled) {
+        ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
+        if (descriptor == null) {
+            showToast("插件不存在");
+            return;
+        }
+        if (enabled) {
+            List<String> missingDependencies = findMissingDependencyTitles(descriptor.dependencies);
+            if (!missingDependencies.isEmpty()) {
+                showToast("无法启用，依赖未满足：" + joinNames(missingDependencies));
+                return;
+            }
+        } else {
             List<String> dependents = findDependentPluginTitles(pluginId);
             if (!dependents.isEmpty()) {
                 showToast("无法停用，仍被依赖：" + joinNames(dependents));
@@ -797,7 +808,18 @@ public class MainActivity extends Activity implements PluginHost {
 
     @Override
     public void setBuiltInPluginEnabled(String pluginId, boolean enabled) {
-        if (!enabled) {
+        ToolPlugin target = findBuiltInPlugin(pluginId);
+        if (target == null) {
+            showToast("内置插件不存在");
+            return;
+        }
+        if (enabled) {
+            List<String> missingDependencies = findMissingDependencyTitles(target.dependencies());
+            if (!missingDependencies.isEmpty()) {
+                showToast("无法启用，依赖未满足：" + joinNames(missingDependencies));
+                return;
+            }
+        } else {
             List<String> dependents = findDependentPluginTitles(pluginId);
             if (!dependents.isEmpty()) {
                 showToast("无法停用，仍被依赖：" + joinNames(dependents));
@@ -819,6 +841,43 @@ public class MainActivity extends Activity implements PluginHost {
             }
         }
         return ShizukuPlugin.ID.equals(pluginId);
+    }
+
+    private ToolPlugin findBuiltInPlugin(String pluginId) {
+        for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
+            if (plugin.id().equals(pluginId)) {
+                return plugin;
+            }
+        }
+        return null;
+    }
+
+    private List<String> findMissingDependencyTitles(Set<String> dependencies) {
+        Set<String> activeIds = activePluginIds();
+        List<String> missing = new ArrayList<>();
+        for (String dependency : dependencies) {
+            if (!activeIds.contains(dependency)) {
+                missing.add(pluginTitleOrId(dependency));
+            }
+        }
+        return missing;
+    }
+
+    private Set<String> activePluginIds() {
+        LinkedHashSet<String> activeIds = new LinkedHashSet<>();
+        for (ToolPlugin plugin : plugins) {
+            activeIds.add(plugin.id());
+        }
+        return activeIds;
+    }
+
+    private String pluginTitleOrId(String pluginId) {
+        ToolPlugin builtInPlugin = findBuiltInPlugin(pluginId);
+        if (builtInPlugin != null) {
+            return builtInPlugin.title();
+        }
+        ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
+        return descriptor == null ? pluginId : descriptor.title;
     }
 
     private List<String> findDependentPluginTitles(String pluginId) {
