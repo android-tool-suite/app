@@ -17,8 +17,11 @@ import android.widget.TextView;
 
 import com.example.shizukuaccessibilitygrant.ui.UiKit;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class PluginManagerPlugin implements ToolPlugin {
@@ -122,14 +125,15 @@ public final class PluginManagerPlugin implements ToolPlugin {
         List<ToolPlugin> installedPlugins = host.installedPlugins();
         Set<String> activePluginIds = activePluginIds(installedPlugins);
         List<ImportedPluginDescriptor> imported = store.load();
+        List<ToolPlugin> builtIns = host.optionalBuiltInPlugins();
+        PluginGraph graph = buildPluginGraph(builtIns, imported, activePluginIds);
 
         addSectionTitle("内置插件");
-        List<ToolPlugin> builtIns = host.optionalBuiltInPlugins();
         if (builtIns.isEmpty()) {
             addMutedMessage("没有可管理的内置插件。");
         } else {
             for (ToolPlugin plugin : builtIns) {
-                list.addView(createBuiltInRow(plugin, activePluginIds), new LinearLayout.LayoutParams(-1, -2));
+                list.addView(createBuiltInRow(plugin, activePluginIds, graph), new LinearLayout.LayoutParams(-1, -2));
             }
         }
 
@@ -142,12 +146,13 @@ public final class PluginManagerPlugin implements ToolPlugin {
             empty.setTextColor(UiKit.COLOR_MUTED);
             empty.setPadding(0, dp(36), 0, 0);
             list.addView(empty, new LinearLayout.LayoutParams(-1, -2));
-            return;
+        } else {
+            for (ImportedPluginDescriptor descriptor : imported) {
+                list.addView(createPluginRow(descriptor, activePluginIds, graph), new LinearLayout.LayoutParams(-1, -2));
+            }
         }
 
-        for (ImportedPluginDescriptor descriptor : imported) {
-            list.addView(createPluginRow(descriptor, activePluginIds), new LinearLayout.LayoutParams(-1, -2));
-        }
+        addDependencyTree(graph);
     }
 
     private void addSectionTitle(String text) {
@@ -169,7 +174,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         list.addView(message, new LinearLayout.LayoutParams(-1, -2));
     }
 
-    private View createBuiltInRow(ToolPlugin plugin, Set<String> activePluginIds) {
+    private View createBuiltInRow(ToolPlugin plugin, Set<String> activePluginIds, PluginGraph graph) {
         LinearLayout row = UiKit.card(activity);
 
         TextView title = new TextView(activity);
@@ -204,6 +209,8 @@ public final class PluginManagerPlugin implements ToolPlugin {
         enabledParams.topMargin = dp(8);
         row.addView(enabledCheckBox, enabledParams);
 
+        addDependencyDetails(row, plugin.id(), plugin.dependencies(), graph);
+
         if (plugin.requestedPermissions().isEmpty()) {
             addPermissionNote(row, "该内置插件未注册额外权限。");
         } else {
@@ -224,7 +231,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         return wrapper;
     }
 
-    private View createPluginRow(ImportedPluginDescriptor descriptor, Set<String> activePluginIds) {
+    private View createPluginRow(ImportedPluginDescriptor descriptor, Set<String> activePluginIds, PluginGraph graph) {
         LinearLayout row = UiKit.card(activity);
 
         TextView title = new TextView(activity);
@@ -238,7 +245,9 @@ public final class PluginManagerPlugin implements ToolPlugin {
         row.addView(description, new LinearLayout.LayoutParams(-1, -2));
 
         TextView meta = new TextView(activity);
-        meta.setText("版本 " + descriptor.version
+        boolean enabled = host.isImportedPluginEnabled(descriptor.id);
+        meta.setText((enabled ? "已启用" : "已停用")
+                + " · 版本 " + descriptor.version
                 + " · 权限 " + descriptor.grantedPermissions.size() + "/" + descriptor.requestedPermissions.size()
                 + " · 小部件 " + descriptor.widgets.size()
                 + dependencySummary(descriptor.dependencies, activePluginIds));
@@ -248,6 +257,24 @@ public final class PluginManagerPlugin implements ToolPlugin {
         if (!descriptor.dependencies.isEmpty() && !activePluginIds.containsAll(descriptor.dependencies)) {
             addPermissionNote(row, "依赖未满足，插件暂不会出现在插件列表和主页中。");
         }
+        if (!enabled) {
+            addPermissionNote(row, "插件已停用，暂不会出现在插件列表和主页中。");
+        }
+
+        CheckBox enabledCheckBox = new CheckBox(activity);
+        enabledCheckBox.setText("启用此外部插件");
+        enabledCheckBox.setTextSize(14);
+        enabledCheckBox.setTextColor(UiKit.COLOR_TEXT);
+        enabledCheckBox.setChecked(enabled);
+        enabledCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            host.setImportedPluginEnabled(descriptor.id, isChecked);
+            renderList();
+        });
+        LinearLayout.LayoutParams enabledParams = new LinearLayout.LayoutParams(-1, -2);
+        enabledParams.topMargin = dp(8);
+        row.addView(enabledCheckBox, enabledParams);
+
+        addDependencyDetails(row, descriptor.id, descriptor.dependencies, graph);
 
         if (descriptor.requestedPermissions.isEmpty()) {
             addPermissionNote(row, "该插件未注册额外权限。");
@@ -303,6 +330,43 @@ public final class PluginManagerPlugin implements ToolPlugin {
         row.addView(note, new LinearLayout.LayoutParams(-1, -2));
     }
 
+    private void addDependencyDetails(LinearLayout row, String pluginId, Set<String> dependencies, PluginGraph graph) {
+        addPermissionNote(row, "依赖：" + dependencyNames(dependencies, graph));
+        List<PluginInfo> dependents = graph.dependentsOf(pluginId);
+        if (dependents.isEmpty()) {
+            addPermissionNote(row, "被依赖：无");
+        } else {
+            addPermissionNote(row, "被依赖：" + pluginNames(dependents));
+        }
+    }
+
+    private void addDependencyTree(PluginGraph graph) {
+        addSectionTitle("依赖关系");
+        if (graph.plugins.isEmpty()) {
+            addMutedMessage("还没有可查看的插件依赖。");
+            return;
+        }
+        LinearLayout card = UiKit.card(activity);
+        TextView title = new TextView(activity);
+        title.setText("插件依赖树");
+        UiKit.styleTitle(title, 16);
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView body = new TextView(activity);
+        body.setText(buildDependencyTreeText(graph));
+        body.setTextSize(13);
+        body.setTextColor(UiKit.COLOR_MUTED);
+        body.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(-1, -2);
+        bodyParams.topMargin = dp(8);
+        card.addView(body, bodyParams);
+
+        LinearLayout wrapper = new LinearLayout(activity);
+        wrapper.setPadding(0, 0, 0, dp(10));
+        wrapper.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        list.addView(wrapper, new LinearLayout.LayoutParams(-1, -2));
+    }
+
     private Set<String> activePluginIds(List<ToolPlugin> plugins) {
         LinkedHashSet<String> ids = new LinkedHashSet<>();
         for (ToolPlugin plugin : plugins) {
@@ -324,7 +388,159 @@ public final class PluginManagerPlugin implements ToolPlugin {
         return " · 依赖 " + satisfied + "/" + dependencies.size();
     }
 
+    private PluginGraph buildPluginGraph(List<ToolPlugin> builtIns, List<ImportedPluginDescriptor> imported, Set<String> activePluginIds) {
+        PluginGraph graph = new PluginGraph();
+        for (ToolPlugin plugin : builtIns) {
+            graph.add(new PluginInfo(
+                    plugin.id(),
+                    plugin.title(),
+                    plugin.dependencies(),
+                    host.isBuiltInPluginEnabled(plugin.id()),
+                    activePluginIds.contains(plugin.id()),
+                    true
+            ));
+        }
+        for (ImportedPluginDescriptor descriptor : imported) {
+            graph.add(new PluginInfo(
+                    descriptor.id,
+                    descriptor.title,
+                    descriptor.dependencies,
+                    host.isImportedPluginEnabled(descriptor.id),
+                    activePluginIds.contains(descriptor.id),
+                    false
+            ));
+        }
+        return graph;
+    }
+
+    private String dependencyNames(Set<String> dependencies, PluginGraph graph) {
+        if (dependencies.isEmpty()) {
+            return "无";
+        }
+        List<String> names = new ArrayList<>();
+        for (String dependency : dependencies) {
+            PluginInfo info = graph.find(dependency);
+            if (info == null) {
+                names.add(dependency + "（缺失）");
+            } else {
+                names.add(info.title + "（" + statusText(info) + "）");
+            }
+        }
+        return joinNames(names);
+    }
+
+    private String pluginNames(List<PluginInfo> plugins) {
+        List<String> names = new ArrayList<>();
+        for (PluginInfo plugin : plugins) {
+            names.add(plugin.title + "（" + statusText(plugin) + "）");
+        }
+        return joinNames(names);
+    }
+
+    private String buildDependencyTreeText(PluginGraph graph) {
+        StringBuilder builder = new StringBuilder();
+        for (PluginInfo plugin : graph.plugins.values()) {
+            if (builder.length() > 0) {
+                builder.append("\n\n");
+            }
+            appendDependencyTree(builder, graph, plugin.id, new LinkedHashSet<>(), 0);
+        }
+        return builder.toString();
+    }
+
+    private void appendDependencyTree(StringBuilder builder, PluginGraph graph, String pluginId, Set<String> visiting, int depth) {
+        PluginInfo plugin = graph.find(pluginId);
+        appendIndent(builder, depth);
+        if (plugin == null) {
+            builder.append(pluginId).append("（缺失）");
+            return;
+        }
+        builder.append(plugin.title).append("（").append(statusText(plugin)).append("）");
+        if (!visiting.add(pluginId)) {
+            builder.append(" · 循环依赖");
+            return;
+        }
+        if (plugin.dependencies.isEmpty()) {
+            builder.append("\n");
+            appendIndent(builder, depth + 1);
+            builder.append("无依赖");
+        } else {
+            for (String dependency : plugin.dependencies) {
+                builder.append("\n");
+                appendDependencyTree(builder, graph, dependency, new LinkedHashSet<>(visiting), depth + 1);
+            }
+        }
+    }
+
+    private void appendIndent(StringBuilder builder, int depth) {
+        for (int i = 0; i < depth; i++) {
+            builder.append("  ");
+        }
+        builder.append(depth == 0 ? "" : "- ");
+    }
+
+    private String statusText(PluginInfo plugin) {
+        if (!plugin.enabled) {
+            return "已停用";
+        }
+        if (!plugin.active) {
+            return "依赖未满足";
+        }
+        return "已启用";
+    }
+
+    private String joinNames(List<String> values) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                builder.append("、");
+            }
+            builder.append(values.get(i));
+        }
+        return builder.toString();
+    }
+
     private int dp(int value) {
         return Math.round(value * activity.getResources().getDisplayMetrics().density);
+    }
+
+    private static final class PluginGraph {
+        final Map<String, PluginInfo> plugins = new LinkedHashMap<>();
+
+        void add(PluginInfo plugin) {
+            plugins.put(plugin.id, plugin);
+        }
+
+        PluginInfo find(String pluginId) {
+            return plugins.get(pluginId);
+        }
+
+        List<PluginInfo> dependentsOf(String pluginId) {
+            List<PluginInfo> dependents = new ArrayList<>();
+            for (PluginInfo plugin : plugins.values()) {
+                if (plugin.dependencies.contains(pluginId)) {
+                    dependents.add(plugin);
+                }
+            }
+            return dependents;
+        }
+    }
+
+    private static final class PluginInfo {
+        final String id;
+        final String title;
+        final Set<String> dependencies;
+        final boolean enabled;
+        final boolean active;
+        final boolean builtIn;
+
+        PluginInfo(String id, String title, Set<String> dependencies, boolean enabled, boolean active, boolean builtIn) {
+            this.id = id;
+            this.title = title;
+            this.dependencies = dependencies;
+            this.enabled = enabled;
+            this.active = active;
+            this.builtIn = builtIn;
+        }
     }
 }

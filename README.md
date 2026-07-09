@@ -42,7 +42,7 @@ plugins/accessibility-grant/
 
 ## 导入插件
 
-当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中导出、删除和授权。带 `plugin.apk` 和 `entryClass` 的 `.atsplugin` 会作为可执行插件动态加载；纯 JSON 清单只展示插件信息和权限。插件可以通过 `dependencies` 声明依赖，依赖未满足时不会进入主页和插件列表。
+当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中导出、删除、启停和授权。带 `plugin.apk` 和 `entryClass` 的 `.atsplugin` 会作为可执行插件动态加载；纯 JSON 清单只展示插件信息和权限。插件可以通过 `dependencies` 声明依赖，依赖未满足或插件被停用时不会进入主页和插件列表。管理页会显示依赖树和反向依赖关系，方便判断某个插件被哪些插件依赖。
 
 示例清单见：
 

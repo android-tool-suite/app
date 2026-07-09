@@ -505,7 +505,9 @@ public class MainActivity extends Activity implements PluginHost {
             loadedPlugin = false;
             for (int i = pendingExternalPlugins.size() - 1; i >= 0; i--) {
                 ImportedPluginDescriptor descriptor = pendingExternalPlugins.get(i);
-                if (areDependenciesSatisfied(descriptor.dependencies, activeIds)) {
+                if (!externalPluginStore.isEnabled(descriptor.id)) {
+                    pendingExternalPlugins.remove(i);
+                } else if (areDependenciesSatisfied(descriptor.dependencies, activeIds)) {
                     ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
                     plugins.add(plugin);
                     activeIds.add(plugin.id());
@@ -670,6 +672,11 @@ public class MainActivity extends Activity implements PluginHost {
 
     @Override
     public void deleteImportedPlugin(String pluginId) {
+        List<String> dependents = findDependentPluginTitles(pluginId);
+        if (!dependents.isEmpty()) {
+            showToast("无法删除，仍被依赖：" + joinNames(dependents));
+            return;
+        }
         try {
             externalPluginStore.delete(pluginId);
             showToast("已删除插件");
@@ -739,6 +746,25 @@ public class MainActivity extends Activity implements PluginHost {
     }
 
     @Override
+    public boolean isImportedPluginEnabled(String pluginId) {
+        return externalPluginStore.isEnabled(pluginId);
+    }
+
+    @Override
+    public void setImportedPluginEnabled(String pluginId, boolean enabled) {
+        if (!enabled) {
+            List<String> dependents = findDependentPluginTitles(pluginId);
+            if (!dependents.isEmpty()) {
+                showToast("无法停用，仍被依赖：" + joinNames(dependents));
+                return;
+            }
+        }
+        externalPluginStore.setEnabled(pluginId, enabled);
+        showToast(enabled ? "已启用插件" : "已停用插件");
+        reloadPlugins(enabled ? pluginId : null);
+    }
+
+    @Override
     public void setImportedPluginPermission(String pluginId, String permission, boolean granted) {
         try {
             externalPluginStore.setPermission(pluginId, permission, granted);
@@ -805,7 +831,7 @@ public class MainActivity extends Activity implements PluginHost {
             }
         }
         for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            if (descriptor.dependencies.contains(pluginId)) {
+            if (externalPluginStore.isEnabled(descriptor.id) && descriptor.dependencies.contains(pluginId)) {
                 dependents.add(descriptor.title);
             }
         }

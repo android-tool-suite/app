@@ -28,6 +28,10 @@ public interface PluginHost {
 
     void deleteImportedPlugin(String pluginId);
 
+    boolean isImportedPluginEnabled(String pluginId);
+
+    void setImportedPluginEnabled(String pluginId, boolean enabled);
+
     void setImportedPluginPermission(String pluginId, String permission, boolean granted);
 
     boolean hasImportedPluginPermission(String pluginId, String permission);
