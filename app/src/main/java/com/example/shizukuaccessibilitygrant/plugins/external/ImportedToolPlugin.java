@@ -55,6 +55,11 @@ public final class ImportedToolPlugin implements ToolPlugin {
     }
 
     @Override
+    public Set<String> dependencies() {
+        return descriptor.dependencies;
+    }
+
+    @Override
     public List<HomeWidget> createHomeWidgets(Activity activity, PluginHost host) {
         List<HomeWidget> widgets = new ArrayList<>();
         for (ImportedWidgetDescriptor widget : descriptor.widgets) {

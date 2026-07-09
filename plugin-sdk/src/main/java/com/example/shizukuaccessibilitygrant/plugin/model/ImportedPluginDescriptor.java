@@ -21,6 +21,7 @@ public final class ImportedPluginDescriptor {
     public final String codePath;
     public final Set<String> requestedPermissions;
     public final Set<String> grantedPermissions;
+    public final Set<String> dependencies;
     public final List<ImportedWidgetDescriptor> widgets;
 
     public ImportedPluginDescriptor(
@@ -34,6 +35,7 @@ public final class ImportedPluginDescriptor {
             String codePath,
             Set<String> requestedPermissions,
             Set<String> grantedPermissions,
+            Set<String> dependencies,
             List<ImportedWidgetDescriptor> widgets
     ) {
         this.id = id;
@@ -46,6 +48,7 @@ public final class ImportedPluginDescriptor {
         this.codePath = codePath;
         this.requestedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(requestedPermissions));
         this.grantedPermissions = Collections.unmodifiableSet(new LinkedHashSet<>(grantedPermissions));
+        this.dependencies = Collections.unmodifiableSet(new LinkedHashSet<>(dependencies));
         this.widgets = Collections.unmodifiableList(new ArrayList<>(widgets));
     }
 
@@ -75,6 +78,7 @@ public final class ImportedPluginDescriptor {
                 "",
                 readStringSet(firstArray(root, json, "permissions", "requestedPermissions")),
                 readStringSet(json.optJSONArray("grantedPermissions")),
+                readStringSet(firstArray(root, json, "dependencies", "pluginDependencies")),
                 readWidgets(firstArray(root, json, "widgets", "homeWidgets"))
         );
     }
@@ -97,6 +101,7 @@ public final class ImportedPluginDescriptor {
 
         root.put("plugin", plugin);
         root.put("permissions", toArray(requestedPermissions));
+        root.put("dependencies", toArray(dependencies));
         root.put("widgets", widgetsToArray(widgets));
         return root.toString();
     }
@@ -113,6 +118,7 @@ public final class ImportedPluginDescriptor {
                 codePath,
                 requestedPermissions,
                 permissions,
+                dependencies,
                 widgets
         );
     }
@@ -129,6 +135,7 @@ public final class ImportedPluginDescriptor {
                 path,
                 requestedPermissions,
                 grantedPermissions,
+                dependencies,
                 widgets
         );
     }

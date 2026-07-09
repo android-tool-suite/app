@@ -22,7 +22,7 @@
 ```text
 app/src/main/java/com/example/shizukuaccessibilitygrant/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
-  plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、权限目录
+  plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、权限目录、依赖声明
   plugin/store/         插件状态、外部插件清单存储
   plugin/runtime/       插件注册器和外部插件工厂
   plugins/              具体插件实现
@@ -42,7 +42,7 @@ plugins/accessibility-grant/
 
 ## 导入插件
 
-当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中导出、删除和授权。带 `plugin.apk` 和 `entryClass` 的 `.atsplugin` 会作为可执行插件动态加载；纯 JSON 清单只展示插件信息和权限。
+当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中导出、删除和授权。带 `plugin.apk` 和 `entryClass` 的 `.atsplugin` 会作为可执行插件动态加载；纯 JSON 清单只展示插件信息和权限。插件可以通过 `dependencies` 声明依赖，依赖未满足时不会进入主页和插件列表。
 
 示例清单见：
 

@@ -17,7 +17,9 @@ import android.widget.TextView;
 
 import com.example.shizukuaccessibilitygrant.ui.UiKit;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class PluginManagerPlugin implements ToolPlugin {
     private Activity activity;
@@ -118,12 +120,16 @@ public final class PluginManagerPlugin implements ToolPlugin {
         list.removeAllViews();
         ExternalPluginStore store = new ExternalPluginStore(activity);
         List<ToolPlugin> installedPlugins = host.installedPlugins();
+        Set<String> activePluginIds = activePluginIds(installedPlugins);
         List<ImportedPluginDescriptor> imported = store.load();
 
-        addSectionTitle("已安装插件");
-        for (ToolPlugin plugin : installedPlugins) {
-            if (!plugin.removable()) {
-                list.addView(createBuiltInRow(plugin), new LinearLayout.LayoutParams(-1, -2));
+        addSectionTitle("内置插件");
+        List<ToolPlugin> builtIns = host.optionalBuiltInPlugins();
+        if (builtIns.isEmpty()) {
+            addMutedMessage("没有可管理的内置插件。");
+        } else {
+            for (ToolPlugin plugin : builtIns) {
+                list.addView(createBuiltInRow(plugin, activePluginIds), new LinearLayout.LayoutParams(-1, -2));
             }
         }
 
@@ -140,7 +146,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         }
 
         for (ImportedPluginDescriptor descriptor : imported) {
-            list.addView(createPluginRow(descriptor), new LinearLayout.LayoutParams(-1, -2));
+            list.addView(createPluginRow(descriptor, activePluginIds), new LinearLayout.LayoutParams(-1, -2));
         }
     }
 
@@ -163,7 +169,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         list.addView(message, new LinearLayout.LayoutParams(-1, -2));
     }
 
-    private View createBuiltInRow(ToolPlugin plugin) {
+    private View createBuiltInRow(ToolPlugin plugin, Set<String> activePluginIds) {
         LinearLayout row = UiKit.card(activity);
 
         TextView title = new TextView(activity);
@@ -177,9 +183,26 @@ public final class PluginManagerPlugin implements ToolPlugin {
         row.addView(description, new LinearLayout.LayoutParams(-1, -2));
 
         TextView meta = new TextView(activity);
-        meta.setText("内置插件 · 权限 " + plugin.requestedPermissions().size() + " · 小部件 " + plugin.createHomeWidgets(activity, host).size());
+        boolean enabled = host.isBuiltInPluginEnabled(plugin.id());
+        meta.setText((enabled ? "已启用" : "已停用")
+                + " · 内置插件 · 权限 " + plugin.requestedPermissions().size()
+                + " · 小部件 " + plugin.createHomeWidgets(activity, host).size()
+                + dependencySummary(plugin.dependencies(), activePluginIds));
         UiKit.styleCaption(meta);
         row.addView(meta, new LinearLayout.LayoutParams(-1, -2));
+
+        CheckBox enabledCheckBox = new CheckBox(activity);
+        enabledCheckBox.setText("启用此内置插件");
+        enabledCheckBox.setTextSize(14);
+        enabledCheckBox.setTextColor(UiKit.COLOR_TEXT);
+        enabledCheckBox.setChecked(enabled);
+        enabledCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            host.setBuiltInPluginEnabled(plugin.id(), isChecked);
+            renderList();
+        });
+        LinearLayout.LayoutParams enabledParams = new LinearLayout.LayoutParams(-1, -2);
+        enabledParams.topMargin = dp(8);
+        row.addView(enabledCheckBox, enabledParams);
 
         if (plugin.requestedPermissions().isEmpty()) {
             addPermissionNote(row, "该内置插件未注册额外权限。");
@@ -201,7 +224,7 @@ public final class PluginManagerPlugin implements ToolPlugin {
         return wrapper;
     }
 
-    private View createPluginRow(ImportedPluginDescriptor descriptor) {
+    private View createPluginRow(ImportedPluginDescriptor descriptor, Set<String> activePluginIds) {
         LinearLayout row = UiKit.card(activity);
 
         TextView title = new TextView(activity);
@@ -217,9 +240,14 @@ public final class PluginManagerPlugin implements ToolPlugin {
         TextView meta = new TextView(activity);
         meta.setText("版本 " + descriptor.version
                 + " · 权限 " + descriptor.grantedPermissions.size() + "/" + descriptor.requestedPermissions.size()
-                + " · 小部件 " + descriptor.widgets.size());
+                + " · 小部件 " + descriptor.widgets.size()
+                + dependencySummary(descriptor.dependencies, activePluginIds));
         UiKit.styleCaption(meta);
         row.addView(meta, new LinearLayout.LayoutParams(-1, -2));
+
+        if (!descriptor.dependencies.isEmpty() && !activePluginIds.containsAll(descriptor.dependencies)) {
+            addPermissionNote(row, "依赖未满足，插件暂不会出现在插件列表和主页中。");
+        }
 
         if (descriptor.requestedPermissions.isEmpty()) {
             addPermissionNote(row, "该插件未注册额外权限。");
@@ -273,6 +301,27 @@ public final class PluginManagerPlugin implements ToolPlugin {
         note.setTextColor(UiKit.COLOR_MUTED);
         note.setPadding(0, dp(8), 0, 0);
         row.addView(note, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private Set<String> activePluginIds(List<ToolPlugin> plugins) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (ToolPlugin plugin : plugins) {
+            ids.add(plugin.id());
+        }
+        return ids;
+    }
+
+    private String dependencySummary(Set<String> dependencies, Set<String> activePluginIds) {
+        if (dependencies.isEmpty()) {
+            return " · 依赖 0";
+        }
+        int satisfied = 0;
+        for (String dependency : dependencies) {
+            if (activePluginIds.contains(dependency)) {
+                satisfied++;
+            }
+        }
+        return " · 依赖 " + satisfied + "/" + dependencies.size();
     }
 
     private int dp(int value) {

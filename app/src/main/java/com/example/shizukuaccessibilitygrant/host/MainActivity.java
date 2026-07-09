@@ -354,6 +354,7 @@ public class MainActivity extends Activity implements PluginHost {
         TextView meta = new TextView(this);
         meta.setText((plugin.removable() ? "外部插件" : "内置插件")
                 + " · 权限 " + plugin.requestedPermissions().size()
+                + " · 依赖 " + plugin.dependencies().size()
                 + " · 小部件 " + plugin.createHomeWidgets(this, this).size());
         UiKit.styleCaption(meta);
         LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
@@ -481,17 +482,42 @@ public class MainActivity extends Activity implements PluginHost {
 
     private void loadPlugins() {
         plugins.clear();
-        plugins.addAll(ToolRegistry.createRequiredBuiltInPlugins());
-        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
-            if (builtInPluginStateStore.isEnabled(plugin.id())) {
+        LinkedHashSet<String> activeIds = new LinkedHashSet<>();
+        for (ToolPlugin plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
+            if (areDependenciesSatisfied(plugin.dependencies(), activeIds)) {
                 plugins.add(plugin);
+                activeIds.add(plugin.id());
             } else {
                 plugin.onDestroy();
             }
         }
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            plugins.add(ExternalToolFactory.create(this, descriptor));
+        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
+            if (builtInPluginStateStore.isEnabled(plugin.id()) && areDependenciesSatisfied(plugin.dependencies(), activeIds)) {
+                plugins.add(plugin);
+                activeIds.add(plugin.id());
+            } else {
+                plugin.onDestroy();
+            }
         }
+        List<ImportedPluginDescriptor> pendingExternalPlugins = new ArrayList<>(externalPluginStore.load());
+        boolean loadedPlugin;
+        do {
+            loadedPlugin = false;
+            for (int i = pendingExternalPlugins.size() - 1; i >= 0; i--) {
+                ImportedPluginDescriptor descriptor = pendingExternalPlugins.get(i);
+                if (areDependenciesSatisfied(descriptor.dependencies, activeIds)) {
+                    ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
+                    plugins.add(plugin);
+                    activeIds.add(plugin.id());
+                    pendingExternalPlugins.remove(i);
+                    loadedPlugin = true;
+                }
+            }
+        } while (loadedPlugin);
+    }
+
+    private boolean areDependenciesSatisfied(Set<String> dependencies, Set<String> activeIds) {
+        return activeIds.containsAll(dependencies);
     }
 
     private void reloadPlugins(String preferredPluginId) {
@@ -745,6 +771,13 @@ public class MainActivity extends Activity implements PluginHost {
 
     @Override
     public void setBuiltInPluginEnabled(String pluginId, boolean enabled) {
+        if (!enabled) {
+            List<String> dependents = findDependentPluginTitles(pluginId);
+            if (!dependents.isEmpty()) {
+                showToast("无法停用，仍被依赖：" + joinNames(dependents));
+                return;
+            }
+        }
         builtInPluginStateStore.setEnabled(pluginId, enabled);
         showToast(enabled ? "已启用插件" : "已停用插件");
         reloadPlugins(enabled ? pluginId : null);
@@ -760,6 +793,34 @@ public class MainActivity extends Activity implements PluginHost {
             }
         }
         return ShizukuPlugin.ID.equals(pluginId);
+    }
+
+    private List<String> findDependentPluginTitles(String pluginId) {
+        List<String> dependents = new ArrayList<>();
+        for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
+            if (!plugin.id().equals(pluginId)
+                    && builtInPluginStateStore.isEnabled(plugin.id())
+                    && plugin.dependencies().contains(pluginId)) {
+                dependents.add(plugin.title());
+            }
+        }
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            if (descriptor.dependencies.contains(pluginId)) {
+                dependents.add(descriptor.title);
+            }
+        }
+        return dependents;
+    }
+
+    private String joinNames(List<String> values) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                builder.append("、");
+            }
+            builder.append(values.get(i));
+        }
+        return builder.toString();
     }
 
     private ImportedPluginDescriptor findImportedDescriptor(String pluginId) {

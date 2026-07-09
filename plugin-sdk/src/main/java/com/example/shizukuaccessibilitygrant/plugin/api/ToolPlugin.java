@@ -20,6 +20,10 @@ public interface ToolPlugin {
         return Collections.emptySet();
     }
 
+    default Set<String> dependencies() {
+        return Collections.emptySet();
+    }
+
     default List<HomeWidget> createHomeWidgets(Activity activity, PluginHost host) {
         return Collections.emptyList();
     }

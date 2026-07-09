@@ -52,6 +52,9 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
     "file.picker",
     "package.query"
   ],
+  "dependencies": [
+    "shizuku_auth"
+  ],
   "widgets": [
     {
       "id": "summary",
@@ -74,6 +77,16 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
 - `file.picker`：请求宿主打开系统文件选择器。
 
 导入后权限默认不授予，需要用户在“插件管理”里逐项开启。
+
+## 依赖
+
+插件可以通过 `dependencies` 或 `pluginDependencies` 声明依赖的插件 ID。宿主只会加载依赖已满足的插件；依赖未满足时，插件仍会出现在“插件管理”中，但不会出现在主页和插件列表。
+
+常见依赖：
+
+- `shizuku_auth`：宿主内置的 Shizuku 授权插件。
+
+内置插件也可以声明依赖。用户可以在“插件管理”中启用或停用内置插件；如果某个插件仍被其他已安装插件依赖，宿主会阻止停用并提示依赖方。
 
 ## 主页小部件
 

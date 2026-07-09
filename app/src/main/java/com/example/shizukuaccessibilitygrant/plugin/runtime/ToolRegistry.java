@@ -10,13 +10,13 @@ public final class ToolRegistry {
     }
 
     public static List<ToolPlugin> createRequiredBuiltInPlugins() {
-        List<ToolPlugin> plugins = new ArrayList<>();
-        plugins.add(new ShizukuPlugin());
-        return plugins;
+        return new ArrayList<>();
     }
 
     public static List<ToolPlugin> createOptionalBuiltInPlugins() {
-        return new ArrayList<>();
+        List<ToolPlugin> plugins = new ArrayList<>();
+        plugins.add(new ShizukuPlugin());
+        return plugins;
     }
 
     public static List<ToolPlugin> createBuiltInPlugins() {
