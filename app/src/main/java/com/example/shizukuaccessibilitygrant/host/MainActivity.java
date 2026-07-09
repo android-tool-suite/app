@@ -15,6 +15,8 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -399,6 +401,7 @@ public class MainActivity extends Activity implements PluginHost {
         root.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         View pluginView = plugin.createView(this, this);
+        detachFromParent(pluginView);
         LinearLayout.LayoutParams pluginParams = new LinearLayout.LayoutParams(-1, 0, 1);
         pluginParams.topMargin = dp(14);
         root.addView(pluginView, pluginParams);
@@ -406,6 +409,13 @@ public class MainActivity extends Activity implements PluginHost {
 
         updateBottomButtons();
         plugin.onSelected();
+    }
+
+    private void detachFromParent(View view) {
+        ViewParent parent = view.getParent();
+        if (parent instanceof ViewGroup) {
+            ((ViewGroup) parent).removeView(view);
+        }
     }
 
     private void showPluginManager() {
