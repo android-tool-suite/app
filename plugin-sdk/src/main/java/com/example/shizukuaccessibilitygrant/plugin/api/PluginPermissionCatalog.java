@@ -10,6 +10,7 @@ public final class PluginPermissionCatalog {
     public static final String ACCESSIBILITY_SETTINGS = "accessibility.settings";
     public static final String PACKAGE_QUERY = "package.query";
     public static final String FILE_PICKER = "file.picker";
+    public static final String NETWORK = "network";
 
     private PluginPermissionCatalog() {
     }
@@ -20,7 +21,8 @@ public final class PluginPermissionCatalog {
                 SHELL_EXEC,
                 ACCESSIBILITY_SETTINGS,
                 PACKAGE_QUERY,
-                FILE_PICKER
+                FILE_PICKER,
+                NETWORK
         ));
     }
 
@@ -36,6 +38,8 @@ public final class PluginPermissionCatalog {
                 return "读取应用列表";
             case FILE_PICKER:
                 return "打开文件选择器";
+            case NETWORK:
+                return "访问网络";
             default:
                 return permission;
         }
@@ -53,6 +57,8 @@ public final class PluginPermissionCatalog {
                 return "允许插件读取设备上与自身功能相关的应用和组件信息。";
             case FILE_PICKER:
                 return "允许插件请求宿主打开系统文件选择器。";
+            case NETWORK:
+                return "允许插件访问互联网，用于请求远程服务或下载资源。";
             default:
                 return "未知权限，请只授予你信任的插件。";
         }

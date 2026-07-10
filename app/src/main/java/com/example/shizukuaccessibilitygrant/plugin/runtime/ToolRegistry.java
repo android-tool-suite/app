@@ -1,6 +1,7 @@
 package com.example.shizukuaccessibilitygrant.plugin.runtime;
 
 import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
+import com.example.shizukuaccessibilitygrant.plugins.builtin.host.HostAppPlugin;
 import com.example.shizukuaccessibilitygrant.plugins.builtin.shizuku.ShizukuPlugin;
 import java.util.ArrayList;
 import java.util.List;
@@ -10,7 +11,9 @@ public final class ToolRegistry {
     }
 
     public static List<ToolPlugin> createRequiredBuiltInPlugins() {
-        return new ArrayList<>();
+        List<ToolPlugin> plugins = new ArrayList<>();
+        plugins.add(new HostAppPlugin());
+        return plugins;
     }
 
     public static List<ToolPlugin> createOptionalBuiltInPlugins() {

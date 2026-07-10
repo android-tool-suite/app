@@ -29,6 +29,7 @@ import com.example.shizukuaccessibilitygrant.plugin.store.BuiltInPluginStateStor
 import com.example.shizukuaccessibilitygrant.plugin.store.ExternalPluginStore;
 import com.example.shizukuaccessibilitygrant.plugin.runtime.ExternalToolFactory;
 import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget;
+import com.example.shizukuaccessibilitygrant.plugin.api.PluginDependency;
 import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
 import com.example.shizukuaccessibilitygrant.host.management.PluginManagerPlugin;
@@ -51,8 +52,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -355,6 +358,7 @@ public class MainActivity extends Activity implements PluginHost {
 
         TextView meta = new TextView(this);
         meta.setText((plugin.removable() ? "外部插件" : "内置插件")
+                + " · 版本 " + plugin.version()
                 + " · 权限 " + plugin.requestedPermissions().size()
                 + " · 依赖 " + plugin.dependencies().size()
                 + " · 小部件 " + plugin.createHomeWidgets(this, this).size());
@@ -492,19 +496,19 @@ public class MainActivity extends Activity implements PluginHost {
 
     private void loadPlugins() {
         plugins.clear();
-        LinkedHashSet<String> activeIds = new LinkedHashSet<>();
+        LinkedHashMap<String, String> activeVersions = new LinkedHashMap<>();
         for (ToolPlugin plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
-            if (areDependenciesSatisfied(plugin.dependencies(), activeIds)) {
+            if (areDependenciesSatisfied(plugin.dependencies(), activeVersions)) {
                 plugins.add(plugin);
-                activeIds.add(plugin.id());
+                activeVersions.put(plugin.id(), plugin.version());
             } else {
                 plugin.onDestroy();
             }
         }
         for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
-            if (builtInPluginStateStore.isEnabled(plugin.id()) && areDependenciesSatisfied(plugin.dependencies(), activeIds)) {
+            if (builtInPluginStateStore.isEnabled(plugin.id()) && areDependenciesSatisfied(plugin.dependencies(), activeVersions)) {
                 plugins.add(plugin);
-                activeIds.add(plugin.id());
+                activeVersions.put(plugin.id(), plugin.version());
             } else {
                 plugin.onDestroy();
             }
@@ -517,10 +521,10 @@ public class MainActivity extends Activity implements PluginHost {
                 ImportedPluginDescriptor descriptor = pendingExternalPlugins.get(i);
                 if (!externalPluginStore.isEnabled(descriptor.id)) {
                     pendingExternalPlugins.remove(i);
-                } else if (areDependenciesSatisfied(descriptor.dependencies, activeIds)) {
+                } else if (areDependenciesSatisfied(descriptor.dependencies, activeVersions)) {
                     ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
                     plugins.add(plugin);
-                    activeIds.add(plugin.id());
+                    activeVersions.put(plugin.id(), plugin.version());
                     pendingExternalPlugins.remove(i);
                     loadedPlugin = true;
                 }
@@ -528,8 +532,13 @@ public class MainActivity extends Activity implements PluginHost {
         } while (loadedPlugin);
     }
 
-    private boolean areDependenciesSatisfied(Set<String> dependencies, Set<String> activeIds) {
-        return activeIds.containsAll(dependencies);
+    private boolean areDependenciesSatisfied(Set<String> dependencies, Map<String, String> activeVersions) {
+        for (String dependency : dependencies) {
+            if (!PluginDependency.parse(dependency).isSatisfied(activeVersions)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void reloadPlugins(String preferredPluginId) {
@@ -863,22 +872,23 @@ public class MainActivity extends Activity implements PluginHost {
     }
 
     private List<String> findMissingDependencyTitles(Set<String> dependencies) {
-        Set<String> activeIds = activePluginIds();
+        Map<String, String> activeVersions = activePluginVersions();
         List<String> missing = new ArrayList<>();
         for (String dependency : dependencies) {
-            if (!activeIds.contains(dependency)) {
-                missing.add(pluginTitleOrId(dependency));
+            PluginDependency requirement = PluginDependency.parse(dependency);
+            if (!requirement.isSatisfied(activeVersions)) {
+                missing.add(pluginTitleOrId(requirement.id) + "（需要 " + requirement.label() + "）");
             }
         }
         return missing;
     }
 
-    private Set<String> activePluginIds() {
-        LinkedHashSet<String> activeIds = new LinkedHashSet<>();
+    private Map<String, String> activePluginVersions() {
+        LinkedHashMap<String, String> activeVersions = new LinkedHashMap<>();
         for (ToolPlugin plugin : plugins) {
-            activeIds.add(plugin.id());
+            activeVersions.put(plugin.id(), plugin.version());
         }
-        return activeIds;
+        return activeVersions;
     }
 
     private String pluginTitleOrId(String pluginId) {
@@ -895,16 +905,25 @@ public class MainActivity extends Activity implements PluginHost {
         for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
             if (!plugin.id().equals(pluginId)
                     && builtInPluginStateStore.isEnabled(plugin.id())
-                    && plugin.dependencies().contains(pluginId)) {
+                    && dependsOn(plugin.dependencies(), pluginId)) {
                 dependents.add(plugin.title());
             }
         }
         for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            if (externalPluginStore.isEnabled(descriptor.id) && descriptor.dependencies.contains(pluginId)) {
+            if (externalPluginStore.isEnabled(descriptor.id) && dependsOn(descriptor.dependencies, pluginId)) {
                 dependents.add(descriptor.title);
             }
         }
         return dependents;
+    }
+
+    private boolean dependsOn(Set<String> dependencies, String pluginId) {
+        for (String dependency : dependencies) {
+            if (PluginDependency.parse(dependency).id.equals(pluginId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String joinNames(List<String> values) {

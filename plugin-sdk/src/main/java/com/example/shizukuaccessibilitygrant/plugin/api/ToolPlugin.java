@@ -14,6 +14,10 @@ public interface ToolPlugin {
 
     String description();
 
+    default String version() {
+        return "1.0";
+    }
+
     boolean removable();
 
     default Set<String> requestedPermissions() {
