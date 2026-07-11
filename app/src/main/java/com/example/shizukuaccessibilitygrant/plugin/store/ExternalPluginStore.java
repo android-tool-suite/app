@@ -87,8 +87,27 @@ public final class ExternalPluginStore {
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new IOException("无法创建插件目录");
         }
-        try (FileOutputStream output = new FileOutputStream(codeFile)) {
+        File pendingFile = new File(parent, "plugin.apk.pending");
+        if (pendingFile.exists() && !pendingFile.delete()) {
+            throw new IOException("无法清理插件更新临时文件");
+        }
+        try (FileOutputStream output = new FileOutputStream(pendingFile)) {
             output.write(bytes);
+            output.getFD().sync();
+        } catch (IOException error) {
+            pendingFile.delete();
+            throw error;
+        }
+        if (codeFile.exists()) {
+            codeFile.setWritable(true);
+            if (!codeFile.delete()) {
+                pendingFile.delete();
+                throw new IOException("无法替换现有插件代码");
+            }
+        }
+        if (!pendingFile.renameTo(codeFile)) {
+            pendingFile.delete();
+            throw new IOException("无法完成插件代码更新");
         }
         codeFile.setReadOnly();
     }
