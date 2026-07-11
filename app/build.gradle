@@ -1,5 +1,7 @@
 plugins {
     id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+    id "org.jetbrains.kotlin.plugin.compose"
 }
 
 android {
@@ -22,12 +24,19 @@ android {
     buildFeatures {
         aidl true
         buildConfig true
+        compose true
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
     def shizukuVersion = "13.1.5"
     implementation project(":plugin-sdk")
+    implementation "androidx.activity:activity-compose:1.10.0"
+    debugImplementation "androidx.compose.ui:ui-tooling"
     implementation "androidx.annotation:annotation:1.9.1"
     implementation "dev.rikka.shizuku:api:$shizukuVersion"
     implementation "dev.rikka.shizuku:provider:$shizukuVersion"

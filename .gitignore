@@ -4,6 +4,7 @@
 /plugin-sdk/build/
 /plugins/*/build/
 /dist/
+/artifacts/
 /local.properties
 /screen.png
 *.iml
