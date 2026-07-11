@@ -81,7 +81,7 @@ gradle :plugins:accessibility-grant:packagePlugin
 插件包输出：
 
 ```text
-plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugin
+artifacts/accessibility-grant.atsplugin
 ```
 
 说明：为了避免任意导入文件直接获得 shell 执行能力，外部导入插件声明的权限默认不授予，需要用户在“插件管理”里逐项开启。
@@ -98,6 +98,18 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
 ```powershell
 gradle :app:assembleDebug
 ```
+
+## ADB 自动化调试
+
+Debug APK 提供受 `android.permission.DUMP` 保护的 ADB 命令入口，可查询应用状态、导入/删除/启停插件、修改插件授权、切换主页组件显隐并重置调试状态。页面跳转使用 ADB 原生 `am start`，支持直接打开主页、插件列表、插件管理或指定插件。
+
+```powershell
+.\tools\adb-debug.ps1 -Command status
+.\tools\adb-debug.ps1 -Command list-plugins
+.\tools\adb-debug.ps1 -Command navigate -Destination manager
+```
+
+支持带完整手机界面的 Emulator 与 ADB 并行调试，也支持无窗口自动化测试。图形模拟器启动、Shizuku 安装和启动、全部命令、原始广播协议及安全边界见 [ADB 调试文档](docs/adb-debugging.md)。
 
 ## 安全边界
 
