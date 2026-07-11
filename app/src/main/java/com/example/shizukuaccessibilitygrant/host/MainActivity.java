@@ -18,6 +18,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
@@ -25,10 +27,14 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
+
 import com.example.shizukuaccessibilitygrant.plugin.store.BuiltInPluginStateStore;
 import com.example.shizukuaccessibilitygrant.plugin.store.ExternalPluginStore;
 import com.example.shizukuaccessibilitygrant.plugin.runtime.ExternalToolFactory;
 import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget;
+import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginDependency;
 import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
@@ -47,6 +53,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -63,7 +70,10 @@ import java.util.zip.ZipOutputStream;
 
 import rikka.shizuku.Shizuku;
 
-public class MainActivity extends Activity implements PluginHost {
+public class MainActivity extends ComponentActivity implements PluginHost {
+    public static final String EXTRA_DEBUG_DESTINATION = "debug_destination";
+    private static WeakReference<MainActivity> debugInstance = new WeakReference<>(null);
+
     private static final int REQUEST_SHIZUKU = 3001;
     private static final int REQUEST_IMPORT_PLUGIN = 4001;
     private static final int REQUEST_EXPORT_PLUGIN = 4002;
@@ -74,6 +84,11 @@ public class MainActivity extends Activity implements PluginHost {
 
     private static final String PREFS_NAME = "main_ui";
     private static final String PREF_HIDDEN_WIDGETS = "hidden_widgets";
+    private static final String PREF_HIDDEN_TOOLS = "hidden_tools";
+    private static final String PREF_TOOL_ORDER = "tool_order";
+    private static final String PREF_WIDGET_ORDER = "widget_order";
+    private static final String PREF_FULL_WIDTH_WIDGETS = "full_width_widgets";
+    private static final String PREF_WIDGET_SIZES = "widget_sizes";
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
     private final List<Button> bottomButtons = new ArrayList<>();
@@ -87,6 +102,29 @@ public class MainActivity extends Activity implements PluginHost {
     private SharedPreferences uiPreferences;
     private String pendingExportPluginId;
     private int currentSection = SECTION_DASHBOARD;
+    private boolean permissionCenterOpen;
+    private boolean dashboardEditMode;
+    private boolean toolEditMode;
+    private final HostUiState composeState = new HostUiState();
+    private final Map<String, int[]> composeScrollPositions = new LinkedHashMap<>();
+
+    private final OnBackPressedCallback appBackCallback = new OnBackPressedCallback(true) {
+        @Override
+        public void handleOnBackPressed() {
+            if (handleAppBack()) {
+                return;
+            }
+            // Let ComponentActivity perform its normal finish behavior only from the dashboard.
+            setEnabled(false);
+            getOnBackPressedDispatcher().onBackPressed();
+            setEnabled(true);
+        }
+    };
+    private final OnBackInvokedCallback systemBackCallback = () -> {
+        if (!handleAppBack()) {
+            finish();
+        }
+    };
 
     private IShellService shellService;
     private Shizuku.UserServiceArgs shellServiceArgs;
@@ -127,13 +165,34 @@ public class MainActivity extends Activity implements PluginHost {
         uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadPlugins();
         setContentView(createContentView());
+        getOnBackPressedDispatcher().addCallback(this, appBackCallback);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    systemBackCallback
+            );
+        }
+        if (BuildConfig.DEBUG) {
+            debugInstance = new WeakReference<>(this);
+        }
 
         Shizuku.addBinderReceivedListener(binderReceivedListener);
         Shizuku.addBinderDeadListener(binderDeadListener);
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
 
         showDashboard();
+        applyDebugDestination(getIntent());
         notifyHostStateChanged();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (BuildConfig.DEBUG) {
+            reloadPlugins(null);
+            applyDebugDestination(intent);
+        }
     }
 
     @Override
@@ -145,49 +204,85 @@ public class MainActivity extends Activity implements PluginHost {
         Shizuku.removeBinderReceivedListener(binderReceivedListener);
         Shizuku.removeBinderDeadListener(binderDeadListener);
         Shizuku.removeRequestPermissionResultListener(permissionResultListener);
+        if (debugInstance.get() == this) {
+            debugInstance.clear();
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);
+        }
         unbindShellService();
         super.onDestroy();
     }
 
-    private View createContentView() {
-        int horizontal = dp(16);
-        int topPadding = dp(10);
-        int bottomPadding = dp(10);
-        int background = UiKit.COLOR_BACKGROUND;
-
-        Window window = getWindow();
-        window.setStatusBarColor(background);
-        window.setNavigationBarColor(background);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+    @Override
+    public void onBackPressed() {
+        if (handleAppBack()) {
+            return;
         }
+        super.onBackPressed();
+    }
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(background);
-        root.setPadding(horizontal, topPadding, horizontal, bottomPadding);
-        root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(horizontal, topPadding + insets.getSystemWindowInsetTop(), horizontal, bottomPadding + insets.getSystemWindowInsetBottom());
-            return insets.consumeSystemWindowInsets();
-        });
+    private boolean handleAppBack() {
+        if (permissionCenterOpen) {
+            closePermissionCenterForUi();
+            return true;
+        }
+        if (selectedPlugin != null) {
+            showPluginList();
+            return true;
+        }
+        if (currentSection == SECTION_MANAGER || currentSection == SECTION_PLUGINS) {
+            showDashboard();
+            return true;
+        }
+        return false;
+    }
 
-        contentRoot = new LinearLayout(this);
-        contentRoot.setOrientation(LinearLayout.VERTICAL);
-        root.addView(contentRoot, new LinearLayout.LayoutParams(-1, 0, 1));
+    public boolean canHandleBackForUi() {
+        return permissionCenterOpen
+                || selectedPlugin != null
+                || currentSection == SECTION_MANAGER
+                || currentSection == SECTION_PLUGINS;
+    }
 
-        bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setGravity(Gravity.CENTER);
-        bottomBar.setPadding(dp(8), dp(8), dp(8), dp(8));
-        bottomBar.setBackground(UiKit.roundedStroke(0xF7FFFFFF, UiKit.COLOR_BORDER, 28, this));
-        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, dp(70));
-        barParams.topMargin = dp(10);
-        root.addView(bottomBar, barParams);
+    public void handleBackForUi() {
+        handleAppBack();
+    }
 
-        addBottomButton("主页", SECTION_DASHBOARD);
-        addBottomButton("插件", SECTION_PLUGINS);
-        addBottomButton("管理", SECTION_MANAGER);
-        return root;
+    public static void notifyDebugStateChanged() {
+        MainActivity activity = debugInstance.get();
+        if (!BuildConfig.DEBUG || activity == null || activity.isFinishing() || activity.isDestroyed()) {
+            return;
+        }
+        activity.runOnUiThread(() -> activity.reloadPlugins(
+                activity.selectedPlugin == null ? null : activity.selectedPlugin.id()
+        ));
+    }
+
+    private void applyDebugDestination(Intent intent) {
+        if (!BuildConfig.DEBUG || intent == null) {
+            return;
+        }
+        String destination = intent.getStringExtra(EXTRA_DEBUG_DESTINATION);
+        if (destination == null || destination.isEmpty() || "dashboard".equals(destination)) {
+            return;
+        }
+        if ("plugins".equals(destination)) {
+            showPluginList();
+        } else if ("manager".equals(destination)) {
+            showPluginManager();
+        } else if (destination.startsWith("plugin:")) {
+            ToolPlugin plugin = findPlugin(destination.substring("plugin:".length()));
+            if (plugin != null) {
+                openPlugin(plugin);
+            } else {
+                showPluginList();
+            }
+        }
+    }
+
+    private View createContentView() {
+        return HostAppUiKt.createHostAppView(this);
     }
 
     private void addBottomButton(String text, int section) {
@@ -213,9 +308,9 @@ public class MainActivity extends Activity implements PluginHost {
     private void showDashboard() {
         currentSection = SECTION_DASHBOARD;
         selectedPlugin = null;
-        contentRoot.removeAllViews();
-        contentRoot.addView(createDashboardView(), new LinearLayout.LayoutParams(-1, -1));
-        updateBottomButtons();
+        permissionCenterOpen = false;
+        toolEditMode = false;
+        invalidateComposeUi();
     }
 
     private View createDashboardView() {
@@ -308,9 +403,9 @@ public class MainActivity extends Activity implements PluginHost {
     private void showPluginList() {
         currentSection = SECTION_PLUGINS;
         selectedPlugin = null;
-        contentRoot.removeAllViews();
-        contentRoot.addView(createPluginListView(), new LinearLayout.LayoutParams(-1, -1));
-        updateBottomButtons();
+        permissionCenterOpen = false;
+        dashboardEditMode = false;
+        invalidateComposeUi();
     }
 
     private View createPluginListView() {
@@ -380,39 +475,11 @@ public class MainActivity extends Activity implements PluginHost {
     private void openPlugin(ToolPlugin plugin) {
         currentSection = SECTION_PLUGINS;
         selectedPlugin = plugin;
-        contentRoot.removeAllViews();
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(0, dp(8), 0, 0);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-
-        Button back = new Button(this);
-        back.setText("返回");
-        UiKit.styleSecondaryButton(back);
-        back.setOnClickListener(v -> showPluginList());
-        header.addView(back, new LinearLayout.LayoutParams(dp(88), dp(44)));
-
-        TextView title = new TextView(this);
-        title.setText(plugin.title());
-        UiKit.styleTitle(title, 22);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
-        titleParams.leftMargin = dp(12);
-        header.addView(title, titleParams);
-        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
-
-        View pluginView = plugin.createView(this, this);
-        detachFromParent(pluginView);
-        LinearLayout.LayoutParams pluginParams = new LinearLayout.LayoutParams(-1, 0, 1);
-        pluginParams.topMargin = dp(14);
-        root.addView(pluginView, pluginParams);
-        contentRoot.addView(root, new LinearLayout.LayoutParams(-1, -1));
-
-        updateBottomButtons();
+        permissionCenterOpen = false;
+        dashboardEditMode = false;
+        toolEditMode = false;
         plugin.onSelected();
+        invalidateComposeUi();
     }
 
     private void detachFromParent(View view) {
@@ -425,10 +492,11 @@ public class MainActivity extends Activity implements PluginHost {
     private void showPluginManager() {
         currentSection = SECTION_MANAGER;
         selectedPlugin = null;
-        contentRoot.removeAllViews();
-        contentRoot.addView(pluginManagerPlugin.createView(this, this), new LinearLayout.LayoutParams(-1, -1));
+        permissionCenterOpen = false;
+        dashboardEditMode = false;
+        toolEditMode = false;
         pluginManagerPlugin.onSelected();
-        updateBottomButtons();
+        invalidateComposeUi();
     }
 
     private void updateBottomButtons() {
@@ -477,6 +545,69 @@ public class MainActivity extends Activity implements PluginHost {
             }
         }
         return widgets;
+    }
+
+    private List<ToolPlugin> orderedTools(boolean includeHidden) {
+        List<ToolPlugin> ordered = new ArrayList<>(plugins);
+        List<String> ids = new ArrayList<>();
+        for (ToolPlugin plugin : ordered) {
+            ids.add(plugin.id());
+        }
+        List<String> savedOrder = readOrder(PREF_TOOL_ORDER, ids);
+        ordered.sort((left, right) -> Integer.compare(savedOrder.indexOf(left.id()), savedOrder.indexOf(right.id())));
+        if (includeHidden) {
+            return ordered;
+        }
+        Set<String> hidden = uiPreferences.getStringSet(PREF_HIDDEN_TOOLS, new LinkedHashSet<>());
+        List<ToolPlugin> visible = new ArrayList<>();
+        for (ToolPlugin plugin : ordered) {
+            if (!hidden.contains(plugin.id())) {
+                visible.add(plugin);
+            }
+        }
+        return visible;
+    }
+
+    private List<WidgetRegistration> orderedWidgets(boolean includeHidden) {
+        List<WidgetRegistration> widgets = collectWidgets();
+        List<String> keys = new ArrayList<>();
+        for (WidgetRegistration registration : widgets) {
+            keys.add(registration.key);
+        }
+        List<String> savedOrder = readOrder(PREF_WIDGET_ORDER, keys);
+        widgets.sort((left, right) -> Integer.compare(savedOrder.indexOf(left.key), savedOrder.indexOf(right.key)));
+        if (includeHidden) {
+            return widgets;
+        }
+        List<WidgetRegistration> visible = new ArrayList<>();
+        for (WidgetRegistration registration : widgets) {
+            if (isWidgetVisible(registration.key)) {
+                visible.add(registration);
+            }
+        }
+        return visible;
+    }
+
+    private List<String> readOrder(String preferenceKey, List<String> keys) {
+        List<String> ordered = new ArrayList<>();
+        String saved = uiPreferences.getString(preferenceKey, "");
+        if (!saved.isEmpty()) {
+            for (String key : saved.split("\\n")) {
+                if (keys.contains(key) && !ordered.contains(key)) {
+                    ordered.add(key);
+                }
+            }
+        }
+        for (String key : keys) {
+            if (!ordered.contains(key)) {
+                ordered.add(key);
+            }
+        }
+        return ordered;
+    }
+
+    private void saveOrder(String preferenceKey, List<String> keys) {
+        uiPreferences.edit().putString(preferenceKey, String.join("\n", keys)).apply();
     }
 
     private boolean isWidgetVisible(String key) {
@@ -571,15 +702,282 @@ public class MainActivity extends Activity implements PluginHost {
     }
 
     private void notifyHostStateChanged() {
-        if (currentSection == SECTION_DASHBOARD && contentRoot != null) {
-            showDashboard();
-        }
         if (selectedPlugin != null) {
             selectedPlugin.onHostStateChanged();
         }
         if (currentSection == SECTION_MANAGER) {
             pluginManagerPlugin.onHostStateChanged();
         }
+        invalidateComposeUi();
+    }
+
+    public void invalidateComposeUi() {
+        composeState.captureScrollPositions(this);
+        composeState.bump();
+    }
+
+    private void invalidateComposeUiAfterGesture() {
+        getWindow().getDecorView().post(this::invalidateComposeUi);
+    }
+
+    public HostUiState uiStateForUi() {
+        return composeState;
+    }
+
+    public int scrollIndexForUi(String page) {
+        int[] position = composeScrollPositions.get(page);
+        return position == null ? 0 : position[0];
+    }
+
+    public int scrollOffsetForUi(String page) {
+        int[] position = composeScrollPositions.get(page);
+        return position == null ? 0 : position[1];
+    }
+
+    public void saveScrollPositionForUi(String page, int index, int offset) {
+        composeScrollPositions.put(page, new int[]{Math.max(0, index), Math.max(0, offset)});
+    }
+
+    public void rebuildComposeUi() {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        setContentView(createContentView());
+    }
+
+    public int currentSectionForUi() {
+        return currentSection;
+    }
+
+    public ToolPlugin selectedPluginForUi() {
+        return selectedPlugin;
+    }
+
+    public List<ToolPlugin> pluginsForUi() {
+        return orderedTools(false);
+    }
+
+    public List<ToolPlugin> allToolsForUi() {
+        return orderedTools(true);
+    }
+
+    public boolean isToolVisibleForUi(ToolPlugin plugin) {
+        return !uiPreferences.getStringSet(PREF_HIDDEN_TOOLS, new LinkedHashSet<>()).contains(plugin.id());
+    }
+
+    public void setToolVisibleForUi(ToolPlugin plugin, boolean visible) {
+        Set<String> hidden = new LinkedHashSet<>(uiPreferences.getStringSet(PREF_HIDDEN_TOOLS, new LinkedHashSet<>()));
+        if (visible) hidden.remove(plugin.id()); else hidden.add(plugin.id());
+        uiPreferences.edit().putStringSet(PREF_HIDDEN_TOOLS, hidden).apply();
+        invalidateComposeUi();
+    }
+
+    public void moveToolForUi(String pluginId, int direction) {
+        List<ToolPlugin> tools = orderedTools(true);
+        int index = -1;
+        for (int i = 0; i < tools.size(); i++) {
+            if (tools.get(i).id().equals(pluginId)) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) return;
+        int target = Math.max(0, Math.min(tools.size() - 1, index + direction));
+        if (target == index) return;
+        ToolPlugin moved = tools.remove(index);
+        tools.add(target, moved);
+        List<String> ids = new ArrayList<>();
+        for (ToolPlugin tool : tools) ids.add(tool.id());
+        saveOrder(PREF_TOOL_ORDER, ids);
+        invalidateComposeUi();
+    }
+
+    public List<HomeWidget> widgetsForUi() {
+        List<HomeWidget> result = new ArrayList<>();
+        for (WidgetRegistration registration : orderedWidgets(false)) {
+            result.add(registration.widget);
+        }
+        return result;
+    }
+
+    public List<HomeWidget> allWidgetsForUi() {
+        List<HomeWidget> result = new ArrayList<>();
+        for (WidgetRegistration registration : orderedWidgets(true)) {
+            result.add(registration.widget);
+        }
+        return result;
+    }
+
+    public boolean isWidgetVisibleForUi(HomeWidget widget) {
+        return isWidgetVisible(widget.pluginId() + ":" + widget.id());
+    }
+
+    public void setWidgetVisibleForUi(HomeWidget widget, boolean visible) {
+        setWidgetVisible(widget.pluginId() + ":" + widget.id(), visible);
+        invalidateComposeUi();
+    }
+
+    public boolean isDashboardEditModeForUi() {
+        return dashboardEditMode;
+    }
+
+    public void setDashboardEditModeForUi(boolean editing) {
+        dashboardEditMode = editing;
+        invalidateComposeUiAfterGesture();
+    }
+
+    public boolean isToolEditModeForUi() {
+        return toolEditMode;
+    }
+
+    public void setToolEditModeForUi(boolean editing) {
+        toolEditMode = editing;
+        invalidateComposeUiAfterGesture();
+    }
+
+    public void moveWidgetForUi(HomeWidget widget, int direction) {
+        List<WidgetRegistration> widgets = orderedWidgets(true);
+        String key = widget.pluginId() + ":" + widget.id();
+        int index = -1;
+        for (int i = 0; i < widgets.size(); i++) {
+            if (widgets.get(i).key.equals(key)) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) return;
+        int target = Math.max(0, Math.min(widgets.size() - 1, index + direction));
+        if (target == index) return;
+        WidgetRegistration moved = widgets.remove(index);
+        widgets.add(target, moved);
+        List<String> keys = new ArrayList<>();
+        for (WidgetRegistration registration : widgets) keys.add(registration.key);
+        saveOrder(PREF_WIDGET_ORDER, keys);
+        invalidateComposeUi();
+    }
+
+    public boolean isWidgetFullWidthForUi(HomeWidget widget) {
+        return widgetWidthUnitsForUi(widget) == 4;
+    }
+
+    public void setWidgetFullWidthForUi(HomeWidget widget, boolean fullWidth) {
+        setWidgetSizeForUi(widget, fullWidth ? 4 : 2, widgetHeightUnitsForUi(widget));
+    }
+
+    public int widgetWidthUnitsForUi(HomeWidget widget) {
+        return currentWidgetSizeForUi(widget).widthUnits;
+    }
+
+    public int widgetHeightUnitsForUi(HomeWidget widget) {
+        return currentWidgetSizeForUi(widget).heightUnits;
+    }
+
+    public void setWidgetSizeForUi(HomeWidget widget, int widthUnits, int heightUnits) {
+        HomeWidgetSize requested = closestSupportedWidgetSize(widget, widthUnits, heightUnits);
+        String key = widget.pluginId() + ":" + widget.id();
+        Set<String> sizes = new LinkedHashSet<>(uiPreferences.getStringSet(PREF_WIDGET_SIZES, new LinkedHashSet<>()));
+        sizes.removeIf(entry -> entry.startsWith(key + "="));
+        sizes.add(key + "=" + requested.widthUnits + "x" + requested.heightUnits);
+        uiPreferences.edit().putStringSet(PREF_WIDGET_SIZES, sizes).apply();
+        invalidateComposeUi();
+    }
+
+    public int widgetSizeIndexForUi(HomeWidget widget) {
+        return widget.supportedSizes().indexOf(currentWidgetSizeForUi(widget));
+    }
+
+    public int widgetSizeCountForUi(HomeWidget widget) {
+        return widget.supportedSizes().size();
+    }
+
+    public void changeWidgetSizeForUi(HomeWidget widget, int direction) {
+        List<HomeWidgetSize> supported = widget.supportedSizes();
+        if (supported.isEmpty()) return;
+        int current = Math.max(0, supported.indexOf(currentWidgetSizeForUi(widget)));
+        int target = Math.max(0, Math.min(supported.size() - 1, current + direction));
+        HomeWidgetSize size = supported.get(target);
+        setWidgetSizeForUi(widget, size.widthUnits, size.heightUnits);
+    }
+
+    private HomeWidgetSize currentWidgetSizeForUi(HomeWidget widget) {
+        int fallbackWidth = legacyFullWidth(widget) ? 4 : 2;
+        int savedWidth = widgetSizeForUi(widget, 0, fallbackWidth);
+        int savedHeight = widgetSizeForUi(widget, 1, 2);
+        return closestSupportedWidgetSize(widget, savedWidth, savedHeight);
+    }
+
+    private HomeWidgetSize closestSupportedWidgetSize(HomeWidget widget, int width, int height) {
+        List<HomeWidgetSize> supported = widget.supportedSizes();
+        if (supported.isEmpty()) {
+            throw new IllegalStateException("Widget must provide at least one supported size: " + widget.pluginId() + ":" + widget.id());
+        }
+        HomeWidgetSize closest = supported.get(0);
+        int closestDistance = Integer.MAX_VALUE;
+        for (HomeWidgetSize size : supported) {
+            int distance = Math.abs(size.widthUnits - width) + Math.abs(size.heightUnits - height);
+            if (distance < closestDistance) {
+                closest = size;
+                closestDistance = distance;
+            }
+        }
+        return closest;
+    }
+
+    private boolean legacyFullWidth(HomeWidget widget) {
+        return uiPreferences.getStringSet(PREF_FULL_WIDTH_WIDGETS, new LinkedHashSet<>())
+                .contains(widget.pluginId() + ":" + widget.id());
+    }
+
+    private int widgetSizeForUi(HomeWidget widget, int part, int fallback) {
+        String key = widget.pluginId() + ":" + widget.id() + "=";
+        for (String entry : uiPreferences.getStringSet(PREF_WIDGET_SIZES, new LinkedHashSet<>())) {
+            if (!entry.startsWith(key)) continue;
+            String[] values = entry.substring(key.length()).split("x");
+            if (values.length != 2) continue;
+            try {
+                return Math.max(1, Math.min(4, Integer.parseInt(values[part])));
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
+    public void navigateForUi(int section) {
+        if (section == SECTION_DASHBOARD) showDashboard();
+        else if (section == SECTION_PLUGINS) showPluginList();
+        else showPluginManager();
+    }
+
+    public void openPluginForUi(ToolPlugin plugin) {
+        openPlugin(plugin);
+    }
+
+    public void openPluginForUi(String pluginId) {
+        ToolPlugin plugin = findPlugin(pluginId);
+        if (plugin != null) {
+            openPlugin(plugin);
+        }
+    }
+
+    public List<ImportedPluginDescriptor> importedDescriptorsForUi() {
+        return externalPluginStore.load();
+    }
+
+    public boolean isPermissionCenterOpenForUi() {
+        return permissionCenterOpen;
+    }
+
+    public void showPermissionCenterForUi() {
+        currentSection = SECTION_MANAGER;
+        selectedPlugin = null;
+        permissionCenterOpen = true;
+        invalidateComposeUi();
+    }
+
+    public void closePermissionCenterForUi() {
+        permissionCenterOpen = false;
+        invalidateComposeUi();
     }
 
     @Override
@@ -731,11 +1129,18 @@ public class MainActivity extends Activity implements PluginHost {
                 showToast("插件 ID 与内置插件冲突");
                 return;
             }
+            ImportedPluginDescriptor installed = findImportedDescriptor(descriptor.id);
+            boolean updating = installed != null;
+            if (updating) {
+                Set<String> retainedPermissions = new LinkedHashSet<>(installed.grantedPermissions);
+                retainedPermissions.retainAll(descriptor.requestedPermissions);
+                descriptor = descriptor.withGrantedPermissions(retainedPermissions);
+            }
             if (pluginImport.codeBytes != null) {
                 externalPluginStore.savePluginCode(descriptor.id, pluginImport.codeBytes);
             }
             externalPluginStore.save(descriptor);
-            showToast("已导入插件，默认停用：" + descriptor.title);
+            showToast((updating ? "已更新插件：" : "已导入插件，默认停用：") + descriptor.title);
             reloadPlugins(descriptor.id);
         } catch (IOException | JSONException e) {
             showToast("导入失败：" + e.getMessage());
@@ -782,6 +1187,11 @@ public class MainActivity extends Activity implements PluginHost {
                 showToast("无法启用，依赖未满足：" + joinNames(missingDependencies));
                 return;
             }
+            List<String> missingPermissions = findMissingPluginPermissions(descriptor);
+            if (!missingPermissions.isEmpty()) {
+                showToast("无法启用，请先在权限中心授权：" + joinNames(missingPermissions));
+                return;
+            }
         } else {
             List<String> dependents = findDependentPluginTitles(pluginId);
             if (!dependents.isEmpty()) {
@@ -796,10 +1206,14 @@ public class MainActivity extends Activity implements PluginHost {
 
     @Override
     public void setImportedPluginPermission(String pluginId, String permission, boolean granted) {
+        if (!granted && externalPluginStore.isEnabled(pluginId)) {
+            showToast("请先停用插件，再撤销权限");
+            return;
+        }
         try {
             externalPluginStore.setPermission(pluginId, permission, granted);
             showToast(granted ? "已授权：" + permission : "已撤销：" + permission);
-            reloadPlugins(selectedPlugin == null ? pluginId : selectedPlugin.id());
+            invalidateComposeUi();
         } catch (JSONException e) {
             showToast("权限更新失败：" + e.getMessage());
         }
@@ -808,6 +1222,16 @@ public class MainActivity extends Activity implements PluginHost {
     @Override
     public boolean hasImportedPluginPermission(String pluginId, String permission) {
         return externalPluginStore.hasPermission(pluginId, permission);
+    }
+
+    private List<String> findMissingPluginPermissions(ImportedPluginDescriptor descriptor) {
+        List<String> missing = new ArrayList<>();
+        for (String permission : descriptor.requestedPermissions) {
+            if (!descriptor.grantedPermissions.contains(permission)) {
+                missing.add(com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog.label(permission));
+            }
+        }
+        return missing;
     }
 
     @Override
