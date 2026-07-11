@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 插件版本：`1.1.0`，要求宿主 `host_app>=1.1.0`。
+- 插件版本：`1.1.0`，无需额外的宿主插件依赖。
 - SessionToken 获取尝试：按 `phi-plugin` 的 TapTap device code 流程生成登录链接，用户授权后轮询 TapTap token，再用 LeanCloud `authData.taptap` 换取 `sessionToken`。
 - 云存档抓取：按 `phi-plugin` 的 `SaveManager` 流程先请求 `/users/me`，再查 `/gamesaves/?where=...&include=cover,gameFile`，选择最新存档并下载 `gameFile.url`。
 - 存档解析：本地解压 zip，AES-256-CBC 解密 `gameRecord`，读取成绩、ACC 和 FC/AP 信息。
@@ -80,16 +80,6 @@ gradle :plugins:phigros-advisor:packagePlugin
 plugins/phigros-advisor/build/outputs/atsplugin/phigros-advisor.atsplugin
 ```
 
-## 版本依赖
+## 依赖
 
-宿主应用从 `1.1.0` 起暴露内置能力插件 `host_app`。插件清单可以使用兼容旧格式的依赖声明：
-
-```json
-{
-  "dependencies": [
-    "host_app>=1.1.0"
-  ]
-}
-```
-
-旧的纯 ID 依赖仍然有效，例如 `"shizuku_auth"`。支持的比较符包括 `>=`、`>`、`<=`、`<`、`=`、`==`。
+宿主能力不是插件，不再需要用虚拟插件 ID 声明版本依赖。只有确实依赖另一插件的功能时，才在清单中声明该插件 ID，例如 `"shizuku_auth"`。支持的比较符包括 `>=`、`>`、`<=`、`<`、`=`、`==`。

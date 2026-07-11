@@ -181,6 +181,14 @@ public final class PhigrosAdvisorPlugin implements ToolPlugin {
             }
 
             @Override
+            public List<com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize> supportedSizes() {
+                return java.util.Arrays.asList(
+                        new com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize(2, 2),
+                        new com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize(4, 2)
+                );
+            }
+
+            @Override
             public View createView(Activity activity, PluginHost host) {
                 SharedPreferences prefs = activity.getSharedPreferences(PREFS_NAME, Activity.MODE_PRIVATE);
                 double rks = Double.longBitsToDouble(prefs.getLong(PREF_LAST_RKS, Double.doubleToLongBits(0)));
@@ -458,26 +466,31 @@ public final class PhigrosAdvisorPlugin implements ToolPlugin {
             showScores();
             return;
         }
-
-        try {
-            List<Record> parsed = parseRecords(trimmed);
-            records = mergeDuplicates(parsed);
-            snapshot = calculateSnapshot(records);
-            if (save) {
-                preferences.edit()
-                        .putString(PREF_RAW_JSON, trimmed)
-                        .putLong(PREF_LAST_RKS, Double.doubleToLongBits(snapshot.overallRks))
-                        .putInt(PREF_LAST_COUNT, records.size())
-                        .putString(PREF_LAST_PHI, snapshot.phiRecords.isEmpty() ? "" : snapshot.phiRecords.get(0).shortName())
-                        .apply();
+        statusText.setText("正在解析成绩...");
+        executor.execute(() -> {
+            try {
+                List<Record> parsed = mergeDuplicates(parseRecords(trimmed));
+                RksSnapshot parsedSnapshot = calculateSnapshot(parsed);
+                activity.runOnUiThread(() -> {
+                    records = parsed;
+                    snapshot = parsedSnapshot;
+                    if (save) {
+                        preferences.edit()
+                                .putString(PREF_RAW_JSON, trimmed)
+                                .putLong(PREF_LAST_RKS, Double.doubleToLongBits(snapshot.overallRks))
+                                .putInt(PREF_LAST_COUNT, records.size())
+                                .putString(PREF_LAST_PHI, snapshot.phiRecords.isEmpty() ? "" : snapshot.phiRecords.get(0).shortName())
+                                .apply();
+                    }
+                    statusText.setText("已解析 " + records.size() + " 条有效成绩。");
+                    updateSummary();
+                    showAdvice();
+                    showScores();
+                });
+            } catch (JSONException e) {
+                activity.runOnUiThread(() -> statusText.setText("JSON 解析失败：" + e.getMessage()));
             }
-            statusText.setText("已解析 " + records.size() + " 条有效成绩。");
-            updateSummary();
-            showAdvice();
-            showScores();
-        } catch (JSONException e) {
-            statusText.setText("JSON 解析失败：" + e.getMessage());
-        }
+        });
     }
 
     private void fetchCloudSave() {

@@ -16,7 +16,6 @@ public final class PhigrosAdvisorPluginDescriptor {
         LinkedHashSet<String> permissions = new LinkedHashSet<>();
         permissions.add(PluginPermissionCatalog.NETWORK);
         LinkedHashSet<String> dependencies = new LinkedHashSet<>();
-        dependencies.add("host_app>=1.1.0");
         return new ImportedPluginDescriptor(
                 ID,
                 "Phigros 查分助手",

@@ -12,6 +12,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.example.shizukuaccessibilitygrant.ui.UiKit;
+import com.example.shizukuaccessibilitygrant.plugins.ComposePluginUiKt;
 
 import java.util.Collections;
 import java.util.List;
@@ -27,6 +28,7 @@ public final class ShizukuPlugin implements ToolPlugin {
     private Button authButton;
     private Button connectButton;
     private View rootView;
+    private Runnable composeInvalidator;
 
     @Override
     public String id() {
@@ -72,8 +74,17 @@ public final class ShizukuPlugin implements ToolPlugin {
             }
 
             @Override
+            public List<com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize> supportedSizes() {
+                return java.util.Arrays.asList(
+                        new com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize(2, 2),
+                        new com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize(4, 2),
+                        new com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize(4, 3)
+                );
+            }
+
+            @Override
             public View createView(Activity activity, PluginHost host) {
-                return createStatusWidget(activity, host);
+                return ComposePluginUiKt.createShizukuWidgetView(activity, host);
             }
         });
     }
@@ -83,24 +94,32 @@ public final class ShizukuPlugin implements ToolPlugin {
         this.activity = activity;
         this.host = host;
         if (rootView == null) {
-            rootView = createContentView();
+            rootView = ComposePluginUiKt.createShizukuPluginView(activity, this, host);
         }
-        refresh();
         return rootView;
     }
 
     @Override
     public void onSelected() {
-        refresh();
+        invalidateComposeUi();
     }
 
     @Override
     public void onHostStateChanged() {
-        refresh();
+        invalidateComposeUi();
     }
 
     @Override
     public void onDestroy() {
+        composeInvalidator = null;
+    }
+
+    public void setComposeInvalidator(Runnable invalidator) {
+        composeInvalidator = invalidator;
+    }
+
+    private void invalidateComposeUi() {
+        if (composeInvalidator != null) composeInvalidator.run();
     }
 
     private View createContentView() {

@@ -19,7 +19,7 @@ example.atsplugin
 PowerShell:
 
 ```powershell
-tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile dist/sample-package.atsplugin
+tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile artifacts/sample-package.atsplugin
 ```
 
 可执行插件推荐使用独立 Gradle 模块，例如本仓库的无障碍授权插件：
