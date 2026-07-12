@@ -421,6 +421,33 @@ private fun TokensPage(ui: PhigrosUiState, plugin: PhigrosAdvisorPlugin) {
     var label by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
     var server by remember { mutableStateOf(PhigrosServer.CN) }
+    var editingProfile by remember { mutableStateOf<TokenProfile?>(null) }
+    var editedLabel by remember { mutableStateOf("") }
+    editingProfile?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { editingProfile = null },
+            title = { Text("令牌设置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("${profile.server.label} · SessionToken 已在本机加密保存", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = editedLabel,
+                        onValueChange = { editedLabel = it },
+                        label = { Text("备注") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    plugin.updateTokenLabel(profile.id, editedLabel)
+                    editingProfile = null
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { editingProfile = null }) { Text("取消") } },
+        )
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 28.dp),
@@ -477,12 +504,19 @@ private fun TokensPage(ui: PhigrosUiState, plugin: PhigrosAdvisorPlugin) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(profile.label, fontWeight = FontWeight.Bold)
-                            Text("${profile.server.label} · 末尾 **** · 本地加密", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${profile.server.label} · 本地加密 · 最近使用 ${formatDate(profile.lastUsedAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (profile.id == ui.selectedTokenId) Text("当前", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(onClick = { plugin.selectToken(profile.id) }, enabled = profile.id != ui.selectedTokenId, modifier = Modifier.weight(1f)) { Text("设为当前") }
+                        OutlinedButton(
+                            onClick = {
+                                editedLabel = profile.label
+                                editingProfile = profile
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("设置") }
                         OutlinedButton(onClick = { plugin.deleteToken(profile.id) }, modifier = Modifier.weight(1f)) { Text("删除") }
                     }
                 }

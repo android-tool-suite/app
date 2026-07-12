@@ -136,6 +136,11 @@ class PhigrosAdvisorPlugin(
         warmPushTargets(id, local)
     }
 
+    internal fun updateTokenLabel(id: String, label: String) = runTask {
+        requireStore().updateLabel(id, label)
+        postState { copy(tokenProfiles = requireStore().profiles()) }
+    }
+
     internal fun startTapLogin(server: PhigrosServer) {
         val generation = ++loginGeneration
         runTask {

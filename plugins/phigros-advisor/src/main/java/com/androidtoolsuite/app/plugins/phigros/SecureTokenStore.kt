@@ -72,6 +72,21 @@ internal class SecureTokenStore(context: Context) {
         preferences.edit().putString(KEY_SELECTED, id).apply()
     }
 
+    fun updateLabel(id: String, label: String): TokenProfile {
+        val items = readItems()
+        val item = items.firstOrNull { it.optString("id") == id } ?: error("令牌不存在")
+        val server = PhigrosServer.valueOf(item.optString("server", PhigrosServer.CN.name))
+        item.put("label", label.trim().ifBlank { "Phigros ${server.label}" })
+        writeItems(items)
+        return TokenProfile(
+            id = id,
+            label = item.getString("label"),
+            server = server,
+            createdAt = item.optLong("createdAt", 0L),
+            lastUsedAt = item.optLong("lastUsedAt", 0L),
+        )
+    }
+
     fun delete(id: String) {
         val remaining = readItems().filterNot { it.optString("id") == id }
         writeItems(remaining)
