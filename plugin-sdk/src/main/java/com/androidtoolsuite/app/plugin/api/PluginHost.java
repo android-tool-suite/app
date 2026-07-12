@@ -14,6 +14,8 @@ public interface PluginHost {
 
     boolean isShellServiceConnected();
 
+    int hostStateRevision();
+
     int shizukuUid();
 
     void requestShizukuPermission();

@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,33 +32,44 @@ import com.androidtoolsuite.app.ui.SectionHeader
 import com.androidtoolsuite.app.ui.SuiteCard
 import com.androidtoolsuite.app.ui.SuiteColors
 import com.androidtoolsuite.app.ui.composePluginView
+import kotlinx.coroutines.delay
+
+private data class ShizukuUiState(
+    val ready: Boolean,
+    val granted: Boolean,
+    val connected: Boolean,
+    val uid: Int,
+)
 
 fun createShizukuPluginView(activity: Activity, plugin: ShizukuPlugin, host: PluginHost): View = composePluginView(activity) {
     var revision by remember { mutableIntStateOf(0) }
     plugin.setComposeInvalidator { activity.runOnUiThread { revision++ } }
     revision
+    host.hostStateRevision()
     ShizukuContent(host)
 }
 
 fun createShizukuWidgetView(activity: Activity, host: PluginHost): View = composePluginView(activity) {
-    ShizukuStatusCard(host)
+    host.hostStateRevision()
+    ShizukuStatusCard(rememberShizukuUiState(host))
 }
 
 @Composable
 private fun ShizukuContent(host: PluginHost) {
+    val state = rememberShizukuUiState(host)
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionHeader("Shizuku 授权", "为需要系统能力的插件建立受控连接")
         Notice("Shizuku 授权由宿主统一持有。插件与宿主运行在同一进程，请只安装可信插件。")
-        ShizukuStatusCard(host)
+        ShizukuStatusCard(state)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = host::requestShizukuPermission,
-                enabled = host.isShizukuReady && !host.hasShizukuPermission(),
+                enabled = state.ready && !state.granted,
                 modifier = Modifier.weight(1f),
             ) { Text("请求授权") }
             OutlinedButton(
                 onClick = host::ensureShellService,
-                enabled = host.hasShizukuPermission() && !host.isShellServiceConnected,
+                enabled = state.granted && !state.connected,
                 modifier = Modifier.weight(1f),
             ) { Text("连接服务") }
         }
@@ -65,10 +77,27 @@ private fun ShizukuContent(host: PluginHost) {
 }
 
 @Composable
-private fun ShizukuStatusCard(host: PluginHost) {
-    val ready = host.isShizukuReady
-    val granted = host.hasShizukuPermission()
-    val connected = host.isShellServiceConnected
+private fun rememberShizukuUiState(host: PluginHost): ShizukuUiState {
+    return produceState(initialValue = readShizukuUiState(host), host) {
+        while (true) {
+            value = readShizukuUiState(host)
+            delay(400)
+        }
+    }.value
+}
+
+private fun readShizukuUiState(host: PluginHost) = ShizukuUiState(
+    ready = host.isShizukuReady,
+    granted = host.hasShizukuPermission(),
+    connected = host.isShellServiceConnected,
+    uid = host.shizukuUid(),
+)
+
+@Composable
+private fun ShizukuStatusCard(state: ShizukuUiState) {
+    val ready = state.ready
+    val granted = state.granted
+    val connected = state.connected
     val title = when {
         !ready -> "Shizuku 未连接"
         !granted -> "等待用户授权"
@@ -78,8 +107,8 @@ private fun ShizukuStatusCard(host: PluginHost) {
     val detail = when {
         !ready -> "请先在设备上启动 Shizuku。"
         !granted -> "连接已建立，仍需批准此应用的授权请求。"
-        !connected -> "授权成功，下一步连接 UserService。UID ${host.shizukuUid()}"
-        else -> "UserService 已连接 · UID ${host.shizukuUid()}"
+        !connected -> "授权成功，下一步连接 UserService。UID ${state.uid}"
+        else -> "UserService 已连接 · UID ${state.uid}"
     }
     SuiteCard(containerColor = if (connected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

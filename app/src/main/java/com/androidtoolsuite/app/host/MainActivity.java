@@ -118,7 +118,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private Shizuku.UserServiceArgs shellServiceArgs;
     private boolean shellServiceBinding;
 
-    private final Shizuku.OnBinderReceivedListener binderReceivedListener = () -> runOnUiThread(this::notifyHostStateChanged);
+    private final Shizuku.OnBinderReceivedListener binderReceivedListener = () -> runOnUiThread(this::notifyHostStateChangedAfterBinderCallback);
     private final Shizuku.OnBinderDeadListener binderDeadListener = () -> runOnUiThread(() -> {
         shellService = null;
         shellServiceBinding = false;
@@ -126,7 +126,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     });
     private final Shizuku.OnRequestPermissionResultListener permissionResultListener = (requestCode, grantResult) -> {
         if (requestCode == REQUEST_SHIZUKU) {
-            runOnUiThread(this::notifyHostStateChanged);
+            runOnUiThread(this::notifyHostStateChangedAfterBinderCallback);
         }
     };
     private final ServiceConnection shellConnection = new ServiceConnection() {
@@ -134,14 +134,14 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         public void onServiceConnected(ComponentName name, IBinder service) {
             shellService = IShellService.Stub.asInterface(service);
             shellServiceBinding = false;
-            runOnUiThread(MainActivity.this::notifyHostStateChanged);
+            runOnUiThread(MainActivity.this::notifyHostStateChangedAfterBinderCallback);
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
             shellService = null;
             shellServiceBinding = false;
-            runOnUiThread(MainActivity.this::notifyHostStateChanged);
+            runOnUiThread(MainActivity.this::notifyHostStateChangedAfterBinderCallback);
         }
     };
 
@@ -681,6 +681,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
     }
 
+    private void notifyHostStateChangedAfterBinderCallback() {
+        notifyHostStateChanged();
+        getWindow().getDecorView().postDelayed(this::notifyHostStateChanged, 200L);
+    }
+
     public void invalidateComposeUi() {
         composeState.captureScrollPositions(this);
         composeState.bump();
@@ -688,6 +693,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     public HostUiState uiStateForUi() {
         return composeState;
+    }
+
+    @Override
+    public int hostStateRevision() {
+        return composeState.getRevision();
     }
 
     public int scrollIndexForUi(String page) {
