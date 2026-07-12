@@ -12,8 +12,8 @@ android {
         applicationId "com.example.shizukuaccessibilitygrant.plugin.phigros"
         minSdk 24
         targetSdk 35
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 8
+        versionName "2.0.5"
     }
 
     compileOptions {
@@ -32,6 +32,9 @@ kotlin {
 
 dependencies {
     compileOnly project(":plugin-sdk")
+    implementation "com.google.zxing:core:3.5.3"
+    testImplementation project(":plugin-sdk")
+    testImplementation "junit:junit:4.13.2"
 }
 
 tasks.register("packagePlugin", Zip) {

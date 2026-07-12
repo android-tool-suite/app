@@ -3,10 +3,10 @@
   "formatVersion": "1",
   "plugin": {
     "id": "phigros_advisor",
-    "title": "Phigros 查分助手",
-    "description": "抓取 Phigros 云存档或导入成绩 JSON，按 P3+B27 估算 RKS，并给出按收益排序的推分建议。",
-    "version": "1.1.0",
-    "author": "Android Tool Suite",
+    "title": "Phigros Data Studio",
+    "description": "本地加密管理 SessionToken，查询 Bn/B30、RKS 明细与推分时间线，并生成 B30 和个人信息效果图。",
+    "version": "2.0.5",
+    "author": "Android Tool Suite · Phigros Data Studio",
     "entryClass": "com.example.shizukuaccessibilitygrant.plugins.phigros.PhigrosAdvisorPlugin"
   },
   "permissions": [
@@ -18,8 +18,8 @@
       "id": "rks_summary",
       "title": "Phigros RKS",
       "value": "导入后显示",
-      "subtitle": "显示最近一次估算结果和记录数量。"
-      ,"sizes": ["2x2", "4x2"]
+      "subtitle": "显示最近一次本地计算结果和记录数量。",
+      "sizes": ["2x2", "4x2"]
     }
   ]
 }

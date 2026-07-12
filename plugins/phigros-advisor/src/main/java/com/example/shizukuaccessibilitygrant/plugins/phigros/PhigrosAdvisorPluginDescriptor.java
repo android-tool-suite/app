@@ -18,10 +18,10 @@ public final class PhigrosAdvisorPluginDescriptor {
         LinkedHashSet<String> dependencies = new LinkedHashSet<>();
         return new ImportedPluginDescriptor(
                 ID,
-                "Phigros 查分助手",
-                "抓取 Phigros 云存档或导入成绩 JSON，按 P3+B27 估算 RKS，并给出按收益排序的推分建议。",
-                "1.1.0",
-                "Android Tool Suite",
+                "Phigros Data Studio",
+                "本地加密管理 SessionToken，查询 Bn/B30、RKS 明细与推分时间线，并生成 B30 和个人信息效果图。",
+                "2.0.5",
+                "Android Tool Suite · Phigros Data Studio",
                 "1",
                 "com.example.shizukuaccessibilitygrant.plugins.phigros.PhigrosAdvisorPlugin",
                 "",
