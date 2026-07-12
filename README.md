@@ -21,7 +21,7 @@
 插件实现 `ToolPlugin` 接口。宿主内置插件在 `ToolRegistry.createRequiredBuiltInPlugins()` 中注册；外部插件通过包含 `manifest.json` 和 `plugin.apk` 的完整 `.atsplugin` 包安装，并由 `ExternalToolFactory` 加载可执行入口。
 
 ```text
-app/src/main/java/com/example/shizukuaccessibilitygrant/
+app/src/main/java/com/androidtoolsuite/app/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
   plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、依赖声明
   plugin/store/         插件状态、外部插件清单存储

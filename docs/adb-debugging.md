@@ -51,7 +51,7 @@ $adb = "$sdk\platform-tools\adb.exe"
 .\tools\adb-debug.ps1 -Command set-plugin-enabled -Plugin shizuku_auth -Enabled $true
 
 # 观察实时日志；按 Ctrl+C 停止
-$appPid = (& $adb shell pidof com.example.shizukuaccessibilitygrant).Trim()
+$appPid = (& $adb shell pidof com.androidtoolsuite.app).Trim()
 & $adb logcat "--pid=$appPid"
 ```
 
@@ -147,7 +147,7 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 不使用脚本时，显式广播 debug Receiver。响应位于 `Broadcast completed` 的 `data` 字段，成功时 `result=-1`、`ok=true`，失败时 `result=0`、`ok=false`。
 
 ```powershell
-$pkg = 'com.example.shizukuaccessibilitygrant'
+$pkg = 'com.androidtoolsuite.app'
 adb shell am broadcast -W `
   -a "$pkg.DEBUG_COMMAND" `
   -n "$pkg/.debug.DebugCommandReceiver" `
@@ -196,10 +196,10 @@ adb shell am start -W -n "$pkg/.host.MainActivity" --es debug_destination plugin
 
 ```powershell
 # 完整清空应用数据
-adb shell pm clear com.example.shizukuaccessibilitygrant
+adb shell pm clear com.androidtoolsuite.app
 
 # 查看日志和崩溃
-adb logcat --pid=$(adb shell pidof com.example.shizukuaccessibilitygrant)
+adb logcat --pid=$(adb shell pidof com.androidtoolsuite.app)
 
 # 获取 UI 树
 adb shell uiautomator dump /sdcard/window.xml

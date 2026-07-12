@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace "com.example.shizukuaccessibilitygrant.plugin.phigros"
+    namespace "com.androidtoolsuite.app.plugin.phigros"
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.example.shizukuaccessibilitygrant.plugin.phigros"
+        applicationId "com.androidtoolsuite.app.plugin.phigros"
         minSdk 24
         targetSdk 35
         versionCode 8

@@ -78,7 +78,7 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
 可执行插件的入口类必须：
 
 - 编译进插件包根目录的 `plugin.apk`。
-- 实现 `com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin`。
+- 实现 `com.androidtoolsuite.app.plugin.api.ToolPlugin`。
 - 提供 public 无参构造方法。
 - 在 `plugin.entryClass` 中声明完整类名。
 

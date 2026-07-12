@@ -6,7 +6,7 @@
             android:exported="true"
             android:permission="android.permission.DUMP">
             <intent-filter>
-                <action android:name="com.example.shizukuaccessibilitygrant.DEBUG_COMMAND" />
+                <action android:name="com.androidtoolsuite.app.DEBUG_COMMAND" />
             </intent-filter>
         </receiver>
     </application>

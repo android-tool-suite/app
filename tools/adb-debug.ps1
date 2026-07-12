@@ -27,7 +27,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$packageName = 'com.example.shizukuaccessibilitygrant'
+$packageName = 'com.androidtoolsuite.app'
 $action = "$packageName.DEBUG_COMMAND"
 $component = "$packageName/.debug.DebugCommandReceiver"
 
