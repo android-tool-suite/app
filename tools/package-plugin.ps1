@@ -11,6 +11,10 @@ $manifest = Join-Path $resolvedSource "manifest.json"
 if (-not (Test-Path -LiteralPath $manifest)) {
     throw "manifest.json not found in $resolvedSource"
 }
+$pluginApk = Join-Path $resolvedSource "plugin.apk"
+if (-not (Test-Path -LiteralPath $pluginApk -PathType Leaf)) {
+    throw "plugin.apk not found in $resolvedSource; only complete executable plugins can be packaged"
+}
 
 $parent = Split-Path -Parent $OutputFile
 if ($parent -and -not (Test-Path -LiteralPath $parent)) {

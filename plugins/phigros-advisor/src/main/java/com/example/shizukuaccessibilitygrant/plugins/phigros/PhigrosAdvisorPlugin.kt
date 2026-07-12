@@ -46,7 +46,6 @@ class PhigrosAdvisorPlugin(
     override fun description(): String = descriptor.description
     override fun version(): String = descriptor.version
     override fun removable(): Boolean = true
-    override fun requestedPermissions(): Set<String> = descriptor.requestedPermissions
     override fun dependencies(): Set<String> = descriptor.dependencies
 
     override fun createHomeWidgets(activity: Activity, host: PluginHost): List<HomeWidget> = listOf(

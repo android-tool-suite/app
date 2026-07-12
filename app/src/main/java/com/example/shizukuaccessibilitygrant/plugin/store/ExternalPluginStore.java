@@ -36,9 +36,10 @@ public final class ExternalPluginStore {
             try {
                 ImportedPluginDescriptor descriptor = ImportedPluginDescriptor.fromJson(raw);
                 File codeFile = pluginCodeFile(descriptor.id);
-                if (codeFile.exists()) {
-                    descriptor = descriptor.withCodePath(codeFile.getAbsolutePath());
+                if (descriptor.entryClass.isEmpty() || !codeFile.isFile()) {
+                    continue;
                 }
+                descriptor = descriptor.withCodePath(codeFile.getAbsolutePath());
                 plugins.add(descriptor);
             } catch (JSONException ignored) {
             }
@@ -110,34 +111,6 @@ public final class ExternalPluginStore {
             throw new IOException("无法完成插件代码更新");
         }
         codeFile.setReadOnly();
-    }
-
-    public void setPermission(String pluginId, String permission, boolean granted) throws JSONException {
-        List<ImportedPluginDescriptor> current = load();
-        LinkedHashSet<String> rawSet = new LinkedHashSet<>();
-        for (ImportedPluginDescriptor plugin : current) {
-            ImportedPluginDescriptor next = plugin;
-            if (plugin.id.equals(pluginId)) {
-                LinkedHashSet<String> permissions = new LinkedHashSet<>(plugin.grantedPermissions);
-                if (granted) {
-                    permissions.add(permission);
-                } else {
-                    permissions.remove(permission);
-                }
-                next = plugin.withGrantedPermissions(permissions);
-            }
-            rawSet.add(next.toJson());
-        }
-        preferences.edit().putStringSet(PREF_PLUGIN_JSON_SET, rawSet).apply();
-    }
-
-    public boolean hasPermission(String pluginId, String permission) {
-        for (ImportedPluginDescriptor plugin : load()) {
-            if (plugin.id.equals(pluginId)) {
-                return plugin.grantedPermissions.contains(permission);
-            }
-        }
-        return false;
     }
 
     public boolean isEnabled(String pluginId) {

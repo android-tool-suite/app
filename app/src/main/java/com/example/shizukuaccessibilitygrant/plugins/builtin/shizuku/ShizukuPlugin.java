@@ -2,7 +2,6 @@ package com.example.shizukuaccessibilitygrant.plugins.builtin.shizuku;
 
 import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
-import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog;
 import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
 import android.app.Activity;
 import android.view.Gravity;
@@ -48,11 +47,6 @@ public final class ShizukuPlugin implements ToolPlugin {
     @Override
     public boolean removable() {
         return false;
-    }
-
-    @Override
-    public Set<String> requestedPermissions() {
-        return Collections.singleton(PluginPermissionCatalog.SHIZUKU);
     }
 
     @Override

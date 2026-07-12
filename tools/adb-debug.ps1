@@ -9,7 +9,6 @@ param(
         'export-plugin',
         'delete-plugin',
         'set-plugin-enabled',
-        'set-plugin-permission',
         'set-widget-visible',
         'navigate',
         'reset-state'
@@ -17,14 +16,12 @@ param(
     [string]$Command,
 
     [string]$Plugin,
-    [string]$Permission,
     [string]$Widget,
     [string]$Destination,
     [string]$Path,
     [string]$PluginFile,
     [string]$OutputFile,
     [bool]$Enabled,
-    [bool]$Granted,
     [bool]$Visible,
     [string]$Serial
 )
@@ -139,18 +136,6 @@ switch ($Command) {
             throw "命令 $Command 缺少参数 -Enabled"
         }
         $extras += @('--es', 'plugin', $Plugin, '--ez', 'enabled', (Boolean-Text $Enabled))
-    }
-    'set-plugin-permission' {
-        Require-Value 'Plugin' $Plugin
-        Require-Value 'Permission' $Permission
-        if (-not $PSBoundParameters.ContainsKey('Granted')) {
-            throw "命令 $Command 缺少参数 -Granted"
-        }
-        $extras += @(
-            '--es', 'plugin', $Plugin,
-            '--es', 'permission', $Permission,
-            '--ez', 'granted', (Boolean-Text $Granted)
-        )
     }
     'set-widget-visible' {
         Require-Value 'Widget' $Widget

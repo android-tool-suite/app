@@ -1,7 +1,6 @@
 package com.example.shizukuaccessibilitygrant.plugins.phigros;
 
 import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
-import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -13,8 +12,6 @@ public final class PhigrosAdvisorPluginDescriptor {
     }
 
     public static ImportedPluginDescriptor create() {
-        LinkedHashSet<String> permissions = new LinkedHashSet<>();
-        permissions.add(PluginPermissionCatalog.NETWORK);
         LinkedHashSet<String> dependencies = new LinkedHashSet<>();
         return new ImportedPluginDescriptor(
                 ID,
@@ -25,8 +22,6 @@ public final class PhigrosAdvisorPluginDescriptor {
                 "1",
                 "com.example.shizukuaccessibilitygrant.plugins.phigros.PhigrosAdvisorPlugin",
                 "",
-                permissions,
-                new LinkedHashSet<>(),
                 dependencies,
                 Collections.emptyList()
         );

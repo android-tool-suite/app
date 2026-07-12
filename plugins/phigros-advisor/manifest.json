@@ -9,17 +9,5 @@
     "author": "Android Tool Suite · Phigros Data Studio",
     "entryClass": "com.example.shizukuaccessibilitygrant.plugins.phigros.PhigrosAdvisorPlugin"
   },
-  "permissions": [
-    "network"
-  ],
-  "dependencies": [],
-  "widgets": [
-    {
-      "id": "rks_summary",
-      "title": "Phigros RKS",
-      "value": "导入后显示",
-      "subtitle": "显示最近一次本地计算结果和记录数量。",
-      "sizes": ["2x2", "4x2"]
-    }
-  ]
+  "dependencies": []
 }

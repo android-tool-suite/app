@@ -18,8 +18,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
-import android.window.OnBackInvokedCallback;
-import android.window.OnBackInvokedDispatcher;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
@@ -38,7 +36,6 @@ import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidgetSize;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginDependency;
 import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginHost;
-import com.example.shizukuaccessibilitygrant.host.management.PluginManagerPlugin;
 import com.example.shizukuaccessibilitygrant.plugins.builtin.shizuku.ShizukuPlugin;
 import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
 import com.example.shizukuaccessibilitygrant.plugin.runtime.ToolRegistry;
@@ -92,8 +89,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
     private final List<Button> bottomButtons = new ArrayList<>();
-    private final PluginManagerPlugin pluginManagerPlugin = new PluginManagerPlugin();
-
     private LinearLayout contentRoot;
     private LinearLayout bottomBar;
     private ToolPlugin selectedPlugin;
@@ -102,9 +97,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private SharedPreferences uiPreferences;
     private String pendingExportPluginId;
     private int currentSection = SECTION_DASHBOARD;
-    private boolean permissionCenterOpen;
-    private boolean dashboardEditMode;
-    private boolean toolEditMode;
+    private int pluginReturnSection = SECTION_PLUGINS;
+    private boolean interfaceManagementOpen;
     private final HostUiState composeState = new HostUiState();
     private final Map<String, int[]> composeScrollPositions = new LinkedHashMap<>();
 
@@ -120,12 +114,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             setEnabled(true);
         }
     };
-    private final OnBackInvokedCallback systemBackCallback = () -> {
-        if (!handleAppBack()) {
-            finish();
-        }
-    };
-
     private IShellService shellService;
     private Shizuku.UserServiceArgs shellServiceArgs;
     private boolean shellServiceBinding;
@@ -166,12 +154,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         loadPlugins();
         setContentView(createContentView());
         getOnBackPressedDispatcher().addCallback(this, appBackCallback);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                    OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                    systemBackCallback
-            );
-        }
         if (BuildConfig.DEBUG) {
             debugInstance = new WeakReference<>(this);
         }
@@ -200,15 +182,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         for (ToolPlugin plugin : plugins) {
             plugin.onDestroy();
         }
-        pluginManagerPlugin.onDestroy();
         Shizuku.removeBinderReceivedListener(binderReceivedListener);
         Shizuku.removeBinderDeadListener(binderDeadListener);
         Shizuku.removeRequestPermissionResultListener(permissionResultListener);
         if (debugInstance.get() == this) {
             debugInstance.clear();
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);
         }
         unbindShellService();
         super.onDestroy();
@@ -223,12 +201,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private boolean handleAppBack() {
-        if (permissionCenterOpen) {
-            closePermissionCenterForUi();
+        if (interfaceManagementOpen) {
+            closeInterfaceManagementForUi();
             return true;
         }
         if (selectedPlugin != null) {
-            showPluginList();
+            closePluginForUi();
             return true;
         }
         if (currentSection == SECTION_MANAGER || currentSection == SECTION_PLUGINS) {
@@ -239,7 +217,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public boolean canHandleBackForUi() {
-        return permissionCenterOpen
+        return interfaceManagementOpen
                 || selectedPlugin != null
                 || currentSection == SECTION_MANAGER
                 || currentSection == SECTION_PLUGINS;
@@ -308,8 +286,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private void showDashboard() {
         currentSection = SECTION_DASHBOARD;
         selectedPlugin = null;
-        permissionCenterOpen = false;
-        toolEditMode = false;
+        interfaceManagementOpen = false;
         invalidateComposeUi();
     }
 
@@ -403,8 +380,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private void showPluginList() {
         currentSection = SECTION_PLUGINS;
         selectedPlugin = null;
-        permissionCenterOpen = false;
-        dashboardEditMode = false;
+        interfaceManagementOpen = false;
         invalidateComposeUi();
     }
 
@@ -454,7 +430,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         TextView meta = new TextView(this);
         meta.setText((plugin.removable() ? "外部插件" : "内置插件")
                 + " · 版本 " + plugin.version()
-                + " · 权限 " + plugin.requestedPermissions().size()
                 + " · 依赖 " + plugin.dependencies().size()
                 + " · 小部件 " + plugin.createHomeWidgets(this, this).size());
         UiKit.styleCaption(meta);
@@ -473,11 +448,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private void openPlugin(ToolPlugin plugin) {
-        currentSection = SECTION_PLUGINS;
+        pluginReturnSection = currentSection == SECTION_DASHBOARD
+                ? SECTION_DASHBOARD
+                : SECTION_PLUGINS;
         selectedPlugin = plugin;
-        permissionCenterOpen = false;
-        dashboardEditMode = false;
-        toolEditMode = false;
         plugin.onSelected();
         invalidateComposeUi();
     }
@@ -492,10 +466,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private void showPluginManager() {
         currentSection = SECTION_MANAGER;
         selectedPlugin = null;
-        permissionCenterOpen = false;
-        dashboardEditMode = false;
-        toolEditMode = false;
-        pluginManagerPlugin.onSelected();
+        interfaceManagementOpen = false;
         invalidateComposeUi();
     }
 
@@ -654,8 +625,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     pendingExternalPlugins.remove(i);
                 } else if (areDependenciesSatisfied(descriptor.dependencies, activeVersions)) {
                     ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
-                    plugins.add(plugin);
-                    activeVersions.put(plugin.id(), plugin.version());
+                    if (plugin != null) {
+                        plugins.add(plugin);
+                        activeVersions.put(plugin.id(), plugin.version());
+                    }
                     pendingExternalPlugins.remove(i);
                     loadedPlugin = true;
                 }
@@ -705,19 +678,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         if (selectedPlugin != null) {
             selectedPlugin.onHostStateChanged();
         }
-        if (currentSection == SECTION_MANAGER) {
-            pluginManagerPlugin.onHostStateChanged();
-        }
         invalidateComposeUi();
     }
 
     public void invalidateComposeUi() {
         composeState.captureScrollPositions(this);
         composeState.bump();
-    }
-
-    private void invalidateComposeUiAfterGesture() {
-        getWindow().getDecorView().post(this::invalidateComposeUi);
     }
 
     public HostUiState uiStateForUi() {
@@ -772,20 +738,17 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
     }
 
-    public void moveToolForUi(String pluginId, int direction) {
+    public void moveToolToUi(String pluginId, String targetPluginId) {
         List<ToolPlugin> tools = orderedTools(true);
         int index = -1;
+        int target = -1;
         for (int i = 0; i < tools.size(); i++) {
-            if (tools.get(i).id().equals(pluginId)) {
-                index = i;
-                break;
-            }
+            if (tools.get(i).id().equals(pluginId)) index = i;
+            if (tools.get(i).id().equals(targetPluginId)) target = i;
         }
-        if (index < 0) return;
-        int target = Math.max(0, Math.min(tools.size() - 1, index + direction));
-        if (target == index) return;
+        if (index < 0 || target < 0 || target == index) return;
         ToolPlugin moved = tools.remove(index);
-        tools.add(target, moved);
+        tools.add(Math.max(0, Math.min(tools.size(), target)), moved);
         List<String> ids = new ArrayList<>();
         for (ToolPlugin tool : tools) ids.add(tool.id());
         saveOrder(PREF_TOOL_ORDER, ids);
@@ -817,39 +780,39 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
     }
 
-    public boolean isDashboardEditModeForUi() {
-        return dashboardEditMode;
+    public boolean hasHomeWidgetsForUi(ToolPlugin plugin) {
+        return !plugin.createHomeWidgets(this, this).isEmpty();
     }
 
-    public void setDashboardEditModeForUi(boolean editing) {
-        dashboardEditMode = editing;
-        invalidateComposeUiAfterGesture();
+    public boolean isPluginHomeVisibleForUi(ToolPlugin plugin) {
+        List<HomeWidget> widgets = plugin.createHomeWidgets(this, this);
+        if (widgets.isEmpty()) return false;
+        for (HomeWidget widget : widgets) {
+            if (!isWidgetVisible(widget.pluginId() + ":" + widget.id())) return false;
+        }
+        return true;
     }
 
-    public boolean isToolEditModeForUi() {
-        return toolEditMode;
+    public void setPluginHomeVisibleForUi(ToolPlugin plugin, boolean visible) {
+        for (HomeWidget widget : plugin.createHomeWidgets(this, this)) {
+            setWidgetVisible(widget.pluginId() + ":" + widget.id(), visible);
+        }
+        invalidateComposeUi();
     }
 
-    public void setToolEditModeForUi(boolean editing) {
-        toolEditMode = editing;
-        invalidateComposeUiAfterGesture();
-    }
-
-    public void moveWidgetForUi(HomeWidget widget, int direction) {
+    public void moveWidgetToUi(HomeWidget widget, HomeWidget targetWidget) {
         List<WidgetRegistration> widgets = orderedWidgets(true);
         String key = widget.pluginId() + ":" + widget.id();
+        String targetKey = targetWidget.pluginId() + ":" + targetWidget.id();
         int index = -1;
+        int target = -1;
         for (int i = 0; i < widgets.size(); i++) {
-            if (widgets.get(i).key.equals(key)) {
-                index = i;
-                break;
-            }
+            if (widgets.get(i).key.equals(key)) index = i;
+            if (widgets.get(i).key.equals(targetKey)) target = i;
         }
-        if (index < 0) return;
-        int target = Math.max(0, Math.min(widgets.size() - 1, index + direction));
-        if (target == index) return;
+        if (index < 0 || target < 0 || target == index) return;
         WidgetRegistration moved = widgets.remove(index);
-        widgets.add(target, moved);
+        widgets.add(Math.max(0, Math.min(widgets.size(), target)), moved);
         List<String> keys = new ArrayList<>();
         for (WidgetRegistration registration : widgets) keys.add(registration.key);
         saveOrder(PREF_WIDGET_ORDER, keys);
@@ -960,24 +923,36 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
+    public void closePluginForUi() {
+        if (pluginReturnSection == SECTION_DASHBOARD) {
+            showDashboard();
+        } else {
+            showPluginList();
+        }
+    }
+
     public List<ImportedPluginDescriptor> importedDescriptorsForUi() {
         return externalPluginStore.load();
     }
 
-    public boolean isPermissionCenterOpenForUi() {
-        return permissionCenterOpen;
+    public boolean isInterfaceManagementOpenForUi() {
+        return interfaceManagementOpen;
     }
 
-    public void showPermissionCenterForUi() {
+    public void showInterfaceManagementForUi() {
         currentSection = SECTION_MANAGER;
         selectedPlugin = null;
-        permissionCenterOpen = true;
+        interfaceManagementOpen = true;
         invalidateComposeUi();
     }
 
-    public void closePermissionCenterForUi() {
-        permissionCenterOpen = false;
+    public void closeInterfaceManagementForUi() {
+        interfaceManagementOpen = false;
         invalidateComposeUi();
+    }
+
+    public boolean isPluginLoadedForUi(String pluginId) {
+        return findPlugin(pluginId) != null;
     }
 
     @Override
@@ -1129,16 +1104,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 showToast("插件 ID 与内置插件冲突");
                 return;
             }
-            ImportedPluginDescriptor installed = findImportedDescriptor(descriptor.id);
-            boolean updating = installed != null;
-            if (updating) {
-                Set<String> retainedPermissions = new LinkedHashSet<>(installed.grantedPermissions);
-                retainedPermissions.retainAll(descriptor.requestedPermissions);
-                descriptor = descriptor.withGrantedPermissions(retainedPermissions);
-            }
-            if (pluginImport.codeBytes != null) {
-                externalPluginStore.savePluginCode(descriptor.id, pluginImport.codeBytes);
-            }
+            boolean updating = findImportedDescriptor(descriptor.id) != null;
+            externalPluginStore.savePluginCode(descriptor.id, pluginImport.codeBytes);
             externalPluginStore.save(descriptor);
             showToast((updating ? "已更新插件：" : "已导入插件，默认停用：") + descriptor.title);
             reloadPlugins(descriptor.id);
@@ -1187,11 +1154,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 showToast("无法启用，依赖未满足：" + joinNames(missingDependencies));
                 return;
             }
-            List<String> missingPermissions = findMissingPluginPermissions(descriptor);
-            if (!missingPermissions.isEmpty()) {
-                showToast("无法启用，请先在权限中心授权：" + joinNames(missingPermissions));
-                return;
-            }
         } else {
             List<String> dependents = findDependentPluginTitles(pluginId);
             if (!dependents.isEmpty()) {
@@ -1202,36 +1164,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         externalPluginStore.setEnabled(pluginId, enabled);
         showToast(enabled ? "已启用插件" : "已停用插件");
         reloadPlugins(enabled ? pluginId : null);
-    }
-
-    @Override
-    public void setImportedPluginPermission(String pluginId, String permission, boolean granted) {
-        if (!granted && externalPluginStore.isEnabled(pluginId)) {
-            showToast("请先停用插件，再撤销权限");
-            return;
-        }
-        try {
-            externalPluginStore.setPermission(pluginId, permission, granted);
-            showToast(granted ? "已授权：" + permission : "已撤销：" + permission);
-            invalidateComposeUi();
-        } catch (JSONException e) {
-            showToast("权限更新失败：" + e.getMessage());
-        }
-    }
-
-    @Override
-    public boolean hasImportedPluginPermission(String pluginId, String permission) {
-        return externalPluginStore.hasPermission(pluginId, permission);
-    }
-
-    private List<String> findMissingPluginPermissions(ImportedPluginDescriptor descriptor) {
-        List<String> missing = new ArrayList<>();
-        for (String permission : descriptor.requestedPermissions) {
-            if (!descriptor.grantedPermissions.contains(permission)) {
-                missing.add(com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog.label(permission));
-            }
-        }
-        return missing;
     }
 
     @Override
@@ -1375,16 +1307,18 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     private PluginImport readPluginPackage(Uri uri) throws IOException, JSONException {
         byte[] bytes = readBytes(uri);
-        String manifestJson;
-        byte[] codeBytes = null;
-        if (isZip(bytes)) {
-            ZipPluginPackage zipPackage = readPackageFromZip(bytes);
-            manifestJson = zipPackage.manifestJson;
-            codeBytes = zipPackage.codeBytes;
-        } else {
-            manifestJson = new String(bytes, StandardCharsets.UTF_8);
+        if (!isZip(bytes)) {
+            throw new IOException("只支持包含 manifest.json 和 plugin.apk 的完整 .atsplugin 插件包");
         }
-        return new PluginImport(ImportedPluginDescriptor.fromJson(manifestJson), codeBytes);
+        ZipPluginPackage zipPackage = readPackageFromZip(bytes);
+        ImportedPluginDescriptor descriptor = ImportedPluginDescriptor.fromJson(zipPackage.manifestJson);
+        if (descriptor.entryClass.isEmpty()) {
+            throw new IOException("插件包清单缺少 plugin.entryClass");
+        }
+        if (zipPackage.codeBytes == null || zipPackage.codeBytes.length == 0) {
+            throw new IOException("插件包缺少 plugin.apk");
+        }
+        return new PluginImport(descriptor, zipPackage.codeBytes);
     }
 
     private byte[] readBytes(Uri uri) throws IOException {

@@ -11,9 +11,9 @@ import android.os.Build;
 import com.example.shizukuaccessibilitygrant.host.MainActivity;
 import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget;
 import com.example.shizukuaccessibilitygrant.plugin.api.PluginDependency;
-import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog;
 import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin;
 import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor;
+import com.example.shizukuaccessibilitygrant.plugin.runtime.ExternalToolFactory;
 import com.example.shizukuaccessibilitygrant.plugin.runtime.ToolRegistry;
 import com.example.shizukuaccessibilitygrant.plugin.store.BuiltInPluginStateStore;
 import com.example.shizukuaccessibilitygrant.plugin.store.ExternalPluginStore;
@@ -94,13 +94,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                         requiredString(intent, "plugin"),
                         requiredBoolean(intent, "enabled")
                 );
-            case "set-plugin-permission":
-                return setPluginPermission(
-                        context,
-                        requiredString(intent, "plugin"),
-                        requiredString(intent, "permission"),
-                        requiredBoolean(intent, "granted")
-                );
             case "set-widget-visible":
                 return setWidgetVisible(
                         context,
@@ -128,7 +121,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         commands.put(command("export-plugin", "plugin", "path"));
         commands.put(command("delete-plugin", "plugin"));
         commands.put(command("set-plugin-enabled", "plugin", "enabled:boolean"));
-        commands.put(command("set-plugin-permission", "plugin", "permission", "granted:boolean"));
         commands.put(command("set-widget-visible", "widget", "visible:boolean"));
         commands.put(command("reset-state"));
         result.put("commands", commands);
@@ -183,8 +175,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             plugin.put("active", activeIds.contains(descriptor.id));
             plugin.put("entryClass", descriptor.entryClass);
             plugin.put("hasCode", !descriptor.codePath.isEmpty());
-            plugin.put("requestedPermissions", new JSONArray(descriptor.requestedPermissions));
-            plugin.put("grantedPermissions", new JSONArray(descriptor.grantedPermissions));
             plugin.put("dependencies", new JSONArray(descriptor.dependencies));
             JSONArray widgets = new JSONArray();
             descriptor.widgets.forEach(widget -> widgets.put(descriptor.id + ":" + widget.id));
@@ -194,7 +184,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
         JSONObject result = new JSONObject();
         result.put("plugins", plugins);
-        result.put("knownPermissions", new JSONArray(PluginPermissionCatalog.knownPermissions()));
         return result;
     }
 
@@ -214,18 +203,8 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         }
 
         ExternalPluginStore store = new ExternalPluginStore(context);
-        ImportedPluginDescriptor installed = findExternal(store, descriptor.id);
-        boolean updating = installed != null;
-        if (updating) {
-            Set<String> retainedPermissions = new LinkedHashSet<>(installed.grantedPermissions);
-            retainedPermissions.retainAll(descriptor.requestedPermissions);
-            descriptor = descriptor.withGrantedPermissions(retainedPermissions);
-        } else {
-            descriptor = descriptor.withGrantedPermissions(Collections.emptySet());
-        }
-        if (pluginPackage.codeBytes != null) {
-            store.savePluginCode(descriptor.id, pluginPackage.codeBytes);
-        }
+        boolean updating = findExternal(store, descriptor.id) != null;
+        store.savePluginCode(descriptor.id, pluginPackage.codeBytes);
         if (!updating) store.setEnabled(descriptor.id, false);
         store.save(descriptor);
         notifyStateChanged(context);
@@ -235,7 +214,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         result.put("title", descriptor.title);
         result.put("updated", updating);
         result.put("enabled", store.isEnabled(descriptor.id));
-        result.put("grantedPermissions", new JSONArray(descriptor.grantedPermissions));
         return result;
     }
 
@@ -300,17 +278,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             if (!missing.isEmpty()) {
                 throw new IllegalStateException("依赖未满足：" + join(missing));
             }
-            if (external != null) {
-                List<String> missingPermissions = new ArrayList<>();
-                for (String permission : external.requestedPermissions) {
-                    if (!external.grantedPermissions.contains(permission)) {
-                        missingPermissions.add(PluginPermissionCatalog.label(permission));
-                    }
-                }
-                if (!missingPermissions.isEmpty()) {
-                    throw new IllegalStateException("权限未授予：" + join(missingPermissions));
-                }
-            }
         } else {
             List<String> dependents = enabledDependents(context, pluginId);
             if (!dependents.isEmpty()) {
@@ -326,30 +293,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         }
         notifyStateChanged(context);
         return changed("plugin", pluginId, "enabled", enabled);
-    }
-
-    private JSONObject setPluginPermission(
-            Context context,
-            String pluginId,
-            String permission,
-            boolean granted
-    ) throws Exception {
-        ExternalPluginStore store = new ExternalPluginStore(context);
-        ImportedPluginDescriptor descriptor = findExternal(store, pluginId);
-        if (descriptor == null) {
-            throw new IllegalArgumentException("外部插件不存在：" + pluginId);
-        }
-        if (!descriptor.requestedPermissions.contains(permission)) {
-            throw new IllegalArgumentException("插件未声明权限：" + permission);
-        }
-        if (!granted && store.isEnabled(pluginId)) {
-            throw new IllegalStateException("请先停用插件，再撤销权限");
-        }
-        store.setPermission(pluginId, permission, granted);
-        notifyStateChanged(context);
-        JSONObject result = changed("plugin", pluginId, "permission", permission);
-        result.put("granted", granted);
-        return result;
     }
 
     private JSONObject setWidgetVisible(Context context, String widget, boolean visible) throws JSONException {
@@ -420,9 +363,13 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             for (int index = pending.size() - 1; index >= 0; index--) {
                 ImportedPluginDescriptor descriptor = pending.get(index);
                 if (dependenciesSatisfied(descriptor.dependencies, active)) {
-                    active.put(descriptor.id, descriptor.version);
+                    ToolPlugin plugin = ExternalToolFactory.create(context, descriptor);
+                    if (plugin != null) {
+                        active.put(plugin.id(), plugin.version());
+                        plugin.onDestroy();
+                        loaded = true;
+                    }
                     pending.remove(index);
-                    loaded = true;
                 }
             }
         } while (loaded);
@@ -481,7 +428,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         json.put("required", required);
         json.put("enabled", required || active);
         json.put("active", active);
-        json.put("requestedPermissions", new JSONArray(plugin.requestedPermissions()));
         json.put("dependencies", new JSONArray(plugin.dependencies()));
         JSONArray widgets = new JSONArray();
         for (HomeWidget widget : plugin.createHomeWidgets(null, null)) {
@@ -496,30 +442,34 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         try (FileInputStream input = new FileInputStream(file)) {
             bytes = readAll(input, MAX_PLUGIN_PACKAGE_BYTES);
         }
-        if (bytes.length >= 2 && bytes[0] == 'P' && bytes[1] == 'K') {
-            String manifest = null;
-            byte[] code = null;
-            try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
-                ZipEntry entry;
-                while ((entry = zip.getNextEntry()) != null) {
-                    if (!entry.isDirectory() && "manifest.json".equals(entry.getName())) {
-                        manifest = new String(readAll(zip, MAX_PLUGIN_PACKAGE_BYTES), StandardCharsets.UTF_8);
-                    } else if (!entry.isDirectory()
-                            && ("plugin.apk".equals(entry.getName()) || entry.getName().endsWith("/plugin.apk"))) {
-                        code = readAll(zip, MAX_PLUGIN_PACKAGE_BYTES);
-                    }
-                    zip.closeEntry();
-                }
-            }
-            if (manifest == null) {
-                throw new IOException("插件包缺少 manifest.json");
-            }
-            return new PluginPackage(ImportedPluginDescriptor.fromJson(manifest), code);
+        if (bytes.length < 2 || bytes[0] != 'P' || bytes[1] != 'K') {
+            throw new IOException("只支持包含 manifest.json 和 plugin.apk 的完整 .atsplugin 插件包");
         }
-        return new PluginPackage(
-                ImportedPluginDescriptor.fromJson(new String(bytes, StandardCharsets.UTF_8)),
-                null
-        );
+        String manifest = null;
+        byte[] code = null;
+        try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if (!entry.isDirectory() && "manifest.json".equals(entry.getName())) {
+                    manifest = new String(readAll(zip, MAX_PLUGIN_PACKAGE_BYTES), StandardCharsets.UTF_8);
+                } else if (!entry.isDirectory()
+                        && ("plugin.apk".equals(entry.getName()) || entry.getName().endsWith("/plugin.apk"))) {
+                    code = readAll(zip, MAX_PLUGIN_PACKAGE_BYTES);
+                }
+                zip.closeEntry();
+            }
+        }
+        if (manifest == null) {
+            throw new IOException("插件包缺少 manifest.json");
+        }
+        ImportedPluginDescriptor descriptor = ImportedPluginDescriptor.fromJson(manifest);
+        if (descriptor.entryClass.isEmpty()) {
+            throw new IOException("插件包清单缺少 plugin.entryClass");
+        }
+        if (code == null || code.length == 0) {
+            throw new IOException("插件包缺少 plugin.apk");
+        }
+        return new PluginPackage(descriptor, code);
     }
 
     private byte[] readAll(InputStream input, long limit) throws IOException {

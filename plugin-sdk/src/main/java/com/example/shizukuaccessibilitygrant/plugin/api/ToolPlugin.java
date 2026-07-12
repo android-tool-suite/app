@@ -20,10 +20,6 @@ public interface ToolPlugin {
 
     boolean removable();
 
-    default Set<String> requestedPermissions() {
-        return Collections.emptySet();
-    }
-
     default Set<String> dependencies() {
         return Collections.emptySet();
     }

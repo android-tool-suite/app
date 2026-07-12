@@ -4,11 +4,11 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,12 +16,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -33,28 +36,20 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Build
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Dashboard
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.KeyboardArrowUp
-import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -64,35 +59,35 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.shizukuaccessibilitygrant.plugin.api.HomeWidget
-import com.example.shizukuaccessibilitygrant.plugin.api.PluginPermissionCatalog
 import com.example.shizukuaccessibilitygrant.plugin.api.ToolPlugin
 import com.example.shizukuaccessibilitygrant.plugin.model.ImportedPluginDescriptor
 import com.example.shizukuaccessibilitygrant.ui.EmptyState
@@ -103,7 +98,6 @@ import com.example.shizukuaccessibilitygrant.ui.SuiteTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.collect
 
@@ -180,27 +174,28 @@ private fun HostApp(activity: MainActivity) {
             .semantics { stateDescription = "host-refresh-$refreshVersion" },
     ) {
         val expanded = maxWidth >= 840.dp
+        val selectedSection = activity.currentSectionForUi()
         if (expanded) {
             Row(Modifier.fillMaxSize()) {
-                AppNavigationRail(activity)
+                AppNavigationRail(activity, selectedSection)
                 AppContent(activity, refreshVersion, Modifier.weight(1f))
             }
         } else {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = MaterialTheme.colorScheme.background,
-                bottomBar = { AppNavigationBar(activity) },
+                bottomBar = { AppNavigationBar(activity, selectedSection) },
             ) { padding -> AppContent(activity, refreshVersion, Modifier.padding(padding)) }
         }
     }
 }
 
 @Composable
-private fun AppNavigationBar(activity: MainActivity) {
+private fun AppNavigationBar(activity: MainActivity, selectedSection: Int) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         destinations.forEach { destination ->
             NavigationBarItem(
-                selected = activity.currentSectionForUi() == destination.section,
+                selected = selectedSection == destination.section,
                 onClick = { activity.navigateForUi(destination.section) },
                 icon = { Icon(destination.icon, contentDescription = null) },
                 label = { Text(destination.label) },
@@ -210,7 +205,7 @@ private fun AppNavigationBar(activity: MainActivity) {
 }
 
 @Composable
-private fun AppNavigationRail(activity: MainActivity) {
+private fun AppNavigationRail(activity: MainActivity, selectedSection: Int) {
     NavigationRail(
         modifier = Modifier.fillMaxHeight(),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -222,7 +217,7 @@ private fun AppNavigationRail(activity: MainActivity) {
     ) {
         destinations.forEach { destination ->
             NavigationRailItem(
-                selected = activity.currentSectionForUi() == destination.section,
+                selected = selectedSection == destination.section,
                 onClick = { activity.navigateForUi(destination.section) },
                 icon = { Icon(destination.icon, contentDescription = null) },
                 label = { Text(destination.label) },
@@ -235,9 +230,9 @@ private fun AppNavigationRail(activity: MainActivity) {
 private fun AppContent(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val selected = activity.selectedPluginForUi()
     when {
+        selected != null -> PluginDetailScreen(activity, selected, refreshVersion, modifier.fillMaxSize())
         activity.currentSectionForUi() == DASHBOARD -> DashboardScreen(activity, refreshVersion, modifier.fillMaxSize())
         activity.currentSectionForUi() == MANAGER -> ManagerScreen(activity, refreshVersion, modifier.fillMaxSize())
-        selected != null -> PluginDetailScreen(activity, selected, refreshVersion, modifier.fillMaxSize())
         else -> PluginListScreen(activity, refreshVersion, modifier.fillMaxSize())
     }
 }
@@ -246,9 +241,7 @@ private fun AppContent(activity: MainActivity, refreshVersion: Int, modifier: Mo
 private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val plugins = activity.pluginsForUi()
     val widgets = activity.widgetsForUi()
-    val allWidgets = activity.allWidgetsForUi()
     val externalCount = plugins.count { it.removable() }
-    val editing = activity.isDashboardEditModeForUi()
     val listState = rememberPageListState(activity, "dashboard")
 
     LazyColumn(
@@ -284,148 +277,339 @@ private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifie
                 }
             }
         }
-        item {
-            SectionHeader(
-                "主页小部件",
-                if (editing) "长按并拖动卡片可调整顺序" else "长按任一小部件进入编辑模式",
-            ) {
-                IconButton(onClick = { activity.setDashboardEditModeForUi(!editing) }) {
-                    Icon(if (editing) Icons.Rounded.Close else Icons.Rounded.Edit, if (editing) "完成编辑" else "编辑主页")
-                }
-            }
-        }
-        if (editing) item { Notice("桌面编辑态：长按卡片后拖动排序；右下角可调整尺寸，开关控制是否显示。") }
-        if (!editing && widgets.isEmpty()) {
-            item { EmptyState("主页很清爽", "点击右上角编辑，添加工具提供的小部件。") }
-        } else if ((if (editing) allWidgets else widgets).isNotEmpty()) {
+        item { SectionHeader("主页小部件", "拖动时虚影预览落点；长按后松开可调整或隐藏") }
+        if (widgets.isEmpty()) {
+            item { EmptyState("主页很清爽", "可在插件管理的界面管理中重新显示小部件。") }
+        } else {
             item {
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val gap = 12.dp
-                    val unit = (maxWidth - gap * 3) / 4
-                    Column(verticalArrangement = Arrangement.spacedBy(gap)) {
-                        val displayedWidgets = if (editing) allWidgets else widgets
-                        widgetRows(displayedWidgets, activity).forEach { row ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                                row.forEach { widget ->
-                                    val width = activity.widgetWidthUnitsForUi(widget)
-                                    val height = activity.widgetHeightUnitsForUi(widget)
-                                    key(widget.pluginId() + ":" + widget.id()) {
-                                        WidgetTile(
-                                            activity = activity,
-                                            widget = widget,
-                                            modifier = Modifier
-                                                .weight(width.toFloat())
-                                                .height(unit * height + gap * (height - 1)),
-                                            onClick = { activity.openPluginForUi(widget.pluginId()) },
-                                            onLongPress = { activity.setDashboardEditModeForUi(true) },
-                                            editing = editing,
-                                        )
-                                    }
-                                }
-                                val remaining = 4 - row.sumOf { activity.widgetWidthUnitsForUi(it) }
-                                if (remaining > 0) Spacer(Modifier.weight(remaining.toFloat()))
-                            }
-                        }
-                    }
-                }
+                WidgetGrid(widgets, activity, Modifier.fillMaxWidth())
             }
         }
     }
 }
 
-private fun widgetRows(widgets: List<HomeWidget>, activity: MainActivity): List<List<HomeWidget>> {
-    val rows = mutableListOf<List<HomeWidget>>()
-    val pending = mutableListOf<HomeWidget>()
-    widgets.forEach { widget ->
-        val width = activity.widgetWidthUnitsForUi(widget)
-        val used = pending.sumOf { activity.widgetWidthUnitsForUi(it) }
-        if (pending.isNotEmpty() && used + width > 4) {
-            rows += pending.toList()
-            pending.clear()
-        }
-        pending += widget
-        if (pending.sumOf { activity.widgetWidthUnitsForUi(it) } == 4) {
-            rows += pending.toList()
-            pending.clear()
-        }
-    }
-    if (pending.isNotEmpty()) rows += pending.toList()
-    return rows
+private fun widgetKey(widget: HomeWidget) = widget.pluginId() + ":" + widget.id()
+
+private data class ReorderSlot(
+    val key: String,
+    val index: Int,
+    val left: Int,
+    val top: Int,
+    val width: Int,
+    val height: Int,
+) {
+    val centerX get() = left + width / 2f
+    val centerY get() = top + height / 2f
+
+    fun contains(x: Float, y: Float) = x >= left && x <= left + width && y >= top && y <= top + height
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+private class DropPreviewState {
+    var draggedKey by mutableStateOf<String?>(null)
+        private set
+    var targetIndex by mutableIntStateOf(-1)
+        private set
+    var offsetX by mutableFloatStateOf(0f)
+        private set
+    var offsetY by mutableFloatStateOf(0f)
+        private set
+
+    private var baseSlots: List<ReorderSlot> = emptyList()
+    private var frozenSlots: List<ReorderSlot> = emptyList()
+
+    fun updateBaseSlots(slots: List<ReorderSlot>) {
+        if (draggedKey == null) baseSlots = slots
+    }
+
+    fun start(key: String, fallbackIndex: Int) {
+        frozenSlots = baseSlots.toList()
+        val source = frozenSlots.firstOrNull { it.key == key }
+        targetIndex = source?.index ?: fallbackIndex
+        offsetX = 0f
+        offsetY = 0f
+        draggedKey = key
+    }
+
+    fun dragBy(dx: Float, dy: Float) {
+        val source = frozenSlots.firstOrNull { it.key == draggedKey } ?: return
+        offsetX += dx
+        offsetY += dy
+        val centerX = source.centerX + offsetX
+        val centerY = source.centerY + offsetY
+        val target = frozenSlots.firstOrNull { it.contains(centerX, centerY) }
+            ?: frozenSlots.minByOrNull {
+                val deltaX = centerX - it.centerX
+                val deltaY = centerY - it.centerY
+                deltaX * deltaX + deltaY * deltaY
+            }
+        if (target != null) targetIndex = target.index
+    }
+
+    fun sourceSlot(): ReorderSlot? = frozenSlots.firstOrNull { it.key == draggedKey }
+
+    fun finish(): Int {
+        val result = targetIndex
+        reset()
+        return result
+    }
+
+    fun cancel() = reset()
+
+    private fun reset() {
+        draggedKey = null
+        targetIndex = -1
+        offsetX = 0f
+        offsetY = 0f
+        frozenSlots = emptyList()
+    }
+}
+
+@Composable
+private fun DropPreview(modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(24.dp)
+    Box(
+        modifier
+            .zIndex(20f)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+            .border(3.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.82f), shape),
+    )
+}
+
+@Composable
+private fun WidgetGrid(widgets: List<HomeWidget>, activity: MainActivity, modifier: Modifier = Modifier) {
+    val gap = 12.dp
+    val orderKey = widgets.joinToString("\n") { widgetKey(it) }
+    val dragState = remember(orderKey) { DropPreviewState() }
+    val draggedKey = dragState.draggedKey
+    val draggedIndex = widgets.indexOfFirst { widgetKey(it) == draggedKey }
+    val targetIndex = dragState.targetIndex.coerceIn(0, (widgets.size - 1).coerceAtLeast(0))
+    Layout(
+        modifier = modifier,
+        content = {
+            widgets.forEachIndexed { index, widget ->
+                key(widgetKey(widget)) {
+                    WidgetTile(
+                        activity = activity,
+                        widget = widget,
+                        modifier = Modifier,
+                        onClick = { activity.openPluginForUi(widget.pluginId()) },
+                        dragState = dragState,
+                        sourceIndex = index,
+                        onDrop = { destination ->
+                            widgets.getOrNull(destination)?.let { target ->
+                                if (target !== widget) activity.moveWidgetToUi(widget, target)
+                            }
+                        },
+                    )
+                }
+            }
+            if (draggedIndex >= 0) {
+                DropPreview()
+            }
+        },
+    ) { measurables, constraints ->
+        val gridWidth = constraints.maxWidth
+        val gapPx = gap.roundToPx()
+        val unitWidth = ((gridWidth - gapPx * 3).coerceAtLeast(0)) / 4f
+        val placeables = arrayOfNulls<androidx.compose.ui.layout.Placeable>(measurables.size)
+        val positions = Array(measurables.size) { IntArray(2) }
+        val logicalIndices = widgets.indices.toMutableList()
+        val placeholderIndex = widgets.size
+        if (draggedIndex >= 0) {
+            logicalIndices.remove(draggedIndex)
+            logicalIndices.add(targetIndex.coerceAtMost(logicalIndices.size), -1)
+        }
+        val rowMeasurableIndices = mutableListOf<Int>()
+        var usedUnits = 0
+        var rowHeight = 0
+        var y = 0
+
+        fun finishRow() {
+            rowMeasurableIndices.forEach { positions[it][1] = y }
+            if (rowMeasurableIndices.isNotEmpty()) y += rowHeight + gapPx
+            rowMeasurableIndices.clear()
+            usedUnits = 0
+            rowHeight = 0
+        }
+
+        logicalIndices.forEach { logicalIndex ->
+            val isPlaceholder = logicalIndex < 0
+            val widgetIndex = if (isPlaceholder) draggedIndex else logicalIndex
+            val measurableIndex = if (isPlaceholder) placeholderIndex else widgetIndex
+            val widget = widgets[widgetIndex]
+            val widthUnits = activity.widgetWidthUnitsForUi(widget).coerceIn(1, 4)
+            if (usedUnits > 0 && usedUnits + widthUnits > 4) finishRow()
+
+            val itemWidth = (unitWidth * widthUnits + gapPx * (widthUnits - 1)).roundToInt()
+            val heightUnits = activity.widgetHeightUnitsForUi(widget).coerceAtLeast(1)
+            val itemHeight = (72.dp * heightUnits + gap * (heightUnits - 1)).roundToPx()
+            val placeable = measurables[measurableIndex].measure(Constraints.fixed(itemWidth, itemHeight))
+            placeables[measurableIndex] = placeable
+            positions[measurableIndex][0] = ((unitWidth + gapPx) * usedUnits).roundToInt()
+            rowMeasurableIndices += measurableIndex
+            usedUnits += widthUnits
+            rowHeight = maxOf(rowHeight, placeable.height)
+            if (usedUnits == 4) finishRow()
+        }
+        if (rowMeasurableIndices.isNotEmpty()) finishRow()
+
+        if (draggedIndex >= 0) {
+            val widget = widgets[draggedIndex]
+            val sourceSlot = dragState.sourceSlot()
+            val itemWidth = sourceSlot?.width ?: gridWidth
+            val itemHeight = sourceSlot?.height ?: (72.dp * activity.widgetHeightUnitsForUi(widget)).roundToPx()
+            placeables[draggedIndex] = measurables[draggedIndex].measure(Constraints.fixed(itemWidth, itemHeight))
+            positions[draggedIndex][0] = sourceSlot?.left ?: 0
+            positions[draggedIndex][1] = sourceSlot?.top ?: 0
+        } else {
+            dragState.updateBaseSlots(
+                widgets.indices.map { index ->
+                    val placeable = requireNotNull(placeables[index])
+                    ReorderSlot(
+                        key = widgetKey(widgets[index]),
+                        index = index,
+                        left = positions[index][0],
+                        top = positions[index][1],
+                        width = placeable.width,
+                        height = placeable.height,
+                    )
+                },
+            )
+        }
+        val gridHeight = (y - gapPx).coerceAtLeast(0)
+
+        layout(gridWidth, gridHeight.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+            placeables.forEachIndexed { index, placeable ->
+                placeable?.placeRelative(
+                    positions[index][0],
+                    positions[index][1],
+                    zIndex = when (index) {
+                        placeholderIndex -> 20f
+                        draggedIndex -> 10f
+                        else -> 0f
+                    },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun WidgetTile(
     activity: MainActivity,
     widget: HomeWidget,
     modifier: Modifier,
     onClick: () -> Unit,
-    onLongPress: () -> Unit,
-    editing: Boolean,
+    dragState: DropPreviewState,
+    sourceIndex: Int,
+    onDrop: (Int) -> Unit,
 ) {
-    SuiteCard(
-        modifier = modifier.then(
-            if (editing) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp))
-            else Modifier,
-        ).then(
-            if (editing) Modifier.reorderDrag(widget.pluginId() + widget.id(), columns = 2) {
-                activity.moveWidgetForUi(widget, it)
-            } else Modifier,
-        ),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    val shape = RoundedCornerShape(24.dp)
+    var menuExpanded by remember(widget.pluginId(), widget.id()) { mutableStateOf(false) }
+    val width = activity.widgetWidthUnitsForUi(widget)
+    val height = activity.widgetHeightUnitsForUi(widget)
+    Box(
+        modifier = modifier
+            .dropPreviewReorder(
+                key = widget.pluginId() + ":" + widget.id(),
+                onClick = onClick,
+                onLongPress = { menuExpanded = true },
+                dragState = dragState,
+                sourceIndex = sourceIndex,
+                onDrop = onDrop,
+                allowHorizontalDrag = true,
+            )
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-        Text(widget.title(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            PluginAndroidView(Modifier.fillMaxSize()) { widget.createView(activity, activity) }
-            if (!editing) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        PluginAndroidView(Modifier.fillMaxSize()) { widget.createView(activity, activity) }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(widget.pluginId(), widget.id()) {
+                    awaitPointerEventScope {
+                        while (true) awaitPointerEvent()
+                    }
+                },
+        )
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            widget.supportedSizes().forEach { size ->
+                DropdownMenuItem(
+                    text = { Text("尺寸 ${size.widthUnits}×${size.heightUnits}") },
+                    leadingIcon = {
+                        if (width == size.widthUnits && height == size.heightUnits) {
+                            Icon(Icons.Rounded.Check, null)
+                        }
+                    },
+                    onClick = {
+                        activity.setWidgetSizeForUi(widget, size.widthUnits, size.heightUnits)
+                        menuExpanded = false
+                    },
                 )
             }
-            if (editing) BoxWithConstraints(Modifier.fillMaxSize()) {
-                val width = activity.widgetWidthUnitsForUi(widget)
-                val height = activity.widgetHeightUnitsForUi(widget)
-                val showSizeText = maxWidth >= 150.dp
-                val sizeIndex = activity.widgetSizeIndexForUi(widget)
-                val sizeCount = activity.widgetSizeCountForUi(widget)
-                Switch(
-                    checked = activity.isWidgetVisibleForUi(widget),
-                    onCheckedChange = { activity.setWidgetVisibleForUi(widget, it) },
-                    modifier = Modifier.align(Alignment.TopEnd),
-                )
-                Row(
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(
-                        onClick = { activity.changeWidgetSizeForUi(widget, -1) },
-                        enabled = sizeIndex > 0,
-                    ) {
-                        Icon(Icons.Rounded.KeyboardArrowDown, "上一个组件规格")
-                    }
-                    if (showSizeText) {
-                        Text("${width}×${height} 格", style = MaterialTheme.typography.labelMedium)
-                    }
-                    IconButton(
-                        onClick = { activity.changeWidgetSizeForUi(widget, 1) },
-                        enabled = sizeIndex < sizeCount - 1,
-                    ) {
-                        Icon(Icons.Rounded.KeyboardArrowUp, "下一个组件规格")
-                    }
-                }
-            }
+            DropdownMenuItem(
+                text = { Text("不在主页显示") },
+                leadingIcon = { Icon(Icons.Rounded.VisibilityOff, null) },
+                onClick = {
+                    activity.setWidgetVisibleForUi(widget, false)
+                    menuExpanded = false
+                },
+            )
         }
     }
 }
 
 @Composable
+private fun Modifier.dropPreviewReorder(
+    key: String,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+    dragState: DropPreviewState,
+    sourceIndex: Int,
+    onDrop: (Int) -> Unit,
+    allowHorizontalDrag: Boolean,
+): Modifier {
+    val dragging = dragState.draggedKey == key
+    val viewConfiguration = LocalViewConfiguration.current
+    return this
+        .zIndex(if (dragging) 10f else 0f)
+        .graphicsLayer {
+            translationX = if (dragging && allowHorizontalDrag) dragState.offsetX else 0f
+            translationY = if (dragging) dragState.offsetY else 0f
+            alpha = if (dragging) 0.94f else 1f
+        }
+        .pointerInput(key) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                var pointer = down
+                var maxDistance = 0f
+                while (pointer.pressed) {
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    pointer = event.changes.firstOrNull { it.id == down.id } ?: break
+                    maxDistance = maxOf(maxDistance, (pointer.position - down.position).getDistance())
+                }
+                if (maxDistance <= viewConfiguration.touchSlop) {
+                    if (pointer.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) onLongPress()
+                    else onClick()
+                }
+            }
+        }
+        .pointerInput(key, sourceIndex, allowHorizontalDrag) {
+            detectDragGesturesAfterLongPress(
+                onDragStart = { dragState.start(key, sourceIndex) },
+                onDragCancel = dragState::cancel,
+                onDragEnd = { onDrop(dragState.finish()) },
+            ) { change, dragAmount ->
+                change.consume()
+                dragState.dragBy(if (allowHorizontalDrag) dragAmount.x else 0f, dragAmount.y)
+            }
+        }
+}
+
+@Composable
 private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val plugins = activity.pluginsForUi()
-    val allTools = activity.allToolsForUi()
-    val editing = activity.isToolEditModeForUi()
     val listState = rememberPageListState(activity, "tools")
     LazyColumn(
         state = listState,
@@ -434,54 +618,119 @@ private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifi
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("工具", style = MaterialTheme.typography.headlineLarge)
-                    Text(if (editing) "长按并上下拖动卡片可调整顺序" else "长按工具卡片可进入编辑模式。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                IconButton(onClick = { activity.setToolEditModeForUi(!editing) }) {
-                    Icon(if (editing) Icons.Rounded.Close else Icons.Rounded.Edit, if (editing) "完成编辑" else "编辑工具")
-                }
-            }
+            Text("工具", style = MaterialTheme.typography.headlineLarge)
+            Text("点击打开；拖动时虚影预览落点，松手后保存排序", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
         }
-        if (editing) {
-            item { Notice("长按并上下拖动卡片可调整顺序；隐藏的工具仍已安装，可随时重新显示。") }
-            items(allTools, key = ToolPlugin::id) { plugin -> ToolEditorCard(activity, plugin, allTools.indexOf(plugin), allTools.size) }
+        if (plugins.isEmpty()) item { EmptyState("没有可用工具", "请先在插件管理中启用插件。") }
+        if (plugins.isNotEmpty()) item { ToolReorderList(activity, plugins, Modifier.fillMaxWidth()) }
+    }
+}
+
+@Composable
+private fun ToolReorderList(
+    activity: MainActivity,
+    plugins: List<ToolPlugin>,
+    modifier: Modifier = Modifier,
+) {
+    val gap = 12.dp
+    val orderKey = plugins.joinToString("\n", transform = ToolPlugin::id)
+    val dragState = remember(orderKey) { DropPreviewState() }
+    val draggedIndex = plugins.indexOfFirst { it.id() == dragState.draggedKey }
+    val targetIndex = dragState.targetIndex.coerceIn(0, (plugins.size - 1).coerceAtLeast(0))
+    Layout(
+        modifier = modifier,
+        content = {
+            plugins.forEachIndexed { index, plugin ->
+                key(plugin.id()) {
+                    PluginListCard(
+                        plugin = plugin,
+                        onOpen = { activity.openPluginForUi(plugin) },
+                        modifier = Modifier.dropPreviewReorder(
+                            key = plugin.id(),
+                            onClick = { activity.openPluginForUi(plugin) },
+                            onLongPress = {},
+                            dragState = dragState,
+                            sourceIndex = index,
+                            onDrop = { destination ->
+                                plugins.getOrNull(destination)?.let { target ->
+                                    if (target !== plugin) activity.moveToolToUi(plugin.id(), target.id())
+                                }
+                            },
+                            allowHorizontalDrag = false,
+                        ),
+                    )
+                }
+            }
+            if (draggedIndex >= 0) DropPreview()
+        },
+    ) { measurables, constraints ->
+        val listWidth = constraints.maxWidth
+        val gapPx = gap.roundToPx()
+        val placeholderIndex = plugins.size
+        val logicalIndices = plugins.indices.toMutableList()
+        if (draggedIndex >= 0) {
+            logicalIndices.remove(draggedIndex)
+            logicalIndices.add(targetIndex.coerceAtMost(logicalIndices.size), -1)
+        }
+        val placeables = arrayOfNulls<androidx.compose.ui.layout.Placeable>(measurables.size)
+        val positions = Array(measurables.size) { IntArray(2) }
+        var y = 0
+
+        logicalIndices.forEach { logicalIndex ->
+            val isPlaceholder = logicalIndex < 0
+            val measurableIndex = if (isPlaceholder) placeholderIndex else logicalIndex
+            val placeable = if (isPlaceholder) {
+                val height = dragState.sourceSlot()?.height ?: 132.dp.roundToPx()
+                measurables[measurableIndex].measure(Constraints.fixed(listWidth, height))
+            } else {
+                measurables[measurableIndex].measure(Constraints(minWidth = listWidth, maxWidth = listWidth))
+            }
+            placeables[measurableIndex] = placeable
+            positions[measurableIndex][1] = y
+            y += placeable.height + gapPx
+        }
+
+        if (draggedIndex >= 0) {
+            val sourceSlot = dragState.sourceSlot()
+            placeables[draggedIndex] = measurables[draggedIndex].measure(Constraints(minWidth = listWidth, maxWidth = listWidth))
+            positions[draggedIndex][1] = sourceSlot?.top ?: 0
         } else {
-            if (plugins.isEmpty()) item { EmptyState("没有显示中的工具", "点击右上角编辑，重新显示已安装工具。") }
-            items(plugins, key = ToolPlugin::id) { plugin ->
-                PluginListCard(plugin, { activity.openPluginForUi(plugin) }, { activity.setToolEditModeForUi(true) })
+            dragState.updateBaseSlots(
+                plugins.indices.map { index ->
+                    val placeable = requireNotNull(placeables[index])
+                    ReorderSlot(
+                        key = plugins[index].id(),
+                        index = index,
+                        left = 0,
+                        top = positions[index][1],
+                        width = placeable.width,
+                        height = placeable.height,
+                    )
+                },
+            )
+        }
+
+        val listHeight = (y - gapPx).coerceAtLeast(0)
+        layout(listWidth, listHeight.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+            placeables.forEachIndexed { index, placeable ->
+                placeable?.placeRelative(
+                    0,
+                    positions[index][1],
+                    zIndex = when (index) {
+                        placeholderIndex -> 20f
+                        draggedIndex -> 10f
+                        else -> 0f
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ToolEditorCard(activity: MainActivity, plugin: ToolPlugin, index: Int, size: Int) {
-    SuiteCard(modifier = Modifier.reorderDrag(plugin.id()) { activity.moveToolForUi(plugin.id(), it) }) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(plugin.title(), style = MaterialTheme.typography.titleMedium)
-                Text(plugin.description(), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(activity.isToolVisibleForUi(plugin), { activity.setToolVisibleForUi(plugin, it) })
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            IconButton(onClick = { activity.moveToolForUi(plugin.id(), -1) }, enabled = index > 0) { Icon(Icons.Rounded.KeyboardArrowUp, "向前移动") }
-            IconButton(onClick = { activity.moveToolForUi(plugin.id(), 1) }, enabled = index < size - 1) { Icon(Icons.Rounded.KeyboardArrowDown, "向后移动") }
-            Text("显示顺序 ${index + 1}", modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun PluginListCard(plugin: ToolPlugin, onOpen: () -> Unit, onLongPress: () -> Unit) {
-    SuiteCard(
-        modifier = Modifier
-            .combinedClickable(onClick = onOpen, onLongClick = onLongPress),
-    ) {
+private fun PluginListCard(plugin: ToolPlugin, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    SuiteCard(modifier = modifier) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Box(
                 Modifier.size(44.dp),
@@ -494,7 +743,6 @@ private fun PluginListCard(plugin: ToolPlugin, onOpen: () -> Unit, onLongPress: 
                 Text(plugin.description(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AssistChip(onClick = onOpen, label = { Text("v${plugin.version()}") })
-                    if (plugin.requestedPermissions().isNotEmpty()) AssistChip(onClick = onOpen, label = { Text("${plugin.requestedPermissions().size} 项权限") })
                 }
             }
         }
@@ -502,76 +750,30 @@ private fun PluginListCard(plugin: ToolPlugin, onOpen: () -> Unit, onLongPress: 
 }
 
 @Composable
-private fun Modifier.reorderDrag(key: String, columns: Int = 1, onMove: (Int) -> Unit): Modifier {
-    var offsetX by remember(key) { mutableFloatStateOf(0f) }
-    var offsetY by remember(key) { mutableFloatStateOf(0f) }
-    val step = with(LocalDensity.current) { 144.dp.toPx() }
-    return this
-        .zIndex(if (offsetX != 0f || offsetY != 0f) 10f else 0f)
-        .graphicsLayer {
-            translationX = offsetX
-            translationY = offsetY
-            shadowElevation = if (offsetX != 0f || offsetY != 0f) 18f else 0f
-            scaleX = if (offsetX != 0f || offsetY != 0f) 1.03f else 1f
-            scaleY = scaleX
-        }
-        .pointerInput(key, columns) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                offsetX = 0f
-                offsetY = 0f
-                var pressed = true
-                while (pressed) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    val delta = change.position - change.previousPosition
-                    offsetX += delta.x
-                    offsetY += delta.y
-                    pressed = change.pressed
-                    change.consume()
-                }
-                val horizontal = (offsetX / step).roundToInt()
-                val vertical = (offsetY / step).roundToInt() * columns
-                val movement = if (abs(offsetX) > abs(offsetY)) horizontal else vertical
-                offsetX = 0f
-                offsetY = 0f
-                if (movement != 0) onMove(movement)
-            }
-        }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int, modifier: Modifier = Modifier) {
-    Scaffold(
-        modifier = modifier.semantics { stateDescription = "plugin-$refreshVersion" },
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(plugin.title(), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("v${plugin.version()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { activity.navigateForUi(PLUGINS) }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回工具列表")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-        },
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp, vertical = 12.dp)) {
-            PluginAndroidView(Modifier.fillMaxSize()) { plugin.createView(activity, activity) }
+    Box(modifier.semantics { stateDescription = "plugin-$refreshVersion" }) {
+        PluginAndroidView(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) { plugin.createView(activity, activity) }
+        IconButton(
+            onClick = activity::closePluginForUi,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f), CircleShape),
+        ) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回上一页")
         }
     }
 }
 
 @Composable
 private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
-    if (activity.isPermissionCenterOpenForUi()) {
-        PermissionCenterScreen(activity, refreshVersion, modifier)
+    if (activity.isInterfaceManagementOpenForUi()) {
+        InterfaceManagementScreen(activity, refreshVersion, modifier)
         return
     }
     val optionalBuiltIns = activity.optionalBuiltInPlugins()
@@ -587,10 +789,7 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("插件管理", style = MaterialTheme.typography.headlineLarge)
-                    Text("启用、停用、导入和导出插件。权限在独立中心统一管理。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                IconButton(onClick = activity::showPermissionCenterForUi) {
-                    Icon(Icons.Rounded.Key, "打开权限中心")
+                    Text("启用、停用、导入和导出插件。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -600,16 +799,92 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
                     Spacer(Modifier.size(8.dp))
                     Text("导入插件")
                 }
-                FilledTonalButton(onClick = activity::showPermissionCenterForUi) { Text("权限中心") }
+                OutlinedButton(onClick = activity::showInterfaceManagementForUi) {
+                    Icon(Icons.Rounded.Tune, null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("界面管理")
+                }
             }
         }
-        item { Notice("插件包中的代码只应来自你信任的来源。授权 Shizuku、Shell 或网络能力前，请先核对插件说明。", warning = true) }
+        item { Notice("插件代码与宿主运行在同一进程，能够使用宿主进程已有的能力。请只安装来自可信来源的插件。", warning = true) }
         item { SectionHeader("内置插件", "可选能力可按需停用") }
         if (optionalBuiltIns.isEmpty()) item { EmptyState("没有可选内置插件", "核心宿主能力会始终保持启用。") }
         items(optionalBuiltIns, key = ToolPlugin::id) { plugin -> BuiltInManagerCard(activity, plugin) }
         item { SectionHeader("外部插件", "${imported.size} 个已安装") }
-        if (imported.isEmpty()) item { EmptyState("尚未导入插件", "支持 .atsplugin 包与 JSON 清单。") }
+        if (imported.isEmpty()) item { EmptyState("尚未导入插件", "只支持包含可执行代码的完整 .atsplugin 插件包。") }
         items(imported, key = ImportedPluginDescriptor::id) { descriptor -> ImportedManagerCard(activity, descriptor) }
+    }
+}
+
+@Composable
+private fun InterfaceManagementScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    val tools = activity.allToolsForUi()
+    val listState = rememberPageListState(activity, "interface-management")
+    LazyColumn(
+        state = listState,
+        modifier = modifier.semantics { stateDescription = "interface-management-$refreshVersion" },
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = activity::closeInterfaceManagementForUi) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回插件管理")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("界面管理", style = MaterialTheme.typography.headlineLarge)
+                    Text("按插件管理工具页和主页的显示状态。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item { SectionHeader("插件显示", "隐藏界面入口不会停用插件") }
+        if (tools.isEmpty()) item { EmptyState("没有可管理的插件", "请先在插件管理中启用插件。") }
+        items(tools, key = ToolPlugin::id) { plugin -> PluginVisibilityCard(activity, plugin) }
+    }
+}
+
+@Composable
+private fun PluginVisibilityCard(activity: MainActivity, plugin: ToolPlugin) {
+    val hasHomeWidgets = activity.hasHomeWidgetsForUi(plugin)
+    SuiteCard {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(plugin.title(), style = MaterialTheme.typography.titleMedium)
+            Text(plugin.description(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            VisibilitySwitch(
+                label = "工具页",
+                checked = activity.isToolVisibleForUi(plugin),
+                onCheckedChange = { activity.setToolVisibleForUi(plugin, it) },
+                modifier = Modifier.weight(1f),
+            )
+            VisibilitySwitch(
+                label = "主页",
+                checked = hasHomeWidgets && activity.isPluginHomeVisibleForUi(plugin),
+                onCheckedChange = { activity.setPluginHomeVisibleForUi(plugin, it) },
+                modifier = Modifier.weight(1f),
+                enabled = hasHomeWidgets,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VisibilitySwitch(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 
@@ -631,6 +906,7 @@ private fun BuiltInManagerCard(activity: MainActivity, plugin: ToolPlugin) {
 @Composable
 private fun ImportedManagerCard(activity: MainActivity, descriptor: ImportedPluginDescriptor) {
     val enabled = activity.isImportedPluginEnabled(descriptor.id)
+    val loaded = activity.isPluginLoadedForUi(descriptor.id)
     SuiteCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -640,63 +916,13 @@ private fun ImportedManagerCard(activity: MainActivity, descriptor: ImportedPlug
             Switch(checked = enabled, onCheckedChange = { activity.setImportedPluginEnabled(descriptor.id, it) })
         }
         Text(descriptor.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (enabled && !loaded) {
+            Notice("插件代码未能加载，请重新导入与当前宿主版本匹配的完整插件包。", warning = true)
+        }
         if (descriptor.dependencies.isNotEmpty()) Text("依赖：${descriptor.dependencies.joinToString()}", style = MaterialTheme.typography.bodySmall)
-        if (descriptor.requestedPermissions.isNotEmpty()) Text("${descriptor.requestedPermissions.size} 项权限 · 在权限中心统一管理", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = { activity.exportPlugin(descriptor.id) }, modifier = Modifier.weight(1f)) { Text("导出") }
             OutlinedButton(onClick = { activity.deleteImportedPlugin(descriptor.id) }, modifier = Modifier.weight(1f)) { Text("删除") }
-        }
-    }
-}
-
-@Composable
-private fun PermissionCenterScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
-    val imported = activity.importedDescriptorsForUi()
-    val listState = rememberPageListState(activity, "permissions")
-    LazyColumn(
-        state = listState,
-        modifier = modifier.semantics { stateDescription = "permissions-$refreshVersion" },
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = activity::closePermissionCenterForUi) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回插件管理") }
-                Column(Modifier.weight(1f)) {
-                    Text("权限中心", style = MaterialTheme.typography.headlineLarge)
-                    Text("按能力集中审查外部插件请求。修改后会立即重新加载对应插件。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        item { Notice("只授权确有必要的能力。Shell、无障碍设置和应用列表属于高敏感权限。", warning = true) }
-        if (imported.isEmpty()) item { EmptyState("没有外部插件", "导入插件后，会在这里集中显示其权限请求。") }
-        items(imported, key = ImportedPluginDescriptor::id) { descriptor ->
-            PermissionPluginCard(activity, descriptor)
-        }
-    }
-}
-
-@Composable
-private fun PermissionPluginCard(activity: MainActivity, descriptor: ImportedPluginDescriptor) {
-    SuiteCard {
-        Text(descriptor.title, style = MaterialTheme.typography.titleLarge)
-        Text(descriptor.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (descriptor.requestedPermissions.isEmpty()) {
-            Text("该插件未请求额外权限。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            descriptor.requestedPermissions.forEach { permission ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = activity.hasImportedPluginPermission(descriptor.id, permission),
-                        onCheckedChange = { activity.setImportedPluginPermission(descriptor.id, permission, it) },
-                        enabled = !activity.isImportedPluginEnabled(descriptor.id),
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(PluginPermissionCatalog.label(permission), style = MaterialTheme.typography.bodyLarge)
-                        Text(PluginPermissionCatalog.description(permission), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
         }
     }
 }
@@ -706,7 +932,6 @@ private fun PluginMetadata(plugin: ToolPlugin) {
     val text = buildList {
         add("v${plugin.version()}")
         if (plugin.dependencies().isNotEmpty()) add("${plugin.dependencies().size} 项依赖")
-        if (plugin.requestedPermissions().isNotEmpty()) add("${plugin.requestedPermissions().size} 项权限")
     }.joinToString(" · ")
     Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
 }
