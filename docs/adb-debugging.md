@@ -116,12 +116,11 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | --- | --- | --- |
 | `help` | 无 | 返回协议和命令列表 |
 | `status` | 无 | 返回版本、SDK、Shizuku、组件和插件状态 |
-| `list-plugins` | 无 | 列出内置/外部插件、依赖、授权和活动状态 |
-| `import-plugin` | `-PluginFile <本机文件>`，或 `-Path <收件箱相对路径>` | 导入 JSON 或 `.atsplugin`，默认停用且不授予权限 |
+| `list-plugins` | 无 | 列出内置/外部插件、依赖和活动状态 |
+| `import-plugin` | `-PluginFile <本机文件>`，或 `-Path <收件箱相对路径>` | 导入包含清单和 APK 的完整 `.atsplugin`，默认停用 |
 | `export-plugin` | `-Plugin <id> [-OutputFile <本机文件>]` | 导出外部插件包并通过 ADB 拉取到电脑 |
 | `delete-plugin` | `-Plugin <id>` | 删除外部插件；有已启用依赖方时拒绝 |
 | `set-plugin-enabled` | `-Plugin <id> -Enabled $true/$false` | 启停插件并校验依赖 |
-| `set-plugin-permission` | `-Plugin <id> -Permission <权限> -Granted $true/$false` | 授予或撤销插件已声明的权限 |
 | `set-widget-visible` | `-Widget <plugin:id> -Visible $true/$false` | 显示或隐藏主页组件 |
 | `navigate` | `-Destination dashboard/plugins/manager/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
 | `reset-state` | 无 | 删除外部插件，停用可选内置插件并恢复组件显示状态 |
@@ -134,9 +133,6 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 
 .\tools\adb-debug.ps1 -Command set-plugin-enabled `
   -Plugin shizuku_auth -Enabled $true
-
-.\tools\adb-debug.ps1 -Command set-plugin-permission `
-  -Plugin accessibility_grant -Permission shizuku -Granted $true
 
 .\tools\adb-debug.ps1 -Command export-plugin `
   -Plugin accessibility_grant -OutputFile .\artifacts\accessibility-grant-debug.atsplugin
@@ -224,5 +220,5 @@ adb exec-out screencap -p > screenshot.png
 - Receiver 位于 `app/src/debug`，不会进入 release 构建。
 - Receiver 要求系统 `android.permission.DUMP`；ADB shell 可调用，普通第三方应用不能调用。
 - 插件导入只接受应用私有 `files/debug-inbox` 下的相对路径，并限制为 64 MiB；导出只写应用专属外部目录。
-- 导入时强制清空插件声明中的既有授权，防止测试包自行获得敏感权限。
+- 插件与宿主运行在同一进程，不存在可靠的插件级权限隔离；调试环境也只应导入可信插件。
 - 不提供任意命令执行接口；shell、文件和设备控制直接由 ADB 完成。

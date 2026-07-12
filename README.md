@@ -1,6 +1,8 @@
 # Android Tool Suite
 
-一个插件式安卓工具合集。宿主内置“插件管理”和 Shizuku 授权/绑定能力；“无障碍授权”是独立插件模块，构建为 `.atsplugin` 后导入宿主，通过权限管理申请使用宿主的 Shizuku 能力。
+一个插件式安卓工具合集。宿主内置“插件管理”和 Shizuku 授权/绑定能力；“无障碍授权”是独立插件模块，构建为 `.atsplugin` 后导入宿主。
+
+当前版本的新增特性、优化和问题修复见 [更新日志](CHANGELOG.md)。
 
 ## 使用方式
 
@@ -10,24 +12,22 @@
 4. 打开 App，授予 Shizuku 权限。
 5. 在底部导航进入“主页”“插件”或“管理”。
 6. 构建无障碍授权插件并在“插件管理”中导入 `.atsplugin`。
-7. 使用前，在“插件管理”里给“无障碍授权”授予 `shizuku`、`shell.exec`、`accessibility.settings`、`package.query` 权限。
-8. 授权后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
-9. 可用搜索框按应用名、服务名或包名过滤列表。
-10. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
+7. 启用插件后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
+8. 可用搜索框按应用名、服务名或包名过滤列表。
+9. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
 
 ## 插件结构
 
-插件实现 `ToolPlugin` 接口。宿主内置插件在 `ToolRegistry.createRequiredBuiltInPlugins()` 中注册；外部插件通过 `.atsplugin`/JSON 清单登记，并由 `ExternalToolFactory` 映射到可执行插件实现。
+插件实现 `ToolPlugin` 接口。宿主内置插件在 `ToolRegistry.createRequiredBuiltInPlugins()` 中注册；外部插件通过包含 `manifest.json` 和 `plugin.apk` 的完整 `.atsplugin` 包安装，并由 `ExternalToolFactory` 加载可执行入口。
 
 ```text
 app/src/main/java/com/example/shizukuaccessibilitygrant/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
-  plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、权限目录、依赖声明
+  plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、依赖声明
   plugin/store/         插件状态、外部插件清单存储
   plugin/runtime/       插件注册器和外部插件工厂
   plugins/              具体插件实现
     builtin/shizuku/    Shizuku 授权内置插件
-    external/           未知外部插件的清单展示页
 
 plugin-sdk/
   src/main/java/...     插件开发 SDK：API、清单模型、共享 UI 工具
@@ -38,37 +38,11 @@ plugins/accessibility-grant/
   build.gradle          独立插件构建和 packagePlugin 打包任务
 ```
 
-需要 Shizuku shell 能力的外部插件必须先声明并获授 `shizuku` 与 `shell.exec` 权限，再通过 `PluginHost.runShellCommand(...)` 复用宿主已经绑定好的 Shizuku UserService。
+需要 Shizuku shell 能力的插件可以通过 `PluginHost.runShellCommand(...)` 复用宿主已经绑定好的 Shizuku UserService。插件代码与宿主运行在同一进程，宿主不提供容易被绕过的插件级权限开关，因此只应安装可信插件。
 
 ## 导入插件
 
-当前支持导入 `.atsplugin` 插件包或 JSON 插件清单，用于把外部插件登记到工具合集里，并支持在“插件管理”中导出、删除、启停和授权。带 `plugin.apk` 和 `entryClass` 的 `.atsplugin` 会作为可执行插件动态加载；纯 JSON 清单只展示插件信息和权限。插件默认停用，可以通过 `dependencies` 声明依赖；依赖未满足时不能启用，未启用的插件不会进入主页和插件列表。管理页会显示依赖树和反向依赖关系，方便判断某个插件被哪些插件依赖。
-
-示例清单见：
-
-```text
-examples/plugins/sample-json/manifest.json
-```
-
-JSON 清单字段格式：
-
-```json
-{
-  "format": "ats-plugin",
-  "formatVersion": "1",
-  "plugin": {
-    "id": "sample_notes",
-    "title": "示例插件",
-    "description": "这是一个用于测试导入、删除和权限管理流程的外部插件清单。",
-    "version": "1.0",
-    "author": "Local"
-  },
-  "permissions": [
-    "file.picker",
-    "package.query"
-  ]
-}
-```
+只支持导入完整 `.atsplugin` 插件包：包内必须同时包含 `manifest.json`、`plugin.apk`，清单还必须声明 `plugin.entryClass`。单个 JSON、只有说明信息的包以及缺少可执行入口的包都会被拒绝。插件默认停用，可以通过 `dependencies` 声明依赖；依赖未满足时不能启用，未启用的插件不会进入主页和工具列表。
 
 完整包格式见 `docs/plugin-package-format.md`。
 
@@ -84,7 +58,9 @@ gradle :plugins:accessibility-grant:packagePlugin
 artifacts/accessibility-grant.atsplugin
 ```
 
-说明：为了避免任意导入文件直接获得 shell 执行能力，外部导入插件声明的权限默认不授予，需要用户在“插件管理”里逐项开启。
+说明：应用会在管理页明确提示同进程插件的信任边界。启用外部插件前，请确认插件来源和代码可信。
+
+工具页和主页小部件的显隐统一在“插件管理 → 界面管理”中按插件设置；每个插件只显示一次，并分别提供“工具页”和“主页”开关。隐藏只影响界面展示，不会停用插件。主页小部件和工具卡片都可以长按拖动，使用相同虚影预览松手后的落点，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。
 
 ## 构建要求
 
@@ -101,7 +77,7 @@ gradle :app:assembleDebug
 
 ## ADB 自动化调试
 
-Debug APK 提供受 `android.permission.DUMP` 保护的 ADB 命令入口，可查询应用状态、导入/删除/启停插件、修改插件授权、切换主页组件显隐并重置调试状态。页面跳转使用 ADB 原生 `am start`，支持直接打开主页、插件列表、插件管理或指定插件。
+Debug APK 提供受 `android.permission.DUMP` 保护的 ADB 命令入口，可查询应用状态、导入/删除/启停插件、切换主页组件显隐并重置调试状态。页面跳转使用 ADB 原生 `am start`，支持直接打开主页、工具列表、插件管理或指定插件。
 
 ```powershell
 .\tools\adb-debug.ps1 -Command status

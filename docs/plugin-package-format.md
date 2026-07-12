@@ -1,7 +1,6 @@
 # ATS Plugin Package Format
 
-插件包推荐使用 `.atsplugin` 扩展名。本质是 zip 文件，根目录必须包含 `manifest.json`。
-如果插件包含可执行代码，根目录还应包含 `plugin.apk`。
+插件包必须使用 `.atsplugin` 扩展名。本质是 zip 文件，根目录必须同时包含 `manifest.json` 和 `plugin.apk`。
 
 ## 目录结构
 
@@ -12,14 +11,14 @@ example.atsplugin
   assets/
 ```
 
-宿主会解析 `manifest.json`，并把可选的 `plugin.apk` 复制到应用内部目录，再按清单中的 `entryClass` 动态加载插件入口类。
+宿主会解析 `manifest.json`，把 `plugin.apk` 复制到应用内部目录，再按清单中的 `entryClass` 动态加载插件入口类。缺少任一文件或入口类时会拒绝导入。
 
 ## 打包
 
 PowerShell:
 
 ```powershell
-tools/package-plugin.ps1 -SourceDir examples/plugins/sample-package -OutputFile artifacts/sample-package.atsplugin
+tools/package-plugin.ps1 -SourceDir path/to/complete-plugin -OutputFile artifacts/example.atsplugin
 ```
 
 可执行插件推荐使用独立 Gradle 模块，例如本仓库的无障碍授权插件：
@@ -48,35 +47,15 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
     "author": "Local",
     "entryClass": "com.example.plugins.sample.SamplePlugin"
   },
-  "permissions": [
-    "file.picker",
-    "package.query"
-  ],
   "dependencies": [
     "shizuku_auth"
-  ],
-  "widgets": [
-    {
-      "id": "summary",
-      "title": "示例状态",
-      "value": "已安装",
-      "subtitle": "这个信息会作为主页小部件显示"
-    }
   ]
 }
 ```
 
-## 权限
+## 安全边界
 
-支持的权限：
-
-- `shell.exec`：通过宿主调用 Shizuku UserService 执行命令。
-- `shizuku`：允许插件请求宿主使用内部 Shizuku 授权和 UserService 连接。
-- `accessibility.settings`：修改 secure settings 中的无障碍服务配置。
-- `package.query`：读取应用和组件信息。
-- `file.picker`：请求宿主打开系统文件选择器。
-
-导入后插件默认停用，权限默认不授予。用户需要先在“插件管理”中启用插件，再逐项开启权限。
+可执行插件与宿主运行在同一 Android 进程，并能取得宿主传入的 `Activity` 和 `PluginHost`。插件清单不提供权限声明或授权开关，因为这种同进程开关无法构成可靠隔离。请只安装可信来源的插件；需要更强隔离时，应将插件迁移到独立进程并通过受限 IPC 暴露能力。
 
 ## 依赖
 
@@ -92,14 +71,7 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
 
 ## 主页小部件
 
-插件可以通过 `widgets` 或 `homeWidgets` 注册主页信息小部件。当前外部插件清单支持静态信息字段：
-
-- `id`：插件内唯一的小部件 ID。
-- `title`：小部件标题。
-- `value`：小部件主数值或状态。
-- `subtitle`：小部件说明。
-
-用户可以在主页的“自定义主页”区域自由显示或隐藏这些小部件。内置 Java 插件可以通过 `ToolPlugin.createHomeWidgets()` 注册动态小部件。
+可执行插件通过 `ToolPlugin.createHomeWidgets()` 注册动态小部件。主页小部件和工具卡片使用统一的长按拖动与落点虚影，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。工具页和主页小部件的显隐统一在“插件管理 → 界面管理”中按插件设置，每个插件分别提供“工具页”和“主页”开关。
 
 ## 可执行插件
 
@@ -112,6 +84,4 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
 
 插件工程只依赖 `:plugin-sdk`，不依赖 `:app`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
 
-## 兼容
-
-仍支持直接导入单个 JSON 清单文件。推荐分发时使用 `.atsplugin`，便于未来携带资源、脚本或签名信息。
+单个 JSON 清单和不含 `plugin.apk` 的说明型插件包不受支持。
