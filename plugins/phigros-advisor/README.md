@@ -24,7 +24,7 @@
 - 图片生成
   - 生成双列 B30 长图，包含 P3/B27、曲绘、成绩、ACC、推分 ACC 与单曲 RKS。
   - 生成个人信息效果图，包含 RKS、课题模式、Data、难度统计和 Top Records。
-  - 图片署名为 `Android Tool Suite · Phigros Data Studio 2.0.5`，不使用参考项目的作者署名。
+  - 图片署名自动使用当前插件版本，不使用参考项目的作者署名。
   - 生成后在独立大图弹窗中预览；点击“保存到相册”后写入系统相册的 `Pictures/Phigros Data Studio`。
 - 推分时间线
   - 每次同步后比较上一次本地成绩，记录 RKS、课题模式和谱面提升。

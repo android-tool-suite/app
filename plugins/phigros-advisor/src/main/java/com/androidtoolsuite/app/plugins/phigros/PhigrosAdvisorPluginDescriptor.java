@@ -1,5 +1,6 @@
 package com.androidtoolsuite.app.plugins.phigros;
 
+import com.androidtoolsuite.app.plugin.phigros.BuildConfig;
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor;
 
 import java.util.Collections;
@@ -17,7 +18,7 @@ public final class PhigrosAdvisorPluginDescriptor {
                 ID,
                 "Phigros Data Studio",
                 "本地加密管理 SessionToken，查询 Bn/B30、RKS 明细与推分时间线，并生成 B30 和个人信息效果图。",
-                "2.0.5",
+                BuildConfig.VERSION_NAME,
                 "Android Tool Suite · Phigros Data Studio",
                 "1",
                 "com.androidtoolsuite.app.plugins.phigros.PhigrosAdvisorPlugin",

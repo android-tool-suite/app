@@ -34,7 +34,7 @@ plugin-sdk/
 
 plugins/accessibility-grant/
   src/main/java/...     无障碍授权插件源码
-  manifest.json         插件清单
+  manifest.template.json  插件清单模板，构建时注入版本号
   build.gradle          独立插件构建和 packagePlugin 打包任务
 ```
 

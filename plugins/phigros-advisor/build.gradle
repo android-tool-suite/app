@@ -4,6 +4,8 @@ plugins {
     id "org.jetbrains.kotlin.plugin.compose"
 }
 
+def pluginVersionName = "2.0.6"
+
 android {
     namespace "com.androidtoolsuite.app.plugin.phigros"
     compileSdk 35
@@ -12,8 +14,8 @@ android {
         applicationId "com.androidtoolsuite.app.plugin.phigros"
         minSdk 24
         targetSdk 35
-        versionCode 8
-        versionName "2.0.5"
+        versionCode 9
+        versionName pluginVersionName
     }
 
     compileOptions {
@@ -22,6 +24,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig true
         compose true
     }
 }
@@ -37,11 +40,20 @@ dependencies {
     testImplementation "junit:junit:4.13.2"
 }
 
+def generatePluginManifest = tasks.register("generatePluginManifest", Copy) {
+    inputs.property("pluginVersionName", pluginVersionName)
+    from("manifest.template.json") {
+        filter { line -> line.replace("@VERSION_NAME@", pluginVersionName) }
+        rename { "manifest.json" }
+    }
+    into layout.buildDirectory.dir("generated/pluginManifest")
+}
+
 tasks.register("packagePlugin", Zip) {
-    dependsOn "assembleDebug"
+    dependsOn "assembleDebug", generatePluginManifest
     archiveFileName = "phigros-advisor.atsplugin"
     destinationDirectory = layout.buildDirectory.dir("outputs/atsplugin")
-    from("manifest.json")
+    from(generatePluginManifest)
     from(layout.buildDirectory.file("outputs/apk/debug/phigros-advisor-debug.apk")) {
         rename { "plugin.apk" }
     }
