@@ -3,7 +3,6 @@
 /build/
 /app/build/
 /plugin-sdk/build/
-/plugins/*/build/
 /dist/
 /artifacts/
 /local.properties

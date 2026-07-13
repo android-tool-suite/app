@@ -2,10 +2,11 @@ plugins {
     id "com.android.library"
     id "org.jetbrains.kotlin.android"
     id "org.jetbrains.kotlin.plugin.compose"
+    id "maven-publish"
 }
 
 android {
-    namespace "com.example.shizukuaccessibilitygrant.pluginsdk"
+    namespace "com.androidtoolsuite.pluginsdk"
     compileSdk 35
 
     defaultConfig {
@@ -19,6 +20,12 @@ android {
 
     buildFeatures {
         compose true
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
     }
 }
 
@@ -34,4 +41,36 @@ dependencies {
     api "androidx.compose.material:material-icons-extended"
     api "androidx.compose.ui:ui"
     api "androidx.compose.ui:ui-tooling-preview"
+}
+
+def sdkGroup = providers.gradleProperty("pluginSdkGroup")
+def sdkVersion = providers.gradleProperty("pluginSdkVersion")
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = sdkGroup.get()
+                artifactId = "plugin-sdk"
+                version = sdkVersion.get()
+
+                pom {
+                    name = "Android Tool Suite Plugin SDK"
+                    description = "Public API and shared UI components for Android Tool Suite plugins."
+                }
+            }
+        }
+    }
+}
+
+publishing {
+    repositories {
+        maven {
+            name = "pluginSdk"
+            url = providers.gradleProperty("pluginSdkRepository")
+                    .map { uri(it) }
+                    .getOrElse(layout.buildDirectory.dir("repository").get().asFile)
+        }
+    }
 }

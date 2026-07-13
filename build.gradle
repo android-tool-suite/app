@@ -6,18 +6,12 @@ plugins {
 }
 
 tasks.register("collectArtifacts", Copy) {
-    dependsOn ":app:assembleDebug", ":plugins:accessibility-grant:packagePlugin", ":plugins:phigros-advisor:packagePlugin"
+    dependsOn ":app:assembleDebug"
     group = "distribution"
-    description = "Collects the debug APK and plugin packages in the root artifacts directory."
+    description = "Collects the host debug APK in the root artifacts directory."
     into layout.projectDirectory.dir("artifacts")
     from("app/build/outputs/apk/debug") {
         include "app-debug.apk"
         rename { "android-tool-suite-debug.apk" }
-    }
-    from("plugins/accessibility-grant/build/outputs/atsplugin") {
-        include "accessibility-grant.atsplugin"
-    }
-    from("plugins/phigros-advisor/build/outputs/atsplugin") {
-        include "phigros-advisor.atsplugin"
     }
 }

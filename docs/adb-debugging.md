@@ -129,7 +129,7 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 
 ```powershell
 .\tools\adb-debug.ps1 -Command import-plugin `
-  -PluginFile .\plugins\accessibility-grant\build\outputs\atsplugin\accessibility-grant.atsplugin
+  -PluginFile ..\plugins\accessibility-grant\artifacts\accessibility-grant.atsplugin
 
 .\tools\adb-debug.ps1 -Command set-plugin-enabled `
   -Plugin shizuku_auth -Enabled $true

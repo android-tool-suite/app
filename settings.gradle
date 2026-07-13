@@ -14,8 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ShizukuAccessibilityGrant"
+rootProject.name = "android-tool-suite"
 include ":app"
 include ":plugin-sdk"
-include ":plugins:accessibility-grant"
-include ":plugins:phigros-advisor"

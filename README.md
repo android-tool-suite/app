@@ -1,17 +1,17 @@
 # Android Tool Suite
 
-一个插件式安卓工具合集。宿主内置“插件管理”和 Shizuku 授权/绑定能力；“无障碍授权”是独立插件模块，构建为 `.atsplugin` 后导入宿主。
+Android Tool Suite 的主体应用仓库。宿主内置“插件管理”和 Shizuku 授权/绑定能力；每个外部插件均在自己的 Git 仓库中开发和发布，通过 `.atsplugin` 包导入宿主。
 
 当前版本的新增特性、优化和问题修复见 [更新日志](CHANGELOG.md)。
 
 ## 使用方式
 
 1. 在手机上安装并启动 Shizuku。
-2. 用 Android Studio 打开本项目。
+2. 用 Android Studio 打开本主体应用仓库。
 3. 构建并安装 `app` 模块。
 4. 打开 App，授予 Shizuku 权限。
 5. 在底部导航进入“主页”“插件”或“管理”。
-6. 构建无障碍授权插件并在“插件管理”中导入 `.atsplugin`。
+6. 从外部插件仓库构建或获取插件，并在“插件管理”中导入 `.atsplugin`。
 7. 启用插件后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
 8. 可用搜索框按应用名、服务名或包名过滤列表。
 9. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
@@ -26,17 +26,19 @@ app/src/main/java/com/androidtoolsuite/app/
   plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、依赖声明
   plugin/store/         插件状态、外部插件清单存储
   plugin/runtime/       插件注册器和外部插件工厂
-  plugins/              具体插件实现
+  plugins/              宿主必须内置的插件实现
     builtin/shizuku/    Shizuku 授权内置插件
 
 plugin-sdk/
-  src/main/java/...     插件开发 SDK：API、清单模型、共享 UI 工具
-
-plugins/accessibility-grant/
-  src/main/java/...     无障碍授权插件源码
-  manifest.template.json  插件清单模板，构建时注入版本号
-  build.gradle          独立插件构建和 packagePlugin 打包任务
+  src/main/java/...     可发布的插件开发 SDK：API、清单模型、共享 UI 工具
 ```
+
+统一工作区内的每个外部插件都是独立 Git 仓库：
+
+- `../plugins/accessibility-grant`：无障碍授权。
+- `../plugins/phigros-advisor`：Phigros Data Studio。
+
+主体与各插件仓库之间没有 Gradle project 依赖：主体仓库发布版本化 SDK AAR，每个插件仓库按 Maven 坐标消费它。新增插件时应创建新的仓库，不加入主体仓库或其他插件仓库。
 
 需要 Shizuku shell 能力的插件可以通过 `PluginHost.runShellCommand(...)` 复用宿主已经绑定好的 Shizuku UserService。插件代码与宿主运行在同一进程，宿主不提供容易被绕过的插件级权限开关，因此只应安装可信插件。
 
@@ -44,18 +46,24 @@ plugins/accessibility-grant/
 
 只支持导入完整 `.atsplugin` 插件包：包内必须同时包含 `manifest.json`、`plugin.apk`，清单还必须声明 `plugin.entryClass`。单个 JSON、只有说明信息的包以及缺少可执行入口的包都会被拒绝。插件默认停用，可以通过 `dependencies` 声明依赖；依赖未满足时不能启用，未启用的插件不会进入主页和工具列表。
 
-完整包格式见 `docs/plugin-package-format.md`。
+完整包格式与 SDK 接入方式见 `docs/plugin-package-format.md`。
 
-构建无障碍授权插件：
+向本机 Maven 仓库发布 SDK：
 
 ```powershell
-gradle :plugins:accessibility-grant:packagePlugin
+gradle :plugin-sdk:publishToMavenLocal
 ```
 
-插件包输出：
+也可以发布到主体仓库内的临时 Maven 目录，分别供插件仓库验证：
 
-```text
-artifacts/accessibility-grant.atsplugin
+```powershell
+gradle :plugin-sdk:publishReleasePublicationToPluginSdkRepository
+gradle -p ..\plugins\accessibility-grant `
+  -PatsSdkRepository=..\..\app\plugin-sdk\build\repository `
+  clean collectArtifacts
+gradle -p ..\plugins\phigros-advisor `
+  -PatsSdkRepository=..\..\app\plugin-sdk\build\repository `
+  clean collectArtifacts
 ```
 
 说明：应用会在管理页明确提示同进程插件的信任边界。启用外部插件前，请确认插件来源和代码可信。
@@ -74,6 +82,14 @@ artifacts/accessibility-grant.atsplugin
 ```powershell
 gradle :app:assembleDebug
 ```
+
+收集主体 APK：
+
+```powershell
+gradle clean collectArtifacts
+```
+
+输出仅包含 `artifacts/android-tool-suite-debug.apk`；每个外部插件仓库只管理自己的 `.atsplugin` 产物。
 
 ## ADB 自动化调试
 

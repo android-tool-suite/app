@@ -15,22 +15,16 @@ example.atsplugin
 
 ## 打包
 
-PowerShell:
+可执行插件应在各自的独立仓库构建。每个插件仓库的根工程都提供：
 
 ```powershell
-tools/package-plugin.ps1 -SourceDir path/to/complete-plugin -OutputFile artifacts/example.atsplugin
-```
-
-可执行插件推荐使用独立 Gradle 模块，例如本仓库的无障碍授权插件：
-
-```powershell
-gradle :plugins:accessibility-grant:packagePlugin
+gradle packagePlugin
 ```
 
 输出文件：
 
 ```text
-plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugin
+build/outputs/atsplugin/<plugin-name>.atsplugin
 ```
 
 ## manifest.json
@@ -82,6 +76,6 @@ plugins/accessibility-grant/build/outputs/atsplugin/accessibility-grant.atsplugi
 - 提供 public 无参构造方法。
 - 在 `plugin.entryClass` 中声明完整类名。
 
-插件工程只依赖 `:plugin-sdk`，不依赖 `:app`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
+插件工程只依赖已发布的 `com.androidtoolsuite:plugin-sdk:1.0.0` AAR，不依赖宿主的 `:app` 或本地 `:plugin-sdk` project。主体仓库可通过 `gradle :plugin-sdk:publishToMavenLocal` 发布 SDK，插件仓库随后可直接执行 `gradle packagePlugin`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
 
 单个 JSON 清单和不含 `plugin.apk` 的说明型插件包不受支持。
