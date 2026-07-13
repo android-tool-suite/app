@@ -118,7 +118,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private Shizuku.UserServiceArgs shellServiceArgs;
     private boolean shellServiceBinding;
 
-    private final Shizuku.OnBinderReceivedListener binderReceivedListener = () -> runOnUiThread(this::notifyHostStateChangedAfterBinderCallback);
+    private final Shizuku.OnBinderReceivedListener binderReceivedListener = () -> runOnUiThread(() -> {
+        ensureShellServiceIfAuthorized();
+        notifyHostStateChangedAfterBinderCallback();
+    });
     private final Shizuku.OnBinderDeadListener binderDeadListener = () -> runOnUiThread(() -> {
         shellService = null;
         shellServiceBinding = false;
@@ -126,7 +129,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     });
     private final Shizuku.OnRequestPermissionResultListener permissionResultListener = (requestCode, grantResult) -> {
         if (requestCode == REQUEST_SHIZUKU) {
-            runOnUiThread(this::notifyHostStateChangedAfterBinderCallback);
+            runOnUiThread(() -> {
+                ensureShellServiceIfAuthorized();
+                notifyHostStateChangedAfterBinderCallback();
+            });
         }
     };
     private final ServiceConnection shellConnection = new ServiceConnection() {
@@ -164,6 +170,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
         showDashboard();
         applyDebugDestination(getIntent());
+        ensureShellServiceIfAuthorized();
         notifyHostStateChanged();
     }
 
@@ -1033,6 +1040,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         } catch (Throwable e) {
             shellServiceBinding = false;
             showToast("连接 UserService 失败：" + e.getMessage());
+        }
+    }
+
+    private void ensureShellServiceIfAuthorized() {
+        if (isShizukuReady() && hasShizukuPermission()) {
+            ensureShellService();
         }
     }
 
