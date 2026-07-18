@@ -839,14 +839,20 @@ private fun InterfaceManagementScreen(activity: MainActivity, refreshVersion: In
         }
         item { SectionHeader("插件显示", "隐藏界面入口不会停用插件") }
         if (tools.isEmpty()) item { EmptyState("没有可管理的插件", "请先在插件管理中启用插件。") }
-        items(tools, key = ToolPlugin::id) { plugin -> PluginVisibilityCard(activity, plugin) }
+        items(tools, key = ToolPlugin::id) { plugin ->
+            PluginVisibilityCard(activity, plugin, refreshVersion)
+        }
     }
 }
 
 @Composable
-private fun PluginVisibilityCard(activity: MainActivity, plugin: ToolPlugin) {
+private fun PluginVisibilityCard(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int) {
     val hasHomeWidgets = activity.hasHomeWidgetsForUi(plugin)
-    SuiteCard {
+    SuiteCard(
+        modifier = Modifier.semantics {
+            stateDescription = "plugin-visibility-${plugin.id()}-$refreshVersion"
+        },
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(plugin.title(), style = MaterialTheme.typography.titleMedium)
             Text(plugin.description(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
