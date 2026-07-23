@@ -15,3 +15,14 @@ tasks.register("collectArtifacts", Copy) {
         rename { "android-tool-suite-debug.apk" }
     }
 }
+
+tasks.register("collectReleaseArtifacts", Copy) {
+    dependsOn ":app:assembleRelease"
+    group = "distribution"
+    description = "Collects the signed host release APK in the root artifacts directory."
+    into layout.projectDirectory.dir("artifacts")
+    from("app/build/outputs/apk/release") {
+        include "app-release.apk"
+        rename { "android-tool-suite.apk" }
+    }
+}

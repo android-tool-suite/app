@@ -1,0 +1,99 @@
+name: Release app
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag to validate, for example v1.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@90ddb51e90a5fd9ba75f40cf85156b7b41bf76a3
+        with:
+          gradle-version: '8.9'
+
+      - name: Decode release keystore
+        shell: pwsh
+        env:
+          KEYSTORE_B64: ${{ secrets.ATS_RELEASE_KEYSTORE_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_B64)) {
+            throw 'ATS_RELEASE_KEYSTORE_B64 is not configured'
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'android-tool-suite-release.p12'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:KEYSTORE_B64))
+          "ATS_RELEASE_KEYSTORE_PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Test and build signed release
+        shell: pwsh
+        env:
+          ATS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ATS_RELEASE_KEYSTORE_PASSWORD }}
+          ATS_RELEASE_KEY_ALIAS: ${{ secrets.ATS_RELEASE_KEY_ALIAS }}
+          ATS_RELEASE_KEY_PASSWORD: ${{ secrets.ATS_RELEASE_KEY_PASSWORD }}
+        run: gradle clean :app:testDebugUnitTest collectReleaseArtifacts
+
+      - name: Verify APK signature
+        shell: pwsh
+        run: |
+          $buildTools = Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools') -Directory |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1
+          if ($null -eq $buildTools) { throw 'Android build-tools not found' }
+          & (Join-Path $buildTools.FullName 'apksigner.bat') verify --verbose --print-certs artifacts/android-tool-suite.apk
+          if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed' }
+
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'push') { '${{ github.ref_name }}' } else { '${{ inputs.tag }}' }
+          .\.github\scripts\prepare-release.ps1 `
+            -ArtifactPath .\artifacts\android-tool-suite.apk `
+            -OutputDirectory .\release-dist `
+            -ExpectedTag $tag
+
+      - name: Upload dry-run assets
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: app-release-dry-run-${{ github.sha }}
+          path: release-dist/
+          if-no-files-found: error
+
+      - name: Publish immutable release candidate
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' `
+            .\release-dist\android-tool-suite.apk `
+            .\release-dist\release-metadata.json `
+            .\release-dist\SHA256SUMS.txt `
+            --verify-tag `
+            --draft `
+            --title 'Android Tool Suite ${{ github.ref_name }}' `
+            --generate-notes
+          gh release edit '${{ github.ref_name }}' --draft=false --latest

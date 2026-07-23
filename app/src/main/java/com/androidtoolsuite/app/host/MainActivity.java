@@ -7,12 +7,15 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,6 +30,7 @@ import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.content.FileProvider;
 
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
@@ -40,6 +44,8 @@ import com.androidtoolsuite.app.plugins.builtin.shizuku.ShizukuPlugin;
 import com.androidtoolsuite.app.plugin.api.ToolPlugin;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.ui.UiKit;
+import com.androidtoolsuite.app.update.UpdateCatalog;
+import com.androidtoolsuite.app.update.UpdateClient;
 
 import org.json.JSONException;
 
@@ -47,6 +53,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -54,7 +61,10 @@ import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -94,11 +104,17 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private ToolPlugin selectedPlugin;
     private ExternalPluginStore externalPluginStore;
     private BuiltInPluginStateStore builtInPluginStateStore;
+    private UpdateClient updateClient;
+    private UpdateCatalog updateCatalog;
+    private String updateStatus = "尚未检查更新";
+    private boolean updateCatalogCached;
+    private final Set<String> updateOperations = new HashSet<>();
     private SharedPreferences uiPreferences;
     private String pendingExportPluginId;
     private int currentSection = SECTION_DASHBOARD;
     private int pluginReturnSection = SECTION_PLUGINS;
     private boolean interfaceManagementOpen;
+    private boolean pluginRepositoryOpen;
     private final HostUiState composeState = new HostUiState();
     private final Map<String, int[]> composeScrollPositions = new LinkedHashMap<>();
 
@@ -156,6 +172,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         super.onCreate(savedInstanceState);
         externalPluginStore = new ExternalPluginStore(this);
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
+        updateClient = new UpdateClient(this);
         uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadPlugins();
         setContentView(createContentView());
@@ -172,6 +189,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         applyDebugDestination(getIntent());
         ensureShellServiceIfAuthorized();
         notifyHostStateChanged();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        checkForUpdates(false);
     }
 
     @Override
@@ -196,6 +219,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             debugInstance.clear();
         }
         unbindShellService();
+        updateClient.close();
         super.onDestroy();
     }
 
@@ -208,6 +232,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private boolean handleAppBack() {
+        if (pluginRepositoryOpen) {
+            closePluginRepositoryForUi();
+            return true;
+        }
         if (interfaceManagementOpen) {
             closeInterfaceManagementForUi();
             return true;
@@ -225,6 +253,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     public boolean canHandleBackForUi() {
         return interfaceManagementOpen
+                || pluginRepositoryOpen
                 || selectedPlugin != null
                 || currentSection == SECTION_MANAGER
                 || currentSection == SECTION_PLUGINS;
@@ -294,6 +323,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         currentSection = SECTION_DASHBOARD;
         selectedPlugin = null;
         interfaceManagementOpen = false;
+        pluginRepositoryOpen = false;
         invalidateComposeUi();
     }
 
@@ -388,6 +418,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         currentSection = SECTION_PLUGINS;
         selectedPlugin = null;
         interfaceManagementOpen = false;
+        pluginRepositoryOpen = false;
         invalidateComposeUi();
     }
 
@@ -474,6 +505,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         currentSection = SECTION_MANAGER;
         selectedPlugin = null;
         interfaceManagementOpen = false;
+        pluginRepositoryOpen = false;
         invalidateComposeUi();
     }
 
@@ -959,6 +991,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     public void showInterfaceManagementForUi() {
         currentSection = SECTION_MANAGER;
         selectedPlugin = null;
+        pluginRepositoryOpen = false;
         interfaceManagementOpen = true;
         invalidateComposeUi();
     }
@@ -966,6 +999,368 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     public void closeInterfaceManagementForUi() {
         interfaceManagementOpen = false;
         invalidateComposeUi();
+    }
+
+    public boolean isPluginRepositoryOpenForUi() {
+        return pluginRepositoryOpen;
+    }
+
+    public void showPluginRepositoryForUi() {
+        currentSection = SECTION_MANAGER;
+        selectedPlugin = null;
+        interfaceManagementOpen = false;
+        pluginRepositoryOpen = true;
+        invalidateComposeUi();
+    }
+
+    public void closePluginRepositoryForUi() {
+        pluginRepositoryOpen = false;
+        invalidateComposeUi();
+    }
+
+    public String updateStatusForUi() {
+        return updateStatus;
+    }
+
+    public boolean isUpdateCatalogCachedForUi() {
+        return updateCatalogCached;
+    }
+
+    public List<UpdateCatalog.PluginRelease> repositoryPluginsForUi() {
+        return updateCatalog == null ? Collections.emptyList() : updateCatalog.plugins;
+    }
+
+    public UpdateCatalog.AppRelease appUpdateForUi() {
+        if (updateCatalog == null || updateCatalog.app == null) {
+            return null;
+        }
+        UpdateCatalog.AppRelease release = updateCatalog.app;
+        return getPackageName().equals(release.packageName)
+                && release.versionCode > BuildConfig.VERSION_CODE
+                ? release
+                : null;
+    }
+
+    public boolean isUpdateOperationRunningForUi(String id) {
+        return updateOperations.contains(id);
+    }
+
+    public boolean isRepositoryPluginInstalledForUi(String id) {
+        return findImportedDescriptor(id) != null;
+    }
+
+    public boolean isRepositoryPluginUpdateAvailableForUi(UpdateCatalog.PluginRelease release) {
+        ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
+        return installed != null && release.versionCode > installed.versionCode;
+    }
+
+    public boolean isRepositoryPluginCompatibleForUi(UpdateCatalog.PluginRelease release) {
+        return release.minHostVersionCode <= BuildConfig.VERSION_CODE;
+    }
+
+    public boolean isRepositoryVerifiedForUi(String pluginId) {
+        return externalPluginStore.isRepositoryVerified(pluginId);
+    }
+
+    public String repositorySourceForUi(String pluginId) {
+        return externalPluginStore.sourceReleaseUrl(pluginId);
+    }
+
+    public void refreshUpdatesForUi() {
+        checkForUpdates(true);
+    }
+
+    public void installAppUpdateForUi() {
+        UpdateCatalog.AppRelease release = appUpdateForUi();
+        if (release == null || updateOperations.contains("__app__")) {
+            return;
+        }
+        updateOperations.add("__app__");
+        updateStatus = "正在下载应用更新…";
+        invalidateComposeUi();
+        updateClient.download(release, "android-tool-suite.apk", new UpdateClient.DownloadCallback() {
+            @Override
+            public void onSuccess(File file) {
+                updateOperations.remove("__app__");
+                try {
+                    verifyAppUpdate(file, release);
+                    launchAppInstaller(file);
+                    updateStatus = "应用更新已下载，请在系统安装器中确认";
+                } catch (IOException error) {
+                    updateStatus = "应用更新失败：" + error.getMessage();
+                    showToast(updateStatus);
+                }
+                invalidateComposeUi();
+            }
+
+            @Override
+            public void onError(String message) {
+                updateOperations.remove("__app__");
+                updateStatus = "应用更新失败：" + message;
+                showToast(updateStatus);
+                invalidateComposeUi();
+            }
+        });
+    }
+
+    public void installRepositoryPluginForUi(String pluginId) {
+        if (updateCatalog == null || updateOperations.contains(pluginId)) {
+            return;
+        }
+        UpdateCatalog.PluginRelease release = updateCatalog.findPlugin(pluginId);
+        if (release == null) {
+            showToast("插件仓库中不存在该插件");
+            return;
+        }
+        if (release.minHostVersionCode > BuildConfig.VERSION_CODE) {
+            showToast("请先将宿主更新到兼容版本");
+            return;
+        }
+        ImportedPluginDescriptor installed = findImportedDescriptor(pluginId);
+        if (installed != null && installed.versionCode >= release.versionCode) {
+            showToast("已安装最新版本");
+            return;
+        }
+        updateOperations.add(pluginId);
+        updateStatus = "正在下载 " + release.title + "…";
+        invalidateComposeUi();
+        updateClient.download(release, pluginId + ".atsplugin", new UpdateClient.DownloadCallback() {
+            @Override
+            public void onSuccess(File file) {
+                boolean installStarted = false;
+                try {
+                    PluginImport pluginImport = readPluginPackage(readFileBytes(file));
+                    validateRepositoryPlugin(pluginImport.descriptor, release);
+                    preflightPlugin(pluginImport);
+                    boolean wasEnabled = externalPluginStore.isEnabled(pluginId);
+                    externalPluginStore.installPlugin(
+                            pluginImport.descriptor,
+                            pluginImport.codeBytes,
+                            release.releaseUrl,
+                            release.sha256,
+                            true
+                    );
+                    installStarted = true;
+                    reloadPlugins(pluginId);
+                    if (wasEnabled && findPlugin(pluginId) == null) {
+                        externalPluginStore.rollbackInstall(pluginId);
+                        installStarted = false;
+                        reloadPlugins(pluginId);
+                        throw new IOException("新版本插件无法加载，已恢复旧版本");
+                    }
+                    externalPluginStore.confirmInstall(pluginId);
+                    updateStatus = "已安装 " + release.title + " " + release.versionName;
+                    showToast(updateStatus);
+                } catch (IOException | JSONException error) {
+                    if (installStarted) {
+                        externalPluginStore.rollbackInstall(pluginId);
+                    }
+                    updateStatus = "插件更新失败：" + error.getMessage();
+                    showToast(updateStatus);
+                } finally {
+                    updateOperations.remove(pluginId);
+                    invalidateComposeUi();
+                }
+            }
+
+            @Override
+            public void onError(String message) {
+                updateOperations.remove(pluginId);
+                updateStatus = "插件更新失败：" + message;
+                showToast(updateStatus);
+                invalidateComposeUi();
+            }
+        });
+    }
+
+    public void installAllPluginUpdatesForUi() {
+        if (updateCatalog == null) {
+            return;
+        }
+        for (UpdateCatalog.PluginRelease release : updateCatalog.plugins) {
+            ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
+            if (release.minHostVersionCode <= BuildConfig.VERSION_CODE
+                    && installed != null
+                    && release.versionCode > installed.versionCode) {
+                installRepositoryPluginForUi(release.id);
+            }
+        }
+    }
+
+    private void checkForUpdates(boolean force) {
+        if (updateOperations.contains("__check__")) {
+            return;
+        }
+        updateOperations.add("__check__");
+        updateStatus = "正在检查更新…";
+        invalidateComposeUi();
+        updateClient.check(force, new UpdateClient.CatalogCallback() {
+            @Override
+            public void onSuccess(UpdateCatalog catalog, boolean cached) {
+                updateOperations.remove("__check__");
+                updateCatalog = catalog;
+                updateCatalogCached = cached;
+                int available = appUpdateForUi() == null ? 0 : 1;
+                for (UpdateCatalog.PluginRelease release : catalog.plugins) {
+                    if (isRepositoryPluginUpdateAvailableForUi(release)) {
+                        available++;
+                    }
+                }
+                if (available > 0) {
+                    updateStatus = "发现 " + available + " 项更新"
+                            + (cached ? "（缓存索引）" : "");
+                } else {
+                    updateStatus = "已是最新版本"
+                            + (cached ? "（缓存索引）" : "");
+                }
+                invalidateComposeUi();
+            }
+
+            @Override
+            public void onError(String message) {
+                updateOperations.remove("__check__");
+                updateCatalogCached = false;
+                updateStatus = "检查更新失败：" + message;
+                invalidateComposeUi();
+            }
+        });
+    }
+
+    private void validateRepositoryPlugin(
+            ImportedPluginDescriptor descriptor,
+            UpdateCatalog.PluginRelease release
+    ) throws IOException {
+        if (!release.id.equals(descriptor.id)) {
+            throw new IOException("插件包 ID 与仓库索引不一致");
+        }
+        if (descriptor.versionCode != release.versionCode
+                || !release.versionName.equals(descriptor.version)) {
+            throw new IOException("插件包版本与仓库索引不一致");
+        }
+        if (descriptor.minHostVersionCode != release.minHostVersionCode) {
+            throw new IOException("插件兼容性信息与仓库索引不一致");
+        }
+        if (descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
+            throw new IOException("当前宿主版本不兼容此插件");
+        }
+        if (!descriptor.dependencies.equals(release.dependencies)) {
+            throw new IOException("插件依赖信息与仓库索引不一致");
+        }
+    }
+
+    private void preflightPlugin(PluginImport pluginImport) throws IOException {
+        File directory = new File(getCacheDir(), "updates");
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw new IOException("无法创建插件预检目录");
+        }
+        File codeFile = new File(directory, pluginImport.descriptor.id + ".preflight.apk");
+        try (FileOutputStream output = new FileOutputStream(codeFile)) {
+            output.write(pluginImport.codeBytes);
+            output.getFD().sync();
+        }
+        codeFile.setReadOnly();
+        ToolPlugin plugin = ExternalToolFactory.create(
+                this,
+                pluginImport.descriptor.withCodePath(codeFile.getAbsolutePath())
+        );
+        codeFile.setWritable(true);
+        codeFile.delete();
+        if (plugin == null) {
+            throw new IOException("插件入口类无法加载");
+        }
+        plugin.onDestroy();
+    }
+
+    private byte[] readFileBytes(File file) throws IOException {
+        try (InputStream input = new FileInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
+
+    private void verifyAppUpdate(File apk, UpdateCatalog.AppRelease release) throws IOException {
+        int signatureFlags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? PackageManager.GET_SIGNING_CERTIFICATES
+                : PackageManager.GET_SIGNATURES;
+        PackageInfo archive = getPackageManager().getPackageArchiveInfo(
+                apk.getAbsolutePath(),
+                signatureFlags
+        );
+        if (archive == null) {
+            throw new IOException("无法解析下载的 APK");
+        }
+        if (!getPackageName().equals(archive.packageName)
+                || !getPackageName().equals(release.packageName)) {
+            throw new IOException("下载 APK 的包名不匹配");
+        }
+        long archiveVersion = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? archive.getLongVersionCode()
+                : archive.versionCode;
+        if (archiveVersion != release.versionCode || archiveVersion <= BuildConfig.VERSION_CODE) {
+            throw new IOException("下载 APK 的版本号无效");
+        }
+        PackageInfo installed;
+        try {
+            installed = getPackageManager().getPackageInfo(getPackageName(), signatureFlags);
+        } catch (PackageManager.NameNotFoundException error) {
+            throw new IOException("无法读取当前应用签名", error);
+        }
+        if (!sameSigners(installed, archive)) {
+            throw new IOException("下载 APK 的签名与当前应用不一致");
+        }
+    }
+
+    private boolean sameSigners(PackageInfo first, PackageInfo second) {
+        Signature[] firstSignatures;
+        Signature[] secondSignatures;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (first.signingInfo == null || second.signingInfo == null) {
+                return false;
+            }
+            firstSignatures = first.signingInfo.getApkContentsSigners();
+            secondSignatures = second.signingInfo.getApkContentsSigners();
+        } else {
+            firstSignatures = first.signatures;
+            secondSignatures = second.signatures;
+        }
+        if (firstSignatures == null || secondSignatures == null
+                || firstSignatures.length != secondSignatures.length) {
+            return false;
+        }
+        List<Signature> remaining = new ArrayList<>(Arrays.asList(secondSignatures));
+        for (Signature signature : firstSignatures) {
+            if (!remaining.remove(signature)) {
+                return false;
+            }
+        }
+        return remaining.isEmpty();
+    }
+
+    private void launchAppInstaller(File apk) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && !getPackageManager().canRequestPackageInstalls()) {
+            Intent settingsIntent = new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())
+            );
+            startActivity(settingsIntent);
+            showToast("请允许此应用安装更新，然后再次点击更新");
+            return;
+        }
+        Uri uri = FileProvider.getUriForFile(
+                this,
+                getPackageName() + ".updates",
+                apk
+        );
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(uri, "application/vnd.android.package-archive");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
     }
 
     public boolean isPluginLoadedForUi(String pluginId) {
@@ -1120,19 +1515,39 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             return;
         }
+        boolean installStarted = false;
+        String pluginId = null;
         try {
             PluginImport pluginImport = readPluginPackage(data.getData());
             ImportedPluginDescriptor descriptor = pluginImport.descriptor;
+            pluginId = descriptor.id;
             if (isBuiltInPluginId(descriptor.id)) {
                 showToast("插件 ID 与内置插件冲突");
                 return;
             }
+            if (descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
+                showToast("当前宿主版本不兼容此插件");
+                return;
+            }
             boolean updating = findImportedDescriptor(descriptor.id) != null;
-            externalPluginStore.savePluginCode(descriptor.id, pluginImport.codeBytes);
-            externalPluginStore.save(descriptor);
-            showToast((updating ? "已更新插件：" : "已导入插件，默认停用：") + descriptor.title);
+            boolean wasEnabled = externalPluginStore.isEnabled(descriptor.id);
+            preflightPlugin(pluginImport);
+            externalPluginStore.installPlugin(descriptor, pluginImport.codeBytes, "", "", false);
+            installStarted = true;
             reloadPlugins(descriptor.id);
+            if (wasEnabled && findPlugin(descriptor.id) == null) {
+                externalPluginStore.rollbackInstall(descriptor.id);
+                installStarted = false;
+                reloadPlugins(descriptor.id);
+                throw new IOException("新版本插件无法加载，已恢复旧版本");
+            }
+            externalPluginStore.confirmInstall(descriptor.id);
+            showToast((updating ? "已更新插件：" : "已导入插件，默认停用：") + descriptor.title);
         } catch (IOException | JSONException e) {
+            if (installStarted && pluginId != null) {
+                externalPluginStore.rollbackInstall(pluginId);
+                reloadPlugins(pluginId);
+            }
             showToast("导入失败：" + e.getMessage());
         }
     }
@@ -1329,7 +1744,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private PluginImport readPluginPackage(Uri uri) throws IOException, JSONException {
-        byte[] bytes = readBytes(uri);
+        return readPluginPackage(readBytes(uri));
+    }
+
+    private PluginImport readPluginPackage(byte[] bytes) throws IOException, JSONException {
         if (!isZip(bytes)) {
             throw new IOException("只支持包含 manifest.json 和 plugin.apk 的完整 .atsplugin 插件包");
         }

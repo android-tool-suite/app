@@ -32,12 +32,15 @@ build/outputs/atsplugin/<plugin-name>.atsplugin
 ```json
 {
   "format": "ats-plugin",
-  "formatVersion": "1",
+  "formatVersion": "2",
   "plugin": {
     "id": "sample_notes",
     "title": "示例插件",
     "description": "这是一个示例插件。",
     "version": "1.0",
+    "versionCode": 1,
+    "minHostVersionCode": 11,
+    "sdkVersion": "1.1.0",
     "author": "Local",
     "entryClass": "com.example.plugins.sample.SamplePlugin"
   },
@@ -46,6 +49,14 @@ build/outputs/atsplugin/<plugin-name>.atsplugin
   ]
 }
 ```
+
+`formatVersion: "2"` 在 v1 基础上新增：
+
+- `versionCode`：严格递增的整数版本，用于可靠判断升级和禁止仓库降级。
+- `minHostVersionCode`：能够加载该插件的最低宿主整数版本。
+- `sdkVersion`：构建插件时使用的 `com.androidtoolsuite:plugin-sdk` 版本，用于追溯兼容性。
+
+宿主继续接受旧的 format v1 包；缺少 `versionCode` 时按旧插件处理。官方仓库发布必须使用 format v2，且包内字段必须与签名更新索引一致。
 
 ## 安全边界
 
@@ -76,6 +87,12 @@ build/outputs/atsplugin/<plugin-name>.atsplugin
 - 提供 public 无参构造方法。
 - 在 `plugin.entryClass` 中声明完整类名。
 
-插件工程只依赖已发布的 `com.androidtoolsuite:plugin-sdk:1.0.0` AAR，不依赖宿主的 `:app` 或本地 `:plugin-sdk` project。主体仓库可通过 `gradle :plugin-sdk:publishToMavenLocal` 发布 SDK，插件仓库随后可直接执行 `gradle packagePlugin`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
+插件工程只依赖已发布的 `com.androidtoolsuite:plugin-sdk:1.1.0` AAR，不依赖宿主的 `:app` 或本地 `:plugin-sdk` project。主体仓库可通过 `gradle :plugin-sdk:publishToMavenLocal` 发布 SDK，插件仓库随后可直接执行 `gradle packagePlugin`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
+
+## 官方仓库与更新
+
+官方插件仓库由 `android-tool-suite/plugin-registry` 的 GitHub Pages 提供。宿主只接受通过内置 ECDSA 公钥验证的索引，并在安装前核对 `.atsplugin` 的大小、SHA-256、插件 ID、版本、依赖和最低宿主版本。
+
+仓库安装和手动导入是两条独立信任路径：仓库安装会显示“官方插件仓库 · 已校验”，手动导入仍然允许，但显示“本地导入 · 未经仓库验证”。两种路径中的插件都与宿主同进程运行。
 
 单个 JSON 清单和不含 `plugin.apk` 的说明型插件包不受支持。

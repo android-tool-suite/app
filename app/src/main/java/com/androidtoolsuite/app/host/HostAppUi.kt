@@ -95,6 +95,7 @@ import com.androidtoolsuite.app.ui.Notice
 import com.androidtoolsuite.app.ui.SectionHeader
 import com.androidtoolsuite.app.ui.SuiteCard
 import com.androidtoolsuite.app.ui.SuiteTheme
+import com.androidtoolsuite.app.update.UpdateCatalog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -772,12 +773,17 @@ private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refre
 
 @Composable
 private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    if (activity.isPluginRepositoryOpenForUi()) {
+        PluginRepositoryScreen(activity, refreshVersion, modifier)
+        return
+    }
     if (activity.isInterfaceManagementOpenForUi()) {
         InterfaceManagementScreen(activity, refreshVersion, modifier)
         return
     }
     val optionalBuiltIns = activity.optionalBuiltInPlugins()
     val imported = activity.importedDescriptorsForUi()
+    val appUpdate = activity.appUpdateForUi()
     val listState = rememberPageListState(activity, "manager")
     LazyColumn(
         state = listState,
@@ -794,15 +800,53 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
             }
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = activity::showPluginRepositoryForUi) {
+                    Icon(Icons.Rounded.Extension, null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("插件仓库")
+                }
                 Button(onClick = activity::importPlugin) {
                     Icon(Icons.Rounded.Add, null)
                     Spacer(Modifier.size(8.dp))
                     Text("导入插件")
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = activity::showInterfaceManagementForUi) {
                     Icon(Icons.Rounded.Tune, null)
                     Spacer(Modifier.size(8.dp))
                     Text("界面管理")
+                }
+                OutlinedButton(
+                    onClick = activity::refreshUpdatesForUi,
+                    enabled = !activity.isUpdateOperationRunningForUi("__check__"),
+                ) {
+                    Text("检查更新")
+                }
+            }
+        }
+        item {
+            Notice(
+                activity.updateStatusForUi(),
+                warning = activity.updateStatusForUi().startsWith("检查更新失败"),
+            )
+        }
+        if (appUpdate != null) {
+            item {
+                SuiteCard {
+                    Text("Android Tool Suite ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "发现新的宿主版本。下载校验完成后将交给 Android 系统安装器确认。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = activity::installAppUpdateForUi,
+                        enabled = !activity.isUpdateOperationRunningForUi("__app__"),
+                    ) {
+                        Text(if (activity.isUpdateOperationRunningForUi("__app__")) "正在下载…" else "下载并安装")
+                    }
                 }
             }
         }
@@ -922,6 +966,13 @@ private fun ImportedManagerCard(activity: MainActivity, descriptor: ImportedPlug
             Switch(checked = enabled, onCheckedChange = { activity.setImportedPluginEnabled(descriptor.id, it) })
         }
         Text(descriptor.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            if (activity.isRepositoryVerifiedForUi(descriptor.id)) "来源：官方插件仓库 · 已校验"
+            else "来源：本地导入 · 未经仓库验证",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (activity.isRepositoryVerifiedForUi(descriptor.id)) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (enabled && !loaded) {
             Notice("插件代码未能加载，请重新导入与当前宿主版本匹配的完整插件包。", warning = true)
         }
@@ -929,6 +980,127 @@ private fun ImportedManagerCard(activity: MainActivity, descriptor: ImportedPlug
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = { activity.exportPlugin(descriptor.id) }, modifier = Modifier.weight(1f)) { Text("导出") }
             OutlinedButton(onClick = { activity.deleteImportedPlugin(descriptor.id) }, modifier = Modifier.weight(1f)) { Text("删除") }
+        }
+    }
+}
+
+@Composable
+private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    val plugins = activity.repositoryPluginsForUi()
+    val appUpdate = activity.appUpdateForUi()
+    val listState = rememberPageListState(activity, "plugin-repository")
+    LazyColumn(
+        state = listState,
+        modifier = modifier.semantics { stateDescription = "plugin-repository-$refreshVersion" },
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = activity::closePluginRepositoryForUi) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回插件管理")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("插件仓库", style = MaterialTheme.typography.headlineLarge)
+                    Text(
+                        "仅收录 Android Tool Suite 组织维护的官方插件。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = activity::refreshUpdatesForUi,
+                    enabled = !activity.isUpdateOperationRunningForUi("__check__"),
+                ) {
+                    Text("刷新仓库")
+                }
+                OutlinedButton(onClick = activity::installAllPluginUpdatesForUi) {
+                    Text("全部更新")
+                }
+            }
+        }
+        item {
+            Notice(
+                activity.updateStatusForUi()
+                        + if (activity.isUpdateCatalogCachedForUi()) " · 当前显示已验证缓存" else "",
+                warning = activity.updateStatusForUi().startsWith("检查更新失败"),
+            )
+        }
+        if (appUpdate != null) {
+            item {
+                SuiteCard {
+                    Text("宿主更新 ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "需要先更新宿主时，部分新插件会保持不可安装状态。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = activity::installAppUpdateForUi,
+                        enabled = !activity.isUpdateOperationRunningForUi("__app__"),
+                    ) {
+                        Text("更新宿主")
+                    }
+                }
+            }
+        }
+        item { Notice("仓库插件会执行在宿主进程中。索引签名与文件哈希只能确认发布来源，不能形成运行时沙箱。", warning = true) }
+        item { SectionHeader("官方插件", "${plugins.size} 个可用") }
+        if (plugins.isEmpty()) {
+            item { EmptyState("仓库暂不可用", "请检查网络后刷新；首次发布完成前仓库也可能为空。") }
+        }
+        items(plugins, key = UpdateCatalog.PluginRelease::id) { release ->
+            RepositoryPluginCard(activity, release)
+        }
+    }
+}
+
+@Composable
+private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.PluginRelease) {
+    val installed = activity.isRepositoryPluginInstalledForUi(release.id)
+    val updateAvailable = activity.isRepositoryPluginUpdateAvailableForUi(release)
+    val compatible = activity.isRepositoryPluginCompatibleForUi(release)
+    val busy = activity.isUpdateOperationRunningForUi(release.id)
+    val actionText = when {
+        busy -> "正在下载…"
+        !compatible -> "需要更新宿主"
+        !installed -> "安装"
+        updateAvailable -> "更新"
+        else -> "已是最新"
+    }
+    SuiteCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(release.title, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "v${release.versionName} · ${release.author}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Button(
+                onClick = { activity.installRepositoryPluginForUi(release.id) },
+                enabled = compatible && !busy && (!installed || updateAvailable),
+            ) {
+                Text(actionText)
+            }
+        }
+        Text(
+            release.description,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (release.dependencies.isNotEmpty()) {
+            Text(
+                "依赖：${release.dependencies.joinToString()}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (!compatible) {
+            Notice("要求宿主 versionCode ≥ ${release.minHostVersionCode}", warning = true)
         }
     }
 }

@@ -15,6 +15,9 @@ public final class ImportedPluginDescriptor {
     public final String title;
     public final String description;
     public final String version;
+    public final int versionCode;
+    public final int minHostVersionCode;
+    public final String sdkVersion;
     public final String author;
     public final String formatVersion;
     public final String entryClass;
@@ -34,10 +37,45 @@ public final class ImportedPluginDescriptor {
             Set<String> dependencies,
             List<ImportedWidgetDescriptor> widgets
     ) {
+        this(
+                id,
+                title,
+                description,
+                version,
+                0,
+                0,
+                "",
+                author,
+                formatVersion,
+                entryClass,
+                codePath,
+                dependencies,
+                widgets
+        );
+    }
+
+    public ImportedPluginDescriptor(
+            String id,
+            String title,
+            String description,
+            String version,
+            int versionCode,
+            int minHostVersionCode,
+            String sdkVersion,
+            String author,
+            String formatVersion,
+            String entryClass,
+            String codePath,
+            Set<String> dependencies,
+            List<ImportedWidgetDescriptor> widgets
+    ) {
         this.id = id;
         this.title = title;
         this.description = description;
         this.version = version;
+        this.versionCode = Math.max(0, versionCode);
+        this.minHostVersionCode = Math.max(0, minHostVersionCode);
+        this.sdkVersion = clean(sdkVersion);
         this.author = author;
         this.formatVersion = formatVersion;
         this.entryClass = entryClass;
@@ -66,6 +104,9 @@ public final class ImportedPluginDescriptor {
                 title,
                 clean(json.optString("description", "外部导入插件")),
                 clean(json.optString("version", "1.0")),
+                Math.max(0, json.optInt("versionCode", 0)),
+                Math.max(0, json.optInt("minHostVersionCode", 0)),
+                clean(json.optString("sdkVersion")),
                 clean(json.optString("author", "未知作者")),
                 clean(root.optString("formatVersion", "1")),
                 clean(json.optString("entryClass")),
@@ -85,6 +126,15 @@ public final class ImportedPluginDescriptor {
         plugin.put("title", title);
         plugin.put("description", description);
         plugin.put("version", version);
+        if (versionCode > 0) {
+            plugin.put("versionCode", versionCode);
+        }
+        if (minHostVersionCode > 0) {
+            plugin.put("minHostVersionCode", minHostVersionCode);
+        }
+        if (!sdkVersion.isEmpty()) {
+            plugin.put("sdkVersion", sdkVersion);
+        }
         plugin.put("author", author);
         if (!entryClass.isEmpty()) {
             plugin.put("entryClass", entryClass);
@@ -101,6 +151,9 @@ public final class ImportedPluginDescriptor {
                 title,
                 description,
                 version,
+                versionCode,
+                minHostVersionCode,
+                sdkVersion,
                 author,
                 formatVersion,
                 entryClass,

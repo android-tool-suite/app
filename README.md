@@ -11,7 +11,7 @@ Android Tool Suite 的主体应用仓库。宿主内置“插件管理”和 Shi
 3. 构建并安装 `app` 模块。
 4. 打开 App，授予 Shizuku 权限。
 5. 在底部导航进入“主页”“插件”或“管理”。
-6. 从外部插件仓库构建或获取插件，并在“插件管理”中导入 `.atsplugin`。
+6. 在“插件管理 → 插件仓库”中安装或更新官方插件，也可以继续手动导入 `.atsplugin`。
 7. 启用插件后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
 8. 可用搜索框按应用名、服务名或包名过滤列表。
 9. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
@@ -37,6 +37,7 @@ plugin-sdk/
 
 - `../plugins/accessibility-grant`：无障碍授权。
 - `../plugins/phigros-advisor`：Phigros Data Studio。
+- `../plugins/gacha-analysis`：跃迁与祈愿分析。
 
 主体与各插件仓库之间没有 Gradle project 依赖：主体仓库发布版本化 SDK AAR，每个插件仓库按 Maven 坐标消费它。新增插件时应创建新的仓库，不加入主体仓库或其他插件仓库。
 
@@ -90,6 +91,8 @@ gradle clean collectArtifacts
 ```
 
 输出仅包含 `artifacts/android-tool-suite-debug.apk`；每个外部插件仓库只管理自己的 `.atsplugin` 产物。
+
+正式发布由 `v<versionName>` 标签触发 GitHub Actions，使用 GitHub Environment 中的长期签名密钥生成 `artifacts/android-tool-suite.apk` 并发布到 GitHub Release。应用启动时最多每 24 小时读取一次签名更新索引；App 更新仍由 Android 系统安装器要求用户确认，插件更新则在校验和预加载成功后事务式替换。
 
 ## ADB 自动化调试
 

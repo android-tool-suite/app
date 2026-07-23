@@ -4,6 +4,17 @@ plugins {
     id "org.jetbrains.kotlin.plugin.compose"
 }
 
+def releaseStorePath = System.getenv("ATS_RELEASE_KEYSTORE_PATH")
+def releaseStorePassword = System.getenv("ATS_RELEASE_KEYSTORE_PASSWORD")
+def releaseKeyAlias = System.getenv("ATS_RELEASE_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("ATS_RELEASE_KEY_PASSWORD")
+def hasReleaseSigning = [
+        releaseStorePath,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+].every { it != null && !it.isBlank() }
+
 android {
     namespace "com.androidtoolsuite.app"
     compileSdk 35
@@ -12,8 +23,31 @@ android {
         applicationId "com.androidtoolsuite.app"
         minSdk 24
         targetSdk 35
-        versionCode 10
-        versionName "1.1.8"
+        versionCode 11
+        versionName "1.2.0"
+        buildConfigField "String", "PLUGIN_SDK_VERSION", "\"${providers.gradleProperty("pluginSdkVersion").get()}\""
+        buildConfigField "String", "UPDATE_INDEX_URL", "\"https://android-tool-suite.github.io/plugin-registry/index-v1.json\""
+        buildConfigField "String", "UPDATE_INDEX_PUBLIC_KEY", "\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6leKPqgvELS3qbBrAe+/Wk8vCvdtMVy1ZwH1py7ynxye2/bsbH9UaFBVTFyW7wxqpFimmklZF/XeToMt21TjNQ==\""
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseStorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
     }
 
     compileOptions {
@@ -40,4 +74,6 @@ dependencies {
     implementation "androidx.annotation:annotation:1.9.1"
     implementation "dev.rikka.shizuku:api:$shizukuVersion"
     implementation "dev.rikka.shizuku:provider:$shizukuVersion"
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
 }
