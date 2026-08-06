@@ -9,6 +9,8 @@ import org.json.JSONException;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -289,6 +291,60 @@ public final class ExternalPluginStore {
         return new LinkedHashSet<>(preferences.getStringSet(PREF_ENABLED_IDS, Collections.emptySet()));
     }
 
+    public PluginState snapshot(String pluginId) throws IOException {
+        ImportedPluginDescriptor descriptor = null;
+        for (ImportedPluginDescriptor candidate : load()) {
+            if (candidate.id.equals(pluginId)) {
+                descriptor = candidate;
+                break;
+            }
+        }
+        if (descriptor == null) {
+            return PluginState.missing(pluginId);
+        }
+        File codeFile = pluginCodeFile(pluginId);
+        if (!codeFile.isFile()) {
+            throw new IOException("无法备份插件代码：" + pluginId);
+        }
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (FileInputStream input = new FileInputStream(codeFile)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+        }
+        return new PluginState(
+                pluginId,
+                descriptor,
+                output.toByteArray(),
+                isEnabled(pluginId),
+                sourceReleaseUrl(pluginId),
+                verifiedSha256(pluginId),
+                repositoryChannel(pluginId),
+                isRepositoryVerified(pluginId)
+        );
+    }
+
+    public void restore(PluginState state) throws IOException, JSONException {
+        if (!state.exists()) {
+            if (findRawDescriptor(state.pluginId) != null) {
+                delete(state.pluginId);
+            }
+            return;
+        }
+        installPlugin(
+                state.descriptor,
+                state.codeBytes,
+                state.sourceReleaseUrl,
+                state.sha256,
+                state.channel,
+                state.verified
+        );
+        confirmInstall(state.pluginId);
+        setEnabled(state.pluginId, state.enabled);
+    }
+
     private File pluginDir(String pluginId) {
         return new File(context.getFilesDir(), "plugins/" + pluginId);
     }
@@ -388,5 +444,44 @@ public final class ExternalPluginStore {
             }
         }
         file.delete();
+    }
+
+    public static final class PluginState {
+        public final String pluginId;
+        public final ImportedPluginDescriptor descriptor;
+        public final byte[] codeBytes;
+        public final boolean enabled;
+        public final String sourceReleaseUrl;
+        public final String sha256;
+        public final String channel;
+        public final boolean verified;
+
+        private PluginState(
+                String pluginId,
+                ImportedPluginDescriptor descriptor,
+                byte[] codeBytes,
+                boolean enabled,
+                String sourceReleaseUrl,
+                String sha256,
+                String channel,
+                boolean verified
+        ) {
+            this.pluginId = pluginId;
+            this.descriptor = descriptor;
+            this.codeBytes = codeBytes == null ? null : codeBytes.clone();
+            this.enabled = enabled;
+            this.sourceReleaseUrl = sourceReleaseUrl;
+            this.sha256 = sha256;
+            this.channel = channel;
+            this.verified = verified;
+        }
+
+        static PluginState missing(String pluginId) {
+            return new PluginState(pluginId, null, null, false, "", "", "", false);
+        }
+
+        boolean exists() {
+            return descriptor != null && codeBytes != null;
+        }
     }
 }

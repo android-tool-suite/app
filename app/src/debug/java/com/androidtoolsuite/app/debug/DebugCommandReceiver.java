@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+
+import com.androidtoolsuite.app.BuildConfig;
 import android.content.pm.PackageInfo;
 import android.os.Build;
 
@@ -44,7 +46,7 @@ import rikka.shizuku.Shizuku;
 
 /** Debug-build-only, adb-shell-controlled command endpoint. */
 public final class DebugCommandReceiver extends BroadcastReceiver {
-    public static final String ACTION = "com.androidtoolsuite.app.DEBUG_COMMAND";
+    public static final String ACTION = BuildConfig.APPLICATION_ID + ".DEBUG_COMMAND";
     private static final String EXTRA_COMMAND = "command";
     private static final long MAX_PLUGIN_PACKAGE_BYTES = 64L * 1024L * 1024L;
 

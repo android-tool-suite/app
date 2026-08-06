@@ -27,9 +27,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$packageName = 'com.androidtoolsuite.app'
+$packageName = 'com.androidtoolsuite.app.debug'
 $action = "$packageName.DEBUG_COMMAND"
-$component = "$packageName/.debug.DebugCommandReceiver"
+$component = "$packageName/com.androidtoolsuite.app.debug.DebugCommandReceiver"
+$mainActivity = 'com.androidtoolsuite.app.host.MainActivity'
 
 function Find-Adb {
     $installed = Get-Command adb -ErrorAction SilentlyContinue
@@ -87,7 +88,7 @@ if ($Command -eq 'navigate') {
     }
     Invoke-Adb @(
         'shell', 'am', 'start', '-W',
-        '-n', "$packageName/.host.MainActivity",
+        '-n', "$packageName/$mainActivity",
         '--es', 'debug_destination', $Destination
     )
     exit 0

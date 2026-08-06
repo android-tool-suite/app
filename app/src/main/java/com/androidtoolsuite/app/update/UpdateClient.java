@@ -50,18 +50,24 @@ public final class UpdateClient {
         publicKey = decodePublicKey(BuildConfig.UPDATE_INDEX_PUBLIC_KEY);
     }
 
-    public void check(String pluginChannel, boolean force, CatalogCallback callback) {
+    public void check(
+            String appChannel,
+            String pluginChannel,
+            boolean force,
+            CatalogCallback callback
+    ) {
         executor.execute(() -> {
             try {
+                String selectedAppChannel = normalizeChannel(appChannel);
                 String selectedChannel = normalizeChannel(pluginChannel);
-                CatalogResult release = loadCatalog(UpdateCatalog.CHANNEL_RELEASE, force);
-                CatalogResult plugins = UpdateCatalog.CHANNEL_RELEASE.equals(selectedChannel)
-                        ? release
+                CatalogResult app = loadCatalog(selectedAppChannel, force);
+                CatalogResult plugins = selectedAppChannel.equals(selectedChannel)
+                        ? app
                         : loadCatalog(selectedChannel, force);
                 deliverCatalog(
                         callback,
-                        UpdateCatalog.combine(release.catalog, plugins.catalog),
-                        release.cached || plugins.cached
+                        UpdateCatalog.combine(app.catalog, plugins.catalog),
+                        app.cached || plugins.cached
                 );
             } catch (IOException | GeneralSecurityException | JSONException error) {
                 deliverError(callback, readableMessage(error));

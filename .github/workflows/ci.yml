@@ -34,9 +34,37 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Decode stable debug keystore
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          KEYSTORE_B64: ${{ secrets.ATS_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_B64)) {
+            throw 'ATS_DEBUG_KEYSTORE_B64 is not configured'
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'android-tool-suite-debug.p12'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:KEYSTORE_B64))
+          "ATS_DEBUG_KEYSTORE_PATH=$path" >> $env:GITHUB_ENV
+
       - name: Test and build debug artifact
         shell: pwsh
-        run: gradle clean :app:testDebugUnitTest collectArtifacts
+        env:
+          ATS_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ATS_DEBUG_KEYSTORE_PASSWORD }}
+          ATS_DEBUG_KEY_ALIAS: ${{ secrets.ATS_DEBUG_KEY_ALIAS }}
+          ATS_DEBUG_KEY_PASSWORD: ${{ secrets.ATS_DEBUG_KEY_PASSWORD }}
+        run: gradle clean :app:testDebugUnitTest collectArtifacts "-PatsCommitSha=${{ github.sha }}"
+
+      - name: Verify debug APK signature
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          $buildTools = Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools') -Directory |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1
+          if ($null -eq $buildTools) { throw 'Android build-tools not found' }
+          & (Join-Path $buildTools.FullName 'apksigner.bat') verify --verbose --print-certs artifacts/android-tool-suite-debug.apk
+          if ($LASTEXITCODE -ne 0) { throw 'Debug APK signature verification failed' }
 
       - name: Upload debug artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -62,9 +90,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .\.github\scripts\publish-debug.ps1 -AssetDirectory .\debug-dist -Title 'Android Tool Suite Debug'
 
+      - name: Create registry app token
+        id: registry-app-token
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.REGISTRY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REGISTRY_APP_PRIVATE_KEY }}
+          owner: android-tool-suite
+          repositories: plugin-registry
+          permission-contents: write
+
       - name: Notify plugin registry
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.REGISTRY_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.registry-app-token.outputs.token }}
         run: .\.github\scripts\dispatch-registry.ps1 -Channel debug -Reference debug

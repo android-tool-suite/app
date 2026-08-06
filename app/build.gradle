@@ -8,12 +8,35 @@ def releaseStorePath = System.getenv("ATS_RELEASE_KEYSTORE_PATH")
 def releaseStorePassword = System.getenv("ATS_RELEASE_KEYSTORE_PASSWORD")
 def releaseKeyAlias = System.getenv("ATS_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("ATS_RELEASE_KEY_PASSWORD")
+def debugStorePath = System.getenv("ATS_DEBUG_KEYSTORE_PATH")
+def debugStorePassword = System.getenv("ATS_DEBUG_KEYSTORE_PASSWORD")
+def debugKeyAlias = System.getenv("ATS_DEBUG_KEY_ALIAS")
+def debugKeyPassword = System.getenv("ATS_DEBUG_KEY_PASSWORD")
 def hasReleaseSigning = [
         releaseStorePath,
         releaseStorePassword,
         releaseKeyAlias,
         releaseKeyPassword,
 ].every { it != null && !it.isBlank() }
+def hasDebugSigning = [
+        debugStorePath,
+        debugStorePassword,
+        debugKeyAlias,
+        debugKeyPassword,
+].every { it != null && !it.isBlank() }
+def hasAnyDebugSigning = [
+        debugStorePath,
+        debugStorePassword,
+        debugKeyAlias,
+        debugKeyPassword,
+].any { it != null && !it.isBlank() }
+if (hasAnyDebugSigning && !hasDebugSigning) {
+    throw new GradleException("Debug signing configuration is incomplete")
+}
+def buildCommitSha = providers.gradleProperty("atsCommitSha").orElse("").get().toLowerCase()
+if (!buildCommitSha.isBlank() && !(buildCommitSha ==~ /[0-9a-f]{40}/)) {
+    throw new GradleException("atsCommitSha must be a full 40-character hexadecimal commit SHA")
+}
 
 android {
     namespace "com.androidtoolsuite.app"
@@ -23,15 +46,24 @@ android {
         applicationId "com.androidtoolsuite.app"
         minSdk 24
         targetSdk 35
-        versionCode 12
-        versionName "1.3.0"
+        versionCode 13
+        versionName "1.3.1"
         buildConfigField "String", "PLUGIN_SDK_VERSION", "\"${providers.gradleProperty("pluginSdkVersion").get()}\""
+        buildConfigField "String", "BUILD_COMMIT_SHA", "\"${buildCommitSha}\""
         buildConfigField "String", "UPDATE_RELEASE_INDEX_URL", "\"https://android-tool-suite.github.io/plugin-registry/release/index-v1.json\""
         buildConfigField "String", "UPDATE_DEBUG_INDEX_URL", "\"https://android-tool-suite.github.io/plugin-registry/debug/index-v1.json\""
         buildConfigField "String", "UPDATE_INDEX_PUBLIC_KEY", "\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6leKPqgvELS3qbBrAe+/Wk8vCvdtMVy1ZwH1py7ynxye2/bsbH9UaFBVTFyW7wxqpFimmklZF/XeToMt21TjNQ==\""
     }
 
     signingConfigs {
+        debug {
+            if (hasDebugSigning) {
+                storeFile file(debugStorePath)
+                storePassword debugStorePassword
+                keyAlias debugKeyAlias
+                keyPassword debugKeyPassword
+            }
+        }
         release {
             if (hasReleaseSigning) {
                 storeFile file(releaseStorePath)
@@ -43,6 +75,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            if (hasDebugSigning) {
+                signingConfig signingConfigs.debug
+            }
+        }
         release {
             minifyEnabled false
             if (hasReleaseSigning) {

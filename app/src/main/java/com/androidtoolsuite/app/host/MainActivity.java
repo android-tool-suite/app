@@ -3,6 +3,7 @@ package com.androidtoolsuite.app.host;
 import com.androidtoolsuite.app.BuildConfig;
 import com.androidtoolsuite.app.IShellService;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
@@ -34,6 +35,8 @@ import androidx.core.content.FileProvider;
 
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
+import com.androidtoolsuite.app.migration.HostMigrationArchive;
+import com.androidtoolsuite.app.migration.MigrationTransaction;
 import com.androidtoolsuite.app.plugin.runtime.ExternalToolFactory;
 import com.androidtoolsuite.app.plugin.api.HomeWidget;
 import com.androidtoolsuite.app.plugin.api.HomeWidgetSize;
@@ -46,9 +49,12 @@ import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.ui.UiKit;
 import com.androidtoolsuite.app.update.UpdateCatalog;
 import com.androidtoolsuite.app.update.UpdateClient;
+import com.androidtoolsuite.app.update.AppUpdatePolicy;
 import com.androidtoolsuite.app.update.PluginUpdatePolicy;
 
 import org.json.JSONException;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -85,6 +91,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final int REQUEST_SHIZUKU = 3001;
     private static final int REQUEST_IMPORT_PLUGIN = 4001;
     private static final int REQUEST_EXPORT_PLUGIN = 4002;
+    private static final int REQUEST_IMPORT_MIGRATION = 4003;
+    private static final int REQUEST_EXPORT_MIGRATION = 4004;
 
     private static final int SECTION_DASHBOARD = 0;
     private static final int SECTION_PLUGINS = 1;
@@ -1072,12 +1080,17 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public UpdateCatalog.AppRelease appUpdateForUi() {
-        if (BuildConfig.DEBUG || updateCatalog == null || updateCatalog.app == null) {
+        if (updateCatalog == null || updateCatalog.app == null) {
             return null;
         }
         UpdateCatalog.AppRelease release = updateCatalog.app;
-        return getPackageName().equals(release.packageName)
-                && release.versionCode > BuildConfig.VERSION_CODE
+        return AppUpdatePolicy.isUpdateAvailable(
+                release,
+                getPackageName(),
+                BuildConfig.VERSION_CODE,
+                BuildConfig.DEBUG,
+                BuildConfig.BUILD_COMMIT_SHA
+        )
                 ? release
                 : null;
     }
@@ -1134,7 +1147,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         updateOperations.add("__app__");
         updateStatus = "正在下载应用更新…";
         invalidateComposeUi();
-        updateClient.download(release, "android-tool-suite.apk", new UpdateClient.DownloadCallback() {
+        String fileName = BuildConfig.DEBUG
+                ? "android-tool-suite-debug.apk"
+                : "android-tool-suite.apk";
+        updateClient.download(release, fileName, new UpdateClient.DownloadCallback() {
             @Override
             public void onSuccess(File file) {
                 updateOperations.remove("__app__");
@@ -1251,7 +1267,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         updateOperations.add("__check__");
         updateStatus = "正在检查" + pluginRepositoryChannelLabelForUi() + "更新…";
         invalidateComposeUi();
-        updateClient.check(pluginRepositoryChannelForUi(), force, new UpdateClient.CatalogCallback() {
+        String appChannel = BuildConfig.DEBUG
+                ? UpdateCatalog.CHANNEL_DEBUG
+                : UpdateCatalog.CHANNEL_RELEASE;
+        updateClient.check(appChannel, pluginRepositoryChannelForUi(), force, new UpdateClient.CatalogCallback() {
             @Override
             public void onSuccess(UpdateCatalog catalog, boolean cached) {
                 updateOperations.remove("__check__");
@@ -1358,7 +1377,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         long archiveVersion = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                 ? archive.getLongVersionCode()
                 : archive.versionCode;
-        if (archiveVersion != release.versionCode || archiveVersion <= BuildConfig.VERSION_CODE) {
+        if (archiveVersion != release.versionCode
+                || !AppUpdatePolicy.isDownloadedVersionValid(
+                        archiveVersion,
+                        BuildConfig.VERSION_CODE,
+                        BuildConfig.DEBUG
+                )) {
             throw new IOException("下载 APK 的版本号无效");
         }
         PackageInfo installed;
@@ -1537,6 +1561,24 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         startActivityForResult(intent, REQUEST_EXPORT_PLUGIN);
     }
 
+    public void importMigration() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        startActivityForResult(intent, REQUEST_IMPORT_MIGRATION);
+    }
+
+    public void exportMigration() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        intent.putExtra(
+                Intent.EXTRA_TITLE,
+                "android-tool-suite-" + (BuildConfig.DEBUG ? "debug" : "release") + ".atsbackup"
+        );
+        startActivityForResult(intent, REQUEST_EXPORT_MIGRATION);
+    }
+
     @Override
     public void deleteImportedPlugin(String pluginId) {
         List<String> dependents = findDependentPluginTitles(pluginId);
@@ -1565,6 +1607,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             handleImportResult(resultCode, data);
         } else if (requestCode == REQUEST_EXPORT_PLUGIN) {
             handleExportResult(resultCode, data);
+        } else if (requestCode == REQUEST_IMPORT_MIGRATION) {
+            handleMigrationImportResult(resultCode, data);
+        } else if (requestCode == REQUEST_EXPORT_MIGRATION) {
+            handleMigrationExportResult(resultCode, data);
         }
     }
 
@@ -1628,6 +1674,45 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             showToast("已导出插件包");
         } catch (IOException | JSONException e) {
             showToast("导出失败：" + e.getMessage());
+        }
+    }
+
+    private void handleMigrationExportResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        try (OutputStream output = getContentResolver().openOutputStream(data.getData())) {
+            if (output == null) {
+                throw new IOException("无法写入迁移包");
+            }
+            HostMigrationArchive.write(output, createMigrationSnapshot());
+            showToast("迁移包已导出，不包含账号凭据和插件业务数据");
+        } catch (IOException | JSONException error) {
+            showToast("导出迁移包失败：" + error.getMessage());
+        }
+    }
+
+    private void handleMigrationImportResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        try {
+            HostMigrationArchive.Snapshot snapshot = HostMigrationArchive.read(
+                    readBytes(data.getData(), HostMigrationArchive.MAX_ARCHIVE_BYTES)
+            );
+            List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
+            String message = "来源：" + snapshot.sourcePackage + " " + snapshot.sourceVersionName
+                    + "\n插件：" + prepared.size() + " 个"
+                    + "\n\n将迁移宿主布局、仓库选择、插件包与启用状态。"
+                    + "目标端独有插件会保留；账号凭据和插件业务数据不会迁移。";
+            new AlertDialog.Builder(this)
+                    .setTitle("导入 Android Tool Suite 迁移包？")
+                    .setMessage(message)
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("导入", (dialog, which) -> applyMigration(snapshot, prepared))
+                    .show();
+        } catch (IOException | JSONException error) {
+            showToast("读取迁移包失败：" + error.getMessage());
         }
     }
 
@@ -1800,6 +1885,367 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return null;
     }
 
+    private HostMigrationArchive.Snapshot createMigrationSnapshot()
+            throws IOException, JSONException {
+        List<HostMigrationArchive.PluginEntry> entries = new ArrayList<>();
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            writePluginPackage(output, descriptor);
+            entries.add(new HostMigrationArchive.PluginEntry(
+                    descriptor.id,
+                    externalPluginStore.isEnabled(descriptor.id),
+                    output.toByteArray()
+            ));
+        }
+        return new HostMigrationArchive.Snapshot(
+                getPackageName(),
+                BuildConfig.VERSION_NAME,
+                BuildConfig.VERSION_CODE,
+                captureHostSettings(),
+                builtInPluginStateStore.enabledIds(),
+                entries
+        );
+    }
+
+    private List<PreparedMigrationPlugin> prepareMigration(
+            HostMigrationArchive.Snapshot snapshot
+    ) throws IOException, JSONException {
+        Set<String> knownBuiltInIds = builtInPluginIds();
+        if (!knownBuiltInIds.containsAll(snapshot.builtInEnabledIds)) {
+            throw new IOException("迁移包包含未知内置插件状态");
+        }
+        List<PreparedMigrationPlugin> prepared = new ArrayList<>();
+        for (HostMigrationArchive.PluginEntry entry : snapshot.plugins) {
+            PluginImport pluginImport = readPluginPackage(entry.packageBytes);
+            if (!entry.id.equals(pluginImport.descriptor.id)) {
+                throw new IOException("迁移记录与插件包 ID 不一致：" + entry.id);
+            }
+            if (isBuiltInPluginId(entry.id)) {
+                throw new IOException("插件 ID 与内置插件冲突：" + entry.id);
+            }
+            if (pluginImport.descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
+                throw new IOException("插件要求更高版本宿主：" + pluginImport.descriptor.title);
+            }
+            preflightPlugin(pluginImport);
+            prepared.add(new PreparedMigrationPlugin(pluginImport, entry.enabled));
+        }
+        validateMigrationDependencies(snapshot.builtInEnabledIds, prepared);
+        return prepared;
+    }
+
+    private void validateMigrationDependencies(
+            Set<String> builtInEnabledIds,
+            List<PreparedMigrationPlugin> prepared
+    ) throws IOException {
+        Map<String, ImportedPluginDescriptor> resulting = new LinkedHashMap<>();
+        Set<String> enabled = new LinkedHashSet<>(externalPluginStore.enabledIds());
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            resulting.put(descriptor.id, descriptor);
+        }
+        for (PreparedMigrationPlugin item : prepared) {
+            resulting.put(item.pluginImport.descriptor.id, item.pluginImport.descriptor);
+            if (item.enabled) {
+                enabled.add(item.pluginImport.descriptor.id);
+            } else {
+                enabled.remove(item.pluginImport.descriptor.id);
+            }
+        }
+
+        Map<String, String> activeVersions = new LinkedHashMap<>();
+        for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
+            if (builtInEnabledIds.contains(plugin.id())) {
+                activeVersions.put(plugin.id(), plugin.version());
+            }
+        }
+        for (String id : enabled) {
+            ImportedPluginDescriptor descriptor = resulting.get(id);
+            if (descriptor != null) {
+                activeVersions.put(id, descriptor.version);
+            }
+        }
+        for (String id : enabled) {
+            ImportedPluginDescriptor descriptor = resulting.get(id);
+            if (descriptor == null) {
+                continue;
+            }
+            for (String rawDependency : descriptor.dependencies) {
+                PluginDependency dependency = PluginDependency.parse(rawDependency);
+                if (!dependency.isSatisfied(activeVersions)) {
+                    throw new IOException(
+                            descriptor.title + " 缺少依赖 " + dependency.label()
+                    );
+                }
+            }
+        }
+    }
+
+    private void applyMigration(
+            HostMigrationArchive.Snapshot snapshot,
+            List<PreparedMigrationPlugin> prepared
+    ) {
+        List<ExternalPluginStore.PluginState> previousPlugins = new ArrayList<>();
+        JSONObject previousHost;
+        Set<String> previousBuiltIns = builtInPluginStateStore.enabledIds();
+        try {
+            previousHost = captureHostSettings();
+            for (PreparedMigrationPlugin item : prepared) {
+                previousPlugins.add(externalPluginStore.snapshot(item.pluginImport.descriptor.id));
+            }
+        } catch (IOException | JSONException error) {
+            showToast("无法创建迁移回滚点：" + error.getMessage());
+            return;
+        }
+
+        try {
+            Set<String> migratedIds = builtInPluginIds();
+            for (PreparedMigrationPlugin item : prepared) {
+                migratedIds.add(item.pluginImport.descriptor.id);
+            }
+            JSONObject mergedHost = mergeHostSettings(previousHost, snapshot.host, migratedIds);
+
+            List<MigrationTransaction.Operation> operations = new ArrayList<>();
+            for (int index = 0; index < prepared.size(); index++) {
+                PreparedMigrationPlugin item = prepared.get(index);
+                ExternalPluginStore.PluginState previous = previousPlugins.get(index);
+                operations.add(new MigrationTransaction.Operation() {
+                    @Override
+                    public void apply() throws IOException, JSONException {
+                        ImportedPluginDescriptor descriptor = item.pluginImport.descriptor;
+                        externalPluginStore.installPlugin(
+                                descriptor,
+                                item.pluginImport.codeBytes,
+                                "",
+                                "",
+                                "",
+                                false
+                        );
+                        externalPluginStore.confirmInstall(descriptor.id);
+                        externalPluginStore.setEnabled(descriptor.id, item.enabled);
+                    }
+
+                    @Override
+                    public void rollback() throws IOException, JSONException {
+                        externalPluginStore.restore(previous);
+                    }
+                });
+            }
+            operations.add(new MigrationTransaction.Operation() {
+                @Override
+                public void apply() throws IOException {
+                    if (!builtInPluginStateStore.replaceEnabledIds(snapshot.builtInEnabledIds)) {
+                        throw new IOException("无法保存内置插件状态");
+                    }
+                }
+
+                @Override
+                public void rollback() throws IOException {
+                    if (!builtInPluginStateStore.replaceEnabledIds(previousBuiltIns)) {
+                        throw new IOException("无法恢复内置插件状态");
+                    }
+                }
+            });
+            operations.add(new MigrationTransaction.Operation() {
+                @Override
+                public void apply() throws IOException {
+                    if (!applyHostSettings(mergedHost)) {
+                        throw new IOException("无法保存宿主设置");
+                    }
+                }
+
+                @Override
+                public void rollback() throws IOException {
+                    if (!applyHostSettings(previousHost)) {
+                        throw new IOException("无法恢复宿主设置");
+                    }
+                }
+            });
+            MigrationTransaction.execute(operations);
+            reloadPlugins(null);
+            updateCatalog = null;
+            checkForUpdates(true);
+            showToast("迁移完成：已导入 " + prepared.size() + " 个插件");
+        } catch (IOException | JSONException error) {
+            reloadPlugins(null);
+            String rollbackStatus = error.getSuppressed().length == 0
+                    ? "已恢复原状态"
+                    : "回滚不完整，请勿继续操作并重新导入";
+            showToast("迁移失败，" + rollbackStatus + "：" + error.getMessage());
+        }
+    }
+
+    private Set<String> builtInPluginIds() {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
+            ids.add(plugin.id());
+        }
+        return ids;
+    }
+
+    private JSONObject captureHostSettings() throws JSONException {
+        JSONObject host = new JSONObject();
+        host.put("pluginRepositoryChannel", pluginRepositoryChannelForUi());
+        host.put("hiddenWidgets", strings(uiPreferences.getStringSet(
+                PREF_HIDDEN_WIDGETS, Collections.emptySet()
+        )));
+        host.put("hiddenTools", strings(uiPreferences.getStringSet(
+                PREF_HIDDEN_TOOLS, Collections.emptySet()
+        )));
+        host.put("toolOrder", strings(lines(uiPreferences.getString(PREF_TOOL_ORDER, ""))));
+        host.put("widgetOrder", strings(lines(uiPreferences.getString(PREF_WIDGET_ORDER, ""))));
+        host.put("fullWidthWidgets", strings(uiPreferences.getStringSet(
+                PREF_FULL_WIDTH_WIDGETS, Collections.emptySet()
+        )));
+        host.put("widgetSizes", strings(uiPreferences.getStringSet(
+                PREF_WIDGET_SIZES, Collections.emptySet()
+        )));
+        return host;
+    }
+
+    private JSONObject mergeHostSettings(
+            JSONObject current,
+            JSONObject incoming,
+            Set<String> migratedIds
+    ) throws JSONException {
+        JSONObject merged = new JSONObject(current.toString());
+        String channel = incoming.optString("pluginRepositoryChannel", UpdateCatalog.CHANNEL_RELEASE);
+        merged.put(
+                "pluginRepositoryChannel",
+                UpdateCatalog.CHANNEL_DEBUG.equals(channel)
+                        ? UpdateCatalog.CHANNEL_DEBUG
+                        : UpdateCatalog.CHANNEL_RELEASE
+        );
+        merged.put("hiddenTools", strings(mergeScopedSet(
+                jsonStrings(current.optJSONArray("hiddenTools")),
+                jsonStrings(incoming.optJSONArray("hiddenTools")),
+                migratedIds,
+                false
+        )));
+        for (String key : Arrays.asList("hiddenWidgets", "fullWidthWidgets", "widgetSizes")) {
+            merged.put(key, strings(mergeScopedSet(
+                    jsonStrings(current.optJSONArray(key)),
+                    jsonStrings(incoming.optJSONArray(key)),
+                    migratedIds,
+                    true
+            )));
+        }
+        merged.put("toolOrder", strings(mergeScopedOrder(
+                jsonStrings(incoming.optJSONArray("toolOrder")),
+                jsonStrings(current.optJSONArray("toolOrder")),
+                migratedIds,
+                false
+        )));
+        merged.put("widgetOrder", strings(mergeScopedOrder(
+                jsonStrings(incoming.optJSONArray("widgetOrder")),
+                jsonStrings(current.optJSONArray("widgetOrder")),
+                migratedIds,
+                true
+        )));
+        return merged;
+    }
+
+    private Set<String> mergeScopedSet(
+            Set<String> current,
+            Set<String> incoming,
+            Set<String> ids,
+            boolean widgetKey
+    ) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String value : current) {
+            if (!belongsTo(value, ids, widgetKey)) {
+                result.add(value);
+            }
+        }
+        for (String value : incoming) {
+            if (belongsTo(value, ids, widgetKey)) {
+                result.add(value);
+            }
+        }
+        return result;
+    }
+
+    private Set<String> mergeScopedOrder(
+            Set<String> incoming,
+            Set<String> current,
+            Set<String> ids,
+            boolean widgetKey
+    ) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String value : incoming) {
+            if (belongsTo(value, ids, widgetKey)) {
+                result.add(value);
+            }
+        }
+        for (String value : current) {
+            if (!belongsTo(value, ids, widgetKey)) {
+                result.add(value);
+            }
+        }
+        return result;
+    }
+
+    private boolean belongsTo(String value, Set<String> ids, boolean widgetKey) {
+        if (!widgetKey) {
+            return ids.contains(value);
+        }
+        for (String id : ids) {
+            if (value.startsWith(id + ":")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean applyHostSettings(JSONObject host) {
+        SharedPreferences.Editor editor = uiPreferences.edit()
+                .putString(
+                        PREF_PLUGIN_REPOSITORY_CHANNEL,
+                        UpdateCatalog.CHANNEL_DEBUG.equals(
+                                host.optString("pluginRepositoryChannel")
+                        ) ? UpdateCatalog.CHANNEL_DEBUG : UpdateCatalog.CHANNEL_RELEASE
+                )
+                .putStringSet(PREF_HIDDEN_WIDGETS, jsonStrings(host.optJSONArray("hiddenWidgets")))
+                .putStringSet(PREF_HIDDEN_TOOLS, jsonStrings(host.optJSONArray("hiddenTools")))
+                .putString(PREF_TOOL_ORDER, String.join("\n", jsonStrings(host.optJSONArray("toolOrder"))))
+                .putString(PREF_WIDGET_ORDER, String.join("\n", jsonStrings(host.optJSONArray("widgetOrder"))))
+                .putStringSet(PREF_FULL_WIDTH_WIDGETS, jsonStrings(host.optJSONArray("fullWidthWidgets")))
+                .putStringSet(PREF_WIDGET_SIZES, jsonStrings(host.optJSONArray("widgetSizes")));
+        return editor.commit();
+    }
+
+    private static JSONArray strings(Set<String> values) {
+        JSONArray array = new JSONArray();
+        for (String value : values) {
+            array.put(value);
+        }
+        return array;
+    }
+
+    private static Set<String> jsonStrings(JSONArray array) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (array != null) {
+            for (int index = 0; index < array.length(); index++) {
+                String value = array.optString(index, "").trim();
+                if (!value.isEmpty()) {
+                    values.add(value);
+                }
+            }
+        }
+        return values;
+    }
+
+    private static Set<String> lines(String value) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (value != null) {
+            for (String line : value.split("\\R")) {
+                String clean = line.trim();
+                if (!clean.isEmpty()) {
+                    values.add(clean);
+                }
+            }
+        }
+        return values;
+    }
+
     private PluginImport readPluginPackage(Uri uri) throws IOException, JSONException {
         return readPluginPackage(readBytes(uri));
     }
@@ -1820,6 +2266,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private byte[] readBytes(Uri uri) throws IOException {
+        return readBytes(uri, Integer.MAX_VALUE);
+    }
+
+    private byte[] readBytes(Uri uri, int limit) throws IOException {
         InputStream inputStream = getContentResolver().openInputStream(uri);
         if (inputStream == null) {
             throw new IOException("无法读取插件文件");
@@ -1828,6 +2278,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             byte[] buffer = new byte[8192];
             int read;
             while ((read = stream.read(buffer)) != -1) {
+                if (output.size() + read > limit) {
+                    throw new IOException("文件大小超出限制");
+                }
                 output.write(buffer, 0, read);
             }
             return output.toByteArray();
@@ -1932,6 +2385,16 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         PluginImport(ImportedPluginDescriptor descriptor, byte[] codeBytes) {
             this.descriptor = descriptor;
             this.codeBytes = codeBytes;
+        }
+    }
+
+    private static final class PreparedMigrationPlugin {
+        final PluginImport pluginImport;
+        final boolean enabled;
+
+        PreparedMigrationPlugin(PluginImport pluginImport, boolean enabled) {
+            this.pluginImport = pluginImport;
+            this.enabled = enabled;
         }
     }
 

@@ -825,6 +825,15 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
                     Text("检查更新")
                 }
             }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = activity::exportMigration) {
+                    Text("导出迁移包")
+                }
+                OutlinedButton(onClick = activity::importMigration) {
+                    Text("导入迁移包")
+                }
+            }
         }
         item {
             Notice(
@@ -851,6 +860,7 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
             }
         }
         item { Notice("插件代码与宿主运行在同一进程，能够使用宿主进程已有的能力。请只安装来自可信来源的插件。", warning = true) }
+        item { Notice("迁移包只包含宿主布局、仓库选择和插件包，不包含账号凭据或插件业务数据。") }
         item { SectionHeader("内置插件", "可选能力可按需停用") }
         if (optionalBuiltIns.isEmpty()) item { EmptyState("没有可选内置插件", "核心宿主能力会始终保持启用。") }
         items(optionalBuiltIns, key = ToolPlugin::id) { plugin -> BuiltInManagerCard(activity, plugin) }

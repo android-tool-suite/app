@@ -46,11 +46,17 @@ Copy-Item -LiteralPath $artifact.FullName -Destination $targetArtifact -Force
 $targetFile = Get-Item -LiteralPath $targetArtifact
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetArtifact).Hash.ToLowerInvariant()
 
+$packageName = if ($Channel -eq 'release') {
+    'com.androidtoolsuite.app'
+}
+else {
+    'com.androidtoolsuite.app.debug'
+}
 $metadata = [ordered]@{
     schemaVersion = 1
     type = 'app'
     channel = $Channel
-    packageName = 'com.androidtoolsuite.app'
+    packageName = $packageName
     versionName = $versionName
     versionCode = $versionCode
     minSdk = 24

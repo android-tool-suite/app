@@ -34,4 +34,10 @@ public final class BuiltInPluginStateStore {
     public Set<String> enabledIds() {
         return new LinkedHashSet<>(preferences.getStringSet(PREF_ENABLED_IDS, Collections.emptySet()));
     }
+
+    public boolean replaceEnabledIds(Set<String> ids) {
+        return preferences.edit()
+                .putStringSet(PREF_ENABLED_IDS, new LinkedHashSet<>(ids))
+                .commit();
+    }
 }

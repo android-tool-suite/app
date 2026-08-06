@@ -92,9 +92,11 @@ gradle clean collectArtifacts
 
 输出仅包含 `artifacts/android-tool-suite-debug.apk`；每个外部插件仓库只管理自己的 `.atsplugin` 产物。
 
-`main` 分支 CI 成功后会更新名为 `debug` 的滚动预发布，提供 `android-tool-suite-debug.apk`、发布元数据和校验和；`v<versionName>` 标签仍使用 GitHub Environment 中的长期签名密钥生成 `android-tool-suite.apk` 正式 Release。两类发布完成后通过 `REGISTRY_DISPATCH_TOKEN` 事件通知插件索引重建。
+`main` 分支 CI 成功后会使用稳定专用签名更新名为 `debug` 的滚动预发布，提供 `android-tool-suite-debug.apk`、发布元数据和校验和；`v<versionName>` 标签仍使用 GitHub Environment 中的正式签名密钥生成 `android-tool-suite.apk` 正式 Release。两类发布完成后由 GitHub App 生成短时 installation token，发送事件通知插件索引重建。
 
-应用启动时最多每 24 小时读取一次签名更新索引。Release 应用始终从正式索引检查宿主更新，但插件源可显式切换为调试仓库；Debug 应用默认使用调试插件仓库且不尝试用正式签名 APK 覆盖自身。插件更新在索引、大小、SHA-256 与预加载校验成功后事务式替换。
+Release 使用包名 `com.androidtoolsuite.app`，Debug 使用 `com.androidtoolsuite.app.debug`，因此可以同时安装且数据完全隔离。应用启动时最多每 24 小时读取一次签名更新索引：Release 始终检查正式宿主，Debug 检查带稳定签名的滚动调试宿主；插件源仍可独立选择正式或调试仓库。插件更新在索引、大小、SHA-256 与预加载校验成功后事务式替换。
+
+插件管理页可以导出和导入 `.atsbackup` 迁移包，用于复制宿主布局、仓库选择、插件包和启用状态。迁移包不会包含 Phigros SessionToken、米游社会话、抽卡记录或其他插件业务数据；这些数据继续使用插件自己的导出功能或在目标应用重新登录。
 
 ## ADB 自动化调试
 
