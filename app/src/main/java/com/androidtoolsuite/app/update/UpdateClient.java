@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 
 public final class UpdateClient {
     private static final String PREFS_NAME = "update_client";
-    private static final String PREF_LAST_SUCCESS = "last_success";
+    private static final String PREF_LAST_SUCCESS_PREFIX = "last_success_";
     private static final long CHECK_INTERVAL_MS = 24L * 60L * 60L * 1000L;
     private static final int MAX_INDEX_BYTES = 2 * 1024 * 1024;
     private static final long MAX_ASSET_BYTES = 150L * 1024L * 1024L;
@@ -50,38 +50,21 @@ public final class UpdateClient {
         publicKey = decodePublicKey(BuildConfig.UPDATE_INDEX_PUBLIC_KEY);
     }
 
-    public void check(boolean force, CatalogCallback callback) {
+    public void check(String pluginChannel, boolean force, CatalogCallback callback) {
         executor.execute(() -> {
             try {
-                long lastSuccess = preferences.getLong(PREF_LAST_SUCCESS, 0L);
-                if (!force && System.currentTimeMillis() - lastSuccess < CHECK_INTERVAL_MS) {
-                    UpdateCatalog cached = readCachedCatalog();
-                    if (cached != null) {
-                        deliverCatalog(callback, cached, true);
-                        return;
-                    }
-                }
-
-                byte[] indexBytes = readUrl(BuildConfig.UPDATE_INDEX_URL, MAX_INDEX_BYTES);
-                byte[] signatureBytes = readUrl(BuildConfig.UPDATE_INDEX_URL + ".sig", 64 * 1024);
-                verifySignature(indexBytes, signatureBytes, publicKey);
-                UpdateCatalog catalog = UpdateCatalog.parse(
-                        new String(indexBytes, StandardCharsets.UTF_8)
+                String selectedChannel = normalizeChannel(pluginChannel);
+                CatalogResult release = loadCatalog(UpdateCatalog.CHANNEL_RELEASE, force);
+                CatalogResult plugins = UpdateCatalog.CHANNEL_RELEASE.equals(selectedChannel)
+                        ? release
+                        : loadCatalog(selectedChannel, force);
+                deliverCatalog(
+                        callback,
+                        UpdateCatalog.combine(release.catalog, plugins.catalog),
+                        release.cached || plugins.cached
                 );
-                ensureCacheDirectory();
-                writeAtomically(new File(cacheDirectory, "index-v1.json"), indexBytes);
-                writeAtomically(new File(cacheDirectory, "index-v1.json.sig"), signatureBytes);
-                preferences.edit()
-                        .putLong(PREF_LAST_SUCCESS, System.currentTimeMillis())
-                        .apply();
-                deliverCatalog(callback, catalog, false);
             } catch (IOException | GeneralSecurityException | JSONException error) {
-                UpdateCatalog cached = readCachedCatalog();
-                if (cached != null) {
-                    deliverCatalog(callback, cached, true);
-                } else {
-                    deliverError(callback, readableMessage(error));
-                }
+                deliverError(callback, readableMessage(error));
             }
         });
     }
@@ -163,20 +146,78 @@ public final class UpdateClient {
         }
     }
 
-    private UpdateCatalog readCachedCatalog() {
+    private CatalogResult loadCatalog(String channel, boolean force)
+            throws IOException, GeneralSecurityException, JSONException {
+        long lastSuccess = preferences.getLong(PREF_LAST_SUCCESS_PREFIX + channel, 0L);
+        if (!force && System.currentTimeMillis() - lastSuccess < CHECK_INTERVAL_MS) {
+            UpdateCatalog cached = readCachedCatalog(channel);
+            if (cached != null) {
+                return new CatalogResult(cached, true);
+            }
+        }
+
         try {
-            File indexFile = new File(cacheDirectory, "index-v1.json");
-            File signatureFile = new File(cacheDirectory, "index-v1.json.sig");
+            String indexUrl = indexUrl(channel);
+            byte[] indexBytes = readUrl(indexUrl, MAX_INDEX_BYTES);
+            byte[] signatureBytes = readUrl(indexUrl + ".sig", 64 * 1024);
+            verifySignature(indexBytes, signatureBytes, publicKey);
+            UpdateCatalog catalog = UpdateCatalog.parse(
+                    new String(indexBytes, StandardCharsets.UTF_8)
+            );
+            if (!channel.equals(catalog.channel)) {
+                throw new JSONException("更新索引通道不匹配");
+            }
+            ensureCacheDirectory();
+            writeAtomically(indexCacheFile(channel), indexBytes);
+            writeAtomically(signatureCacheFile(channel), signatureBytes);
+            preferences.edit()
+                    .putLong(PREF_LAST_SUCCESS_PREFIX + channel, System.currentTimeMillis())
+                    .apply();
+            return new CatalogResult(catalog, false);
+        } catch (IOException | GeneralSecurityException | JSONException error) {
+            UpdateCatalog cached = readCachedCatalog(channel);
+            if (cached != null) {
+                return new CatalogResult(cached, true);
+            }
+            throw error;
+        }
+    }
+
+    private UpdateCatalog readCachedCatalog(String channel) {
+        try {
+            File indexFile = indexCacheFile(channel);
+            File signatureFile = signatureCacheFile(channel);
             if (!indexFile.isFile() || !signatureFile.isFile()) {
                 return null;
             }
             byte[] indexBytes = readFile(indexFile, MAX_INDEX_BYTES);
             byte[] signatureBytes = readFile(signatureFile, 64 * 1024);
             verifySignature(indexBytes, signatureBytes, publicKey);
-            return UpdateCatalog.parse(new String(indexBytes, StandardCharsets.UTF_8));
+            UpdateCatalog catalog = UpdateCatalog.parse(new String(indexBytes, StandardCharsets.UTF_8));
+            return channel.equals(catalog.channel) ? catalog : null;
         } catch (IOException | GeneralSecurityException | JSONException ignored) {
             return null;
         }
+    }
+
+    private static String normalizeChannel(String channel) {
+        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
+                ? UpdateCatalog.CHANNEL_DEBUG
+                : UpdateCatalog.CHANNEL_RELEASE;
+    }
+
+    private static String indexUrl(String channel) {
+        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
+                ? BuildConfig.UPDATE_DEBUG_INDEX_URL
+                : BuildConfig.UPDATE_RELEASE_INDEX_URL;
+    }
+
+    private File indexCacheFile(String channel) {
+        return new File(cacheDirectory, channel + "-index-v1.json");
+    }
+
+    private File signatureCacheFile(String channel) {
+        return new File(cacheDirectory, channel + "-index-v1.json.sig");
     }
 
     private void downloadToFile(String url, long expectedSize, File outputFile) throws IOException {
@@ -297,6 +338,16 @@ public final class UpdateClient {
 
     private void deliverError(CatalogCallback callback, String message) {
         mainHandler.post(() -> callback.onError(message));
+    }
+
+    private static final class CatalogResult {
+        final UpdateCatalog catalog;
+        final boolean cached;
+
+        CatalogResult(UpdateCatalog catalog, boolean cached) {
+            this.catalog = catalog;
+            this.cached = cached;
+        }
     }
 
     public interface CatalogCallback {

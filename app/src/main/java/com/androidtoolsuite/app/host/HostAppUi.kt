@@ -967,8 +967,7 @@ private fun ImportedManagerCard(activity: MainActivity, descriptor: ImportedPlug
         }
         Text(descriptor.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
-            if (activity.isRepositoryVerifiedForUi(descriptor.id)) "来源：官方插件仓库 · 已校验"
-            else "来源：本地导入 · 未经仓库验证",
+            activity.repositoryVerificationLabelForUi(descriptor.id),
             style = MaterialTheme.typography.labelMedium,
             color = if (activity.isRepositoryVerifiedForUi(descriptor.id)) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1003,13 +1002,33 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
                 Column(Modifier.weight(1f)) {
                     Text("插件仓库", style = MaterialTheme.typography.headlineLarge)
                     Text(
-                        "仅收录 Android Tool Suite 组织维护的官方插件。",
+                        "${activity.pluginRepositoryChannelLabelForUi()} · 仅收录 Android Tool Suite 组织维护的插件。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
             Spacer(Modifier.height(12.dp))
+            Text("插件来源", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (activity.isDebugPluginRepositoryForUi()) {
+                    OutlinedButton(
+                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_RELEASE) },
+                    ) { Text("正式仓库") }
+                    Button(
+                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_DEBUG) },
+                    ) { Text("调试仓库") }
+                } else {
+                    Button(
+                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_RELEASE) },
+                    ) { Text("正式仓库") }
+                    OutlinedButton(
+                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_DEBUG) },
+                    ) { Text("调试仓库") }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = activity::refreshUpdatesForUi,
@@ -1020,6 +1039,10 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
                 OutlinedButton(onClick = activity::installAllPluginUpdatesForUi) {
                     Text("全部更新")
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = activity::importPlugin) {
+                Text("导入本地插件包")
             }
         }
         item {
@@ -1047,8 +1070,16 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
                 }
             }
         }
+        if (activity.isDebugPluginRepositoryForUi()) {
+            item {
+                Notice(
+                    "调试仓库展示 main 分支最新通过 CI 的构建，可能尚未经过正式发布验收；切回正式仓库可恢复正式版。",
+                    warning = true,
+                )
+            }
+        }
         item { Notice("仓库插件会执行在宿主进程中。索引签名与文件哈希只能确认发布来源，不能形成运行时沙箱。", warning = true) }
-        item { SectionHeader("官方插件", "${plugins.size} 个可用") }
+        item { SectionHeader(activity.pluginRepositoryChannelLabelForUi(), "${plugins.size} 个可用") }
         if (plugins.isEmpty()) {
             item { EmptyState("仓库暂不可用", "请检查网络后刷新；首次发布完成前仓库也可能为空。") }
         }
@@ -1076,7 +1107,8 @@ private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.
             Column(Modifier.weight(1f)) {
                 Text(release.title, style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "v${release.versionName} · ${release.author}",
+                    "v${release.versionName} · ${release.author}"
+                            + if (release.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${release.commitSha.take(7)}" else "",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )

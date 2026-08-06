@@ -11,18 +11,24 @@ import java.util.List;
 import java.util.Set;
 
 public final class UpdateCatalog {
+    public static final String CHANNEL_RELEASE = "release";
+    public static final String CHANNEL_DEBUG = "debug";
+
     public final int schemaVersion;
+    public final String channel;
     public final String generatedAt;
     public final AppRelease app;
     public final List<PluginRelease> plugins;
 
     private UpdateCatalog(
             int schemaVersion,
+            String channel,
             String generatedAt,
             AppRelease app,
             List<PluginRelease> plugins
     ) {
         this.schemaVersion = schemaVersion;
+        this.channel = channel;
         this.generatedAt = generatedAt;
         this.app = app;
         this.plugins = Collections.unmodifiableList(new ArrayList<>(plugins));
@@ -34,11 +40,15 @@ public final class UpdateCatalog {
         if (schemaVersion != 1) {
             throw new JSONException("不支持的更新索引版本：" + schemaVersion);
         }
+        String channel = clean(root.optString("channel", CHANNEL_RELEASE));
+        if (!CHANNEL_RELEASE.equals(channel) && !CHANNEL_DEBUG.equals(channel)) {
+            throw new JSONException("不支持的更新通道：" + channel);
+        }
 
         AppRelease app = null;
         JSONObject appJson = root.optJSONObject("app");
         if (appJson != null) {
-            app = AppRelease.fromJson(appJson);
+            app = AppRelease.fromJson(appJson, channel);
         }
 
         List<PluginRelease> plugins = new ArrayList<>();
@@ -47,15 +57,26 @@ public final class UpdateCatalog {
             for (int index = 0; index < pluginArray.length(); index++) {
                 JSONObject pluginJson = pluginArray.optJSONObject(index);
                 if (pluginJson != null) {
-                    plugins.add(PluginRelease.fromJson(pluginJson));
+                    plugins.add(PluginRelease.fromJson(pluginJson, channel));
                 }
             }
         }
         return new UpdateCatalog(
                 schemaVersion,
+                channel,
                 clean(root.optString("generatedAt")),
                 app,
                 plugins
+        );
+    }
+
+    public static UpdateCatalog combine(UpdateCatalog appCatalog, UpdateCatalog pluginCatalog) {
+        return new UpdateCatalog(
+                pluginCatalog.schemaVersion,
+                pluginCatalog.channel,
+                pluginCatalog.generatedAt,
+                appCatalog == null ? null : appCatalog.app,
+                pluginCatalog.plugins
         );
     }
 
@@ -71,15 +92,22 @@ public final class UpdateCatalog {
     public abstract static class ReleaseAsset {
         public final String versionName;
         public final int versionCode;
+        public final String channel;
+        public final String commitSha;
         public final String releaseUrl;
         public final String downloadUrl;
         public final long size;
         public final String sha256;
         public final String publishedAt;
 
-        ReleaseAsset(JSONObject json) throws JSONException {
+        ReleaseAsset(JSONObject json, String channel) throws JSONException {
             versionName = required(json, "versionName");
             versionCode = positive(json, "versionCode");
+            this.channel = channel;
+            commitSha = clean(json.optString("commitSha"));
+            if (CHANNEL_DEBUG.equals(channel) && !commitSha.matches("[0-9a-fA-F]{40}")) {
+                throw new JSONException("调试更新缺少有效的 commit SHA");
+            }
             releaseUrl = required(json, "releaseUrl");
             downloadUrl = required(json, "downloadUrl");
             size = json.optLong("size", -1L);
@@ -98,14 +126,14 @@ public final class UpdateCatalog {
         public final String packageName;
         public final int minSdk;
 
-        private AppRelease(JSONObject json) throws JSONException {
-            super(json);
+        private AppRelease(JSONObject json, String channel) throws JSONException {
+            super(json, channel);
             packageName = required(json, "packageName");
             minSdk = positive(json, "minSdk");
         }
 
-        static AppRelease fromJson(JSONObject json) throws JSONException {
-            return new AppRelease(json);
+        static AppRelease fromJson(JSONObject json, String channel) throws JSONException {
+            return new AppRelease(json, channel);
         }
     }
 
@@ -119,8 +147,8 @@ public final class UpdateCatalog {
         public final String sdkVersion;
         public final Set<String> dependencies;
 
-        private PluginRelease(JSONObject json) throws JSONException {
-            super(json);
+        private PluginRelease(JSONObject json, String channel) throws JSONException {
+            super(json, channel);
             id = required(json, "id");
             title = required(json, "title");
             description = clean(json.optString("description"));
@@ -131,8 +159,8 @@ public final class UpdateCatalog {
             dependencies = Collections.unmodifiableSet(readStrings(json.optJSONArray("dependencies")));
         }
 
-        static PluginRelease fromJson(JSONObject json) throws JSONException {
-            return new PluginRelease(json);
+        static PluginRelease fromJson(JSONObject json, String channel) throws JSONException {
+            return new PluginRelease(json, channel);
         }
     }
 

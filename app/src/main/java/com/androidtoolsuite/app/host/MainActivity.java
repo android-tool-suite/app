@@ -46,6 +46,7 @@ import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.ui.UiKit;
 import com.androidtoolsuite.app.update.UpdateCatalog;
 import com.androidtoolsuite.app.update.UpdateClient;
+import com.androidtoolsuite.app.update.PluginUpdatePolicy;
 
 import org.json.JSONException;
 
@@ -96,6 +97,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final String PREF_WIDGET_ORDER = "widget_order";
     private static final String PREF_FULL_WIDTH_WIDGETS = "full_width_widgets";
     private static final String PREF_WIDGET_SIZES = "widget_sizes";
+    private static final String PREF_PLUGIN_REPOSITORY_CHANNEL = "plugin_repository_channel";
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
     private final List<Button> bottomButtons = new ArrayList<>();
@@ -1030,8 +1032,47 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return updateCatalog == null ? Collections.emptyList() : updateCatalog.plugins;
     }
 
+    public String pluginRepositoryChannelForUi() {
+        String fallback = BuildConfig.DEBUG
+                ? UpdateCatalog.CHANNEL_DEBUG
+                : UpdateCatalog.CHANNEL_RELEASE;
+        String channel = uiPreferences.getString(PREF_PLUGIN_REPOSITORY_CHANNEL, fallback);
+        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
+                ? UpdateCatalog.CHANNEL_DEBUG
+                : UpdateCatalog.CHANNEL_RELEASE;
+    }
+
+    public String pluginRepositoryChannelLabelForUi() {
+        return UpdateCatalog.CHANNEL_DEBUG.equals(pluginRepositoryChannelForUi())
+                ? "调试仓库"
+                : "正式仓库";
+    }
+
+    public boolean isDebugPluginRepositoryForUi() {
+        return UpdateCatalog.CHANNEL_DEBUG.equals(pluginRepositoryChannelForUi());
+    }
+
+    public void selectPluginRepositoryChannelForUi(String channel) {
+        String selected = UpdateCatalog.CHANNEL_DEBUG.equals(channel)
+                ? UpdateCatalog.CHANNEL_DEBUG
+                : UpdateCatalog.CHANNEL_RELEASE;
+        if (selected.equals(pluginRepositoryChannelForUi())) {
+            return;
+        }
+        if (updateOperations.contains("__check__")) {
+            showToast("请等待当前仓库刷新完成");
+            return;
+        }
+        uiPreferences.edit().putString(PREF_PLUGIN_REPOSITORY_CHANNEL, selected).apply();
+        updateCatalog = null;
+        updateCatalogCached = false;
+        updateStatus = "正在切换到" + pluginRepositoryChannelLabelForUi() + "…";
+        invalidateComposeUi();
+        checkForUpdates(true);
+    }
+
     public UpdateCatalog.AppRelease appUpdateForUi() {
-        if (updateCatalog == null || updateCatalog.app == null) {
+        if (BuildConfig.DEBUG || updateCatalog == null || updateCatalog.app == null) {
             return null;
         }
         UpdateCatalog.AppRelease release = updateCatalog.app;
@@ -1051,7 +1092,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     public boolean isRepositoryPluginUpdateAvailableForUi(UpdateCatalog.PluginRelease release) {
         ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
-        return installed != null && release.versionCode > installed.versionCode;
+        return PluginUpdatePolicy.isUpdateAvailable(
+                release,
+                installed,
+                externalPluginStore.isRepositoryVerified(release.id),
+                externalPluginStore.repositoryChannel(release.id),
+                externalPluginStore.verifiedSha256(release.id)
+        );
     }
 
     public boolean isRepositoryPluginCompatibleForUi(UpdateCatalog.PluginRelease release) {
@@ -1064,6 +1111,15 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     public String repositorySourceForUi(String pluginId) {
         return externalPluginStore.sourceReleaseUrl(pluginId);
+    }
+
+    public String repositoryVerificationLabelForUi(String pluginId) {
+        if (!externalPluginStore.isRepositoryVerified(pluginId)) {
+            return "来源：本地导入 · 未经仓库验证";
+        }
+        return UpdateCatalog.CHANNEL_DEBUG.equals(externalPluginStore.repositoryChannel(pluginId))
+                ? "来源：调试插件仓库 · 已校验"
+                : "来源：正式插件仓库 · 已校验";
     }
 
     public void refreshUpdatesForUi() {
@@ -1117,7 +1173,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return;
         }
         ImportedPluginDescriptor installed = findImportedDescriptor(pluginId);
-        if (installed != null && installed.versionCode >= release.versionCode) {
+        if (installed != null && !isRepositoryPluginUpdateAvailableForUi(release)) {
             showToast("已安装最新版本");
             return;
         }
@@ -1138,6 +1194,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                             pluginImport.codeBytes,
                             release.releaseUrl,
                             release.sha256,
+                            release.channel,
                             true
                     );
                     installStarted = true;
@@ -1181,7 +1238,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
             if (release.minHostVersionCode <= BuildConfig.VERSION_CODE
                     && installed != null
-                    && release.versionCode > installed.versionCode) {
+                    && isRepositoryPluginUpdateAvailableForUi(release)) {
                 installRepositoryPluginForUi(release.id);
             }
         }
@@ -1192,9 +1249,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return;
         }
         updateOperations.add("__check__");
-        updateStatus = "正在检查更新…";
+        updateStatus = "正在检查" + pluginRepositoryChannelLabelForUi() + "更新…";
         invalidateComposeUi();
-        updateClient.check(force, new UpdateClient.CatalogCallback() {
+        updateClient.check(pluginRepositoryChannelForUi(), force, new UpdateClient.CatalogCallback() {
             @Override
             public void onSuccess(UpdateCatalog catalog, boolean cached) {
                 updateOperations.remove("__check__");
@@ -1532,7 +1589,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             boolean updating = findImportedDescriptor(descriptor.id) != null;
             boolean wasEnabled = externalPluginStore.isEnabled(descriptor.id);
             preflightPlugin(pluginImport);
-            externalPluginStore.installPlugin(descriptor, pluginImport.codeBytes, "", "", false);
+            externalPluginStore.installPlugin(descriptor, pluginImport.codeBytes, "", "", "", false);
             installStarted = true;
             reloadPlugins(descriptor.id);
             if (wasEnabled && findPlugin(descriptor.id) == null) {

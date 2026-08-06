@@ -91,8 +91,8 @@ build/outputs/atsplugin/<plugin-name>.atsplugin
 
 ## 官方仓库与更新
 
-官方插件仓库由 `android-tool-suite/plugin-registry` 的 GitHub Pages 提供。宿主只接受通过内置 ECDSA 公钥验证的索引，并在安装前核对 `.atsplugin` 的大小、SHA-256、插件 ID、版本、依赖和最低宿主版本。
+官方插件仓库由 `android-tool-suite/plugin-registry` 的 GitHub Pages 提供，分为正式与调试两个索引。正式索引读取 `v<versionName>` Release；调试索引自动发现组织内 `plugin-*` 仓库的滚动 `debug` 预发布。宿主只接受通过内置 ECDSA 公钥验证的索引，并在安装前核对 `.atsplugin` 的大小、SHA-256、插件 ID、版本、依赖和最低宿主版本。
 
-仓库安装和手动导入是两条独立信任路径：仓库安装会显示“官方插件仓库 · 已校验”，手动导入仍然允许，但显示“本地导入 · 未经仓库验证”。两种路径中的插件都与宿主同进程运行。
+正式仓库、调试仓库和手动导入是三条明确区分的来源路径。两个远程索引都验证签名，但调试构建可能尚未完成正式验收；手动导入仍显示“本地导入 · 未经仓库验证”。三种路径中的插件都与宿主同进程运行。
 
 单个 JSON 清单和不含 `plugin.apk` 的说明型插件包不受支持。

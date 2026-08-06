@@ -23,10 +23,12 @@ public final class ExternalPluginStore {
     private static final String PREF_PENDING_INSTALL_IDS = "pending_install_ids";
     private static final String PREF_SOURCE_PREFIX = "source_";
     private static final String PREF_SHA256_PREFIX = "sha256_";
+    private static final String PREF_CHANNEL_PREFIX = "channel_";
     private static final String PREF_VERIFIED_PREFIX = "verified_";
     private static final String PREF_ROLLBACK_JSON_PREFIX = "rollback_json_";
     private static final String PREF_ROLLBACK_SOURCE_PREFIX = "rollback_source_";
     private static final String PREF_ROLLBACK_SHA256_PREFIX = "rollback_sha256_";
+    private static final String PREF_ROLLBACK_CHANNEL_PREFIX = "rollback_channel_";
     private static final String PREF_ROLLBACK_VERIFIED_PREFIX = "rollback_verified_";
     private static final String MISSING_VALUE = "__ats_missing__";
 
@@ -90,6 +92,7 @@ public final class ExternalPluginStore {
                 .putStringSet(PREF_ENABLED_IDS, enabledIds)
                 .remove(PREF_SOURCE_PREFIX + pluginId)
                 .remove(PREF_SHA256_PREFIX + pluginId)
+                .remove(PREF_CHANNEL_PREFIX + pluginId)
                 .remove(PREF_VERIFIED_PREFIX + pluginId)
                 .commit();
         deleteRecursively(pluginDir(pluginId));
@@ -100,6 +103,7 @@ public final class ExternalPluginStore {
             byte[] bytes,
             String sourceReleaseUrl,
             String sha256,
+            String channel,
             boolean verified
     ) throws IOException, JSONException {
         String pluginId = descriptor.id;
@@ -128,6 +132,7 @@ public final class ExternalPluginStore {
         String oldJson = findRawDescriptor(pluginId);
         String oldSource = preferences.getString(PREF_SOURCE_PREFIX + pluginId, MISSING_VALUE);
         String oldSha256 = preferences.getString(PREF_SHA256_PREFIX + pluginId, MISSING_VALUE);
+        String oldChannel = preferences.getString(PREF_CHANNEL_PREFIX + pluginId, MISSING_VALUE);
         boolean oldVerified = preferences.getBoolean(PREF_VERIFIED_PREFIX + pluginId, false);
         if (codeFile.exists() && !codeFile.renameTo(backupFile)) {
             pendingFile.delete();
@@ -152,10 +157,12 @@ public final class ExternalPluginStore {
                 .putString(PREF_ROLLBACK_JSON_PREFIX + pluginId, oldJson == null ? MISSING_VALUE : oldJson)
                 .putString(PREF_ROLLBACK_SOURCE_PREFIX + pluginId, oldSource)
                 .putString(PREF_ROLLBACK_SHA256_PREFIX + pluginId, oldSha256)
+                .putString(PREF_ROLLBACK_CHANNEL_PREFIX + pluginId, oldChannel)
                 .putBoolean(PREF_ROLLBACK_VERIFIED_PREFIX + pluginId, oldVerified)
                 .putBoolean(PREF_VERIFIED_PREFIX + pluginId, verified);
         putOrRemove(editor, PREF_SOURCE_PREFIX + pluginId, sourceReleaseUrl);
         putOrRemove(editor, PREF_SHA256_PREFIX + pluginId, sha256);
+        putOrRemove(editor, PREF_CHANNEL_PREFIX + pluginId, channel);
         if (!editor.commit()) {
             codeFile.delete();
             if (backupFile.exists()) {
@@ -200,6 +207,11 @@ public final class ExternalPluginStore {
                 PREF_SHA256_PREFIX + pluginId,
                 preferences.getString(PREF_ROLLBACK_SHA256_PREFIX + pluginId, MISSING_VALUE)
         );
+        restoreString(
+                editor,
+                PREF_CHANNEL_PREFIX + pluginId,
+                preferences.getString(PREF_ROLLBACK_CHANNEL_PREFIX + pluginId, MISSING_VALUE)
+        );
         editor.putBoolean(
                 PREF_VERIFIED_PREFIX + pluginId,
                 preferences.getBoolean(PREF_ROLLBACK_VERIFIED_PREFIX + pluginId, false)
@@ -218,6 +230,14 @@ public final class ExternalPluginStore {
 
     public String verifiedSha256(String pluginId) {
         return preferences.getString(PREF_SHA256_PREFIX + pluginId, "");
+    }
+
+    public String repositoryChannel(String pluginId) {
+        String channel = preferences.getString(PREF_CHANNEL_PREFIX + pluginId, "");
+        if (channel.isEmpty() && isRepositoryVerified(pluginId)) {
+            return "release";
+        }
+        return channel;
     }
 
     public void savePluginCode(String pluginId, byte[] bytes) throws IOException {
@@ -333,6 +353,7 @@ public final class ExternalPluginStore {
                 .remove(PREF_ROLLBACK_JSON_PREFIX + pluginId)
                 .remove(PREF_ROLLBACK_SOURCE_PREFIX + pluginId)
                 .remove(PREF_ROLLBACK_SHA256_PREFIX + pluginId)
+                .remove(PREF_ROLLBACK_CHANNEL_PREFIX + pluginId)
                 .remove(PREF_ROLLBACK_VERIFIED_PREFIX + pluginId)
                 .commit();
     }
