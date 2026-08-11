@@ -92,7 +92,7 @@ gradle clean collectArtifacts
 
 输出仅包含 `artifacts/android-tool-suite-debug.apk`；每个外部插件仓库只管理自己的 `.atsplugin` 产物。
 
-`main` 分支 CI 成功后会使用稳定专用签名更新名为 `debug` 的滚动预发布，提供 `android-tool-suite-debug.apk`、发布元数据和校验和；`v<versionName>` 标签仍使用 GitHub Environment 中的正式签名密钥生成 `android-tool-suite.apk` 正式 Release。两类发布完成后由 GitHub App 生成短时 installation token，发送事件通知插件索引重建。
+`main` 分支 CI 成功后会使用稳定专用签名创建 `debug-<完整提交 SHA>` 历史快照，同时更新名为 `debug` 的滚动预发布，二者都提供 `android-tool-suite-debug.apk`、发布元数据和校验和；`v<versionName>` 标签仍使用 GitHub Environment 中的正式签名密钥生成 `android-tool-suite.apk` 正式 Release。两类发布完成后由 GitHub App 生成短时 installation token，发送事件通知发布目录重建。Pages 发布中心会展示宿主 APK 和插件，并允许选择正式或调试历史版本。
 
 Release 使用包名 `com.androidtoolsuite.app`，Debug 使用 `com.androidtoolsuite.app.debug`，因此可以同时安装且数据完全隔离。应用启动时最多每 24 小时读取一次签名更新索引：Release 始终检查正式宿主，Debug 检查带稳定签名的滚动调试宿主；插件源仍可独立选择正式或调试仓库。插件更新在索引、大小、SHA-256 与预加载校验成功后事务式替换。
 
