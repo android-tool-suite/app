@@ -27,6 +27,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# adb 的输出是 UTF-8，而 PowerShell 默认按系统代码页解码（中文 Windows 是 GBK）。
+# 不改的话，响应里任何中文都会被解坏：多字节序列错位时会把紧随其后的引号一起吃掉，
+# 于是 data="{...}" 里的 JSON 变成非法，ConvertFrom-Json 直接失败。
+# 插件标题几乎都是中文，所以 status / list-plugins / import-plugin 全都会挂。
+$previousOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+try {
+
 $packageName = 'com.androidtoolsuite.app.debug'
 $action = "$packageName.DEBUG_COMMAND"
 $component = "$packageName/com.androidtoolsuite.app.debug.DebugCommandReceiver"
@@ -172,4 +181,10 @@ if ($Command -eq 'export-plugin') {
     }
     Invoke-Adb @('pull', $response.data.devicePath, $exportTarget) | Out-Null
     Write-Output "Exported: $exportTarget"
+}
+
+}
+finally {
+    # 直接 .\adb-debug.ps1 在交互式会话里跑时，不要把改过的编码留给后续命令。
+    [Console]::OutputEncoding = $previousOutputEncoding
 }

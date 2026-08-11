@@ -8,10 +8,62 @@ def releaseStorePath = System.getenv("ATS_RELEASE_KEYSTORE_PATH")
 def releaseStorePassword = System.getenv("ATS_RELEASE_KEYSTORE_PASSWORD")
 def releaseKeyAlias = System.getenv("ATS_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("ATS_RELEASE_KEY_PASSWORD")
+
+// Debug 签名有两个来源，都不把密钥或口令放进仓库。
+//
+// 1. CI：四个 ATS_DEBUG_* 环境变量，优先级最高。
+// 2. 本地：local.properties（已被忽略）里的 atsDebugSigningProperties 指向一个仓库外的属性文件，
+//    由那个文件声明 storeFile / storePassword / keyAlias / keyPassword。
+//
+// 之所以指向文件而不是直接把四个值写进 local.properties：口令集中在密钥备份目录里一份，
+// 换机器只需改一行路径。文件名和 keystore 名都由使用者自己定，构建不假定任何命名。
+//
+// 两者都没配时回落到 Android 默认 debug keystore。那样仍然能构建、能装到干净设备上，
+// 只是无法覆盖安装 CI 版本，且装上后应用内更新会被系统安装器拒签
+// （launchAppInstaller 交给系统安装器，签名变更一律是 INSTALL_FAILED_UPDATE_INCOMPATIBLE）。
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+
 def debugStorePath = System.getenv("ATS_DEBUG_KEYSTORE_PATH")
 def debugStorePassword = System.getenv("ATS_DEBUG_KEYSTORE_PASSWORD")
 def debugKeyAlias = System.getenv("ATS_DEBUG_KEY_ALIAS")
 def debugKeyPassword = System.getenv("ATS_DEBUG_KEY_PASSWORD")
+def debugSigningSource = "ATS_DEBUG_* 环境变量"
+
+def debugSigningPointer = localProperties.getProperty("atsDebugSigningProperties")
+if (debugSigningPointer != null && !debugSigningPointer.isBlank()
+        && [debugStorePath, debugStorePassword, debugKeyAlias, debugKeyPassword].every { it == null || it.isBlank() }) {
+    def signingProperties = new File(debugSigningPointer.trim())
+    if (!signingProperties.isFile()) {
+        throw new GradleException(
+                "local.properties 的 atsDebugSigningProperties 指向的文件不存在：${signingProperties}")
+    }
+    def loaded = new Properties()
+    signingProperties.withInputStream { loaded.load(it) }
+    def declaredStore = loaded.getProperty("storeFile")
+    if (declaredStore == null || declaredStore.isBlank()) {
+        throw new GradleException("${signingProperties} 缺少 storeFile")
+    }
+    // 相对路径按属性文件所在目录解析，这样整个密钥目录可以整体搬走。
+    def keystore = new File(declaredStore.trim())
+    if (!keystore.isAbsolute()) {
+        keystore = new File(signingProperties.parentFile, declaredStore.trim())
+    }
+    if (!keystore.isFile()) {
+        throw new GradleException("${signingProperties} 的 storeFile 指向的密钥库不存在：${keystore}")
+    }
+    debugStorePath = keystore.absolutePath
+    debugStorePassword = loaded.getProperty("storePassword")
+    debugKeyAlias = loaded.getProperty("keyAlias")
+    debugKeyPassword = loaded.getProperty("keyPassword")
+    if ([debugStorePassword, debugKeyAlias, debugKeyPassword].any { it == null || it.isBlank() }) {
+        throw new GradleException("${signingProperties} 缺少 storePassword / keyAlias / keyPassword 中的某一项")
+    }
+    debugSigningSource = "local.properties 的 atsDebugSigningProperties"
+}
 def hasReleaseSigning = [
         releaseStorePath,
         releaseStorePassword,
@@ -32,6 +84,16 @@ def hasAnyDebugSigning = [
 ].any { it != null && !it.isBlank() }
 if (hasAnyDebugSigning && !hasDebugSigning) {
     throw new GradleException("Debug signing configuration is incomplete")
+}
+// 静默回落到 Android 默认 debug keystore 是这次踩到的坑：包能装到干净设备上，
+// 但覆盖不了 CI 版本，且装上之后应用内更新会被系统安装器拒绝。所以说清楚用的是哪把 key。
+if (hasDebugSigning) {
+    logger.lifecycle("Debug 签名：${debugSigningSource}")
+} else {
+    logger.warn("Debug 签名：回落到 Android 默认 debug keystore。"
+            + "构建和安装到干净设备都不受影响，但这个包无法覆盖安装 CI 构建的版本，"
+            + "装上之后应用内更新也会被系统安装器拒绝。"
+            + "需要与 CI 一致的签名时，见 README「Debug 签名」一节配置 atsDebugSigningProperties。")
 }
 def buildCommitSha = providers.gradleProperty("atsCommitSha").orElse("").get().toLowerCase()
 if (!buildCommitSha.isBlank() && !(buildCommitSha ==~ /[0-9a-f]{40}/)) {

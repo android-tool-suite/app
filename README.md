@@ -86,6 +86,51 @@ gradle -p ..\plugins\phigros-advisor `
 gradle :app:assembleDebug
 ```
 
+### Debug 签名
+
+不配置也能构建：Gradle 回落到 Android 默认 debug keystore，装到干净设备上正常工作。构建时会打印当前用的是哪一路签名。
+
+需要注意默认 keystore 的两个后果：
+
+- 无法覆盖安装 CI 构建的版本，`adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
+- 一旦装上，应用内更新会被系统安装器以同样原因拒绝。更新走 `ACTION_VIEW` 交给系统安装器，签名变更一律拒装，所以那台设备的更新通道会失效，需要卸载重装才能回到 CI 版本。
+
+如果只是本地开发自测，默认 keystore 足够；只要不与 CI 包混装就不会遇到上面的问题。想让自己的连续构建能互相覆盖，用 `keytool` 生成一把固定的 keystore 长期使用即可，不需要项目的那把。
+
+#### 与 CI 使用同一签名
+
+需要与 CI 完全一致的签名（例如要覆盖安装 CI 版本、或要验证应用内更新链路），得拿到项目专用的 debug keystore；它只存在于 CI secret `ATS_DEBUG_KEYSTORE_B64` 与维护者的密钥备份中，仓库里没有。
+
+拿到后在**仓库外**准备一个属性文件，例如与 keystore 放在同一目录：
+
+```properties
+# 相对路径按本文件所在目录解析，绝对路径也可以
+storeFile=android-tool-suite-debug.p12
+storePassword=<口令>
+keyAlias=<别名>
+keyPassword=<口令>
+```
+
+再在 `app/local.properties`（已被 `.gitignore` 忽略）里指向它：
+
+```properties
+atsDebugSigningProperties=<该属性文件的绝对路径>
+```
+
+密钥、口令和本机路径都留在仓库外；仓库里只有 `local.properties` 这一行，且不会被提交。文件名与 keystore 名由你自己定，构建不假定命名。
+
+CI 用 `ATS_DEBUG_KEYSTORE_PATH` / `ATS_DEBUG_KEYSTORE_PASSWORD` / `ATS_DEBUG_KEY_ALIAS` / `ATS_DEBUG_KEY_PASSWORD` 四个环境变量，优先级高于 `atsDebugSigningProperties`。
+
+核对产物指纹：
+
+```powershell
+$buildTools = Get-ChildItem "$env:ANDROID_HOME\build-tools" -Directory |
+  Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+& (Join-Path $buildTools.FullName 'apksigner.bat') verify --print-certs artifacts\android-tool-suite-debug.apk
+```
+
+项目 debug 证书是 `CN=Android Tool Suite Debug, O=android-tool-suite`。看到 `CN=Android Debug` 就说明用的是默认 keystore。
+
 收集主体 APK：
 
 ```powershell
