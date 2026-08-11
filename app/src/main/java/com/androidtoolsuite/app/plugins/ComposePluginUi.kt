@@ -30,7 +30,7 @@ import com.androidtoolsuite.app.plugins.builtin.shizuku.ShizukuPlugin
 import com.androidtoolsuite.app.ui.Notice
 import com.androidtoolsuite.app.ui.SectionHeader
 import com.androidtoolsuite.app.ui.SuiteCard
-import com.androidtoolsuite.app.ui.SuiteColors
+import com.androidtoolsuite.app.ui.SuiteSemantic
 import com.androidtoolsuite.app.ui.composePluginView
 import kotlinx.coroutines.delay
 
@@ -59,7 +59,7 @@ private fun ShizukuContent(host: PluginHost) {
     val state = rememberShizukuUiState(host)
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionHeader("Shizuku 授权", "为需要系统能力的插件建立受控连接")
-        Notice("Shizuku 授权由宿主统一持有。插件与宿主运行在同一进程，请只安装可信插件。")
+        Notice("授权由应用统一管理，所有插件共享。")
         ShizukuStatusCard(state)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
@@ -115,7 +115,7 @@ private fun ShizukuStatusCard(state: ShizukuUiState) {
             Icon(
                 if (connected) Icons.Rounded.CheckCircle else Icons.Rounded.CloudOff,
                 contentDescription = null,
-                tint = if (connected) SuiteColors.Success else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (connected) SuiteSemantic.current.success else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Column {
                 Text(title, style = MaterialTheme.typography.titleLarge)

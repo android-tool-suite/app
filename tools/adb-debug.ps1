@@ -92,11 +92,11 @@ $exportInboxName = $null
 
 if ($Command -eq 'navigate') {
     Require-Value 'Destination' $Destination
-    if ($Destination -notin @('dashboard', 'plugins', 'manager') -and -not $Destination.StartsWith('plugin:')) {
-        throw '-Destination 必须是 dashboard、plugins、manager 或 plugin:<id>'
+    if ($Destination -notin @('dashboard', 'plugins', 'manager', 'store', 'settings', 'about') -and -not $Destination.StartsWith('plugin:')) {
+        throw '-Destination 必须是 dashboard、plugins、manager、store、settings、about 或 plugin:<id>'
     }
     Invoke-Adb @(
-        'shell', 'am', 'start', '-W',
+        'shell', 'am', 'start', '-S', '-W',
         '-n', "$packageName/$mainActivity",
         '--es', 'debug_destination', $Destination
     )

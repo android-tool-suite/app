@@ -41,7 +41,7 @@ public final class ShizukuPlugin implements ToolPlugin {
 
     @Override
     public String description() {
-        return "宿主内置能力，为插件提供 Shizuku 授权和 UserService 连接。";
+        return "应用内置能力，为插件提供 Shizuku 授权和 UserService 连接。";
     }
 
     @Override

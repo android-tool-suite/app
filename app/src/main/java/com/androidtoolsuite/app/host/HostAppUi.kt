@@ -1,11 +1,19 @@
+@file:OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
+
 package com.androidtoolsuite.app.host
 
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -16,49 +24,72 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RemoveCircle
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,6 +97,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
@@ -75,26 +107,42 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.viewinterop.AndroidView
 import com.androidtoolsuite.app.plugin.api.HomeWidget
 import com.androidtoolsuite.app.plugin.api.ToolPlugin
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor
 import com.androidtoolsuite.app.ui.EmptyState
+import com.androidtoolsuite.app.ui.ErrorState
 import com.androidtoolsuite.app.ui.Notice
 import com.androidtoolsuite.app.ui.SectionHeader
 import com.androidtoolsuite.app.ui.SuiteCard
+import com.androidtoolsuite.app.ui.SuiteSettingsGroup
+import com.androidtoolsuite.app.ui.SuiteSettingsRow
+import com.androidtoolsuite.app.ui.SuiteSettingsSwitchRow
+import com.androidtoolsuite.app.ui.SuiteShapes
+import com.androidtoolsuite.app.ui.SuiteSpacing
 import com.androidtoolsuite.app.ui.SuiteTheme
+import com.androidtoolsuite.app.ui.SuiteThemePreferences
+import com.androidtoolsuite.app.ui.SuiteTheming
+import com.androidtoolsuite.app.ui.SuiteTopBar
 import com.androidtoolsuite.app.update.UpdateCatalog
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,6 +153,9 @@ import kotlinx.coroutines.flow.collect
 private const val DASHBOARD = 0
 private const val PLUGINS = 1
 private const val MANAGER = 2
+private const val STORE = 3
+private const val SETTINGS = 4
+private const val ABOUT = 5
 
 /** State bridge for Java-host callbacks. MutableState is observed by Compose directly. */
 class HostUiState {
@@ -148,7 +199,33 @@ private fun rememberPageListState(activity: MainActivity, page: String): LazyLis
 fun createHostAppView(activity: MainActivity): View {
     activity.enableEdgeToEdge()
     return ComposeView(activity).apply {
-        setContent { SuiteTheme { HostApp(activity) } }
+        setContent {
+            SuiteTheme(
+                themePreference = SuiteThemePreferences.themePreference,
+                colorPreference = SuiteThemePreferences.colorPreference,
+            ) {
+                SyncSystemBarsWithTheme(activity)
+                HostApp(activity)
+            }
+        }
+    }
+}
+
+/**
+ * 让状态栏图标的明暗跟随应用实际渲染出的主题。
+ *
+ * 窗口主题是 `Theme.Material3.DayNight`，它只看系统的深色模式；而应用允许用户把主题钉死成
+ * 浅色或深色。两者不一致时（比如系统浅色、应用选深色），状态栏图标会是深色叠在深色背景上，
+ * 基本看不见。这里从已解析的主题里取深浅状态，直接写回窗口。
+ */
+@Composable
+private fun SyncSystemBarsWithTheme(activity: MainActivity) {
+    val dark = SuiteTheming.isDark
+    SideEffect {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        controller.isAppearanceLightStatusBars = !dark
+        // 三键导航时系统会把按键画在应用的导航栏区域上，同样需要跟随明暗。
+        controller.isAppearanceLightNavigationBars = !dark
     }
 }
 
@@ -158,13 +235,24 @@ private val destinations = listOf(
     Destination(DASHBOARD, "主页", Icons.Rounded.Home),
     Destination(PLUGINS, "工具", Icons.Rounded.Apps),
     Destination(MANAGER, "管理", Icons.Rounded.Tune),
+    Destination(STORE, "仓库", Icons.Rounded.Storefront),
+    Destination(SETTINGS, "设置", Icons.Rounded.Settings),
 )
 
 @Composable
 private fun HostApp(activity: MainActivity) {
     val refreshVersion = activity.uiStateForUi().revision
-    BackHandler(enabled = activity.canHandleBackForUi()) {
-        activity.handleBackForUi()
+    val selectedSection = activity.currentSectionForUi()
+    val selectedPlugin = activity.selectedPluginForUi()
+    val snackbarHostState = remember { SnackbarHostState() }
+    BackHandler(enabled = activity.canHandleBackForUi()) { activity.handleBackForUi() }
+    LaunchedEffect(refreshVersion) {
+        val snackbarMessage = activity.consumeSnackbarMessageForUi()
+        val snackbarAction = activity.consumeSnackbarActionForUi()
+        if (!snackbarMessage.isNullOrBlank()) {
+            val result = snackbarHostState.showSnackbar(snackbarMessage, snackbarAction)
+            if (result == SnackbarResult.ActionPerformed) activity.retrySnackbarActionForUi()
+        }
     }
 
     // Keep the Java host's invalidation state observable to Compose without replacing the
@@ -175,19 +263,64 @@ private fun HostApp(activity: MainActivity) {
             .semantics { stateDescription = "host-refresh-$refreshVersion" },
     ) {
         val expanded = maxWidth >= 840.dp
-        val selectedSection = activity.currentSectionForUi()
-        if (expanded) {
-            Row(Modifier.fillMaxSize()) {
-                AppNavigationRail(activity, selectedSection)
-                AppContent(activity, refreshVersion, Modifier.weight(1f))
+        val showMainNavigation = selectedPlugin == null && selectedSection in DASHBOARD..SETTINGS
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = { AppTopBar(activity, selectedSection, selectedPlugin) },
+            bottomBar = { if (!expanded && showMainNavigation) AppNavigationBar(activity, selectedSection) },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { padding ->
+            Row(Modifier.fillMaxSize().padding(padding)) {
+                if (expanded && showMainNavigation) AppNavigationRail(activity, selectedSection)
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                    AppContent(activity, refreshVersion, Modifier.fillMaxSize().widthIn(max = 720.dp))
+                }
             }
-        } else {
-            Scaffold(
-                modifier = Modifier.fillMaxSize(),
-                containerColor = MaterialTheme.colorScheme.background,
-                bottomBar = { AppNavigationBar(activity, selectedSection) },
-            ) { padding -> AppContent(activity, refreshVersion, Modifier.padding(padding)) }
         }
+    }
+    UpdatePrompt(activity)
+    ComposeDialog(activity)
+}
+
+@Composable
+private fun AppTopBar(activity: MainActivity, section: Int, plugin: ToolPlugin?) {
+    var menuExpanded by remember(plugin?.id(), section) { mutableStateOf(false) }
+    when {
+        plugin != null -> SuiteTopBar(
+            title = plugin.title(),
+            onBack = activity::closePluginForUi,
+            actions = {
+                IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("在管理中设置") },
+                        onClick = { menuExpanded = false; activity.navigateForUi(MANAGER) },
+                    )
+                    if (plugin.removable()) {
+                        DropdownMenuItem(
+                            text = { Text("删除插件") },
+                            leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                            onClick = { menuExpanded = false; activity.requestDeletePluginForUi(plugin.id()) },
+                        )
+                    }
+                }
+            },
+        )
+        // 关于是设置的子页，所以有返回箭头；设置本身是底栏分区，没有。
+        section == ABOUT -> SuiteTopBar("关于", onBack = activity::handleBackForUi)
+        else -> SuiteTopBar(
+            title = if (section == DASHBOARD) "安卓工具合集" else destinations.firstOrNull { it.section == section }?.label ?: "安卓工具合集",
+            actions = {
+                // 刷新是整屏级别的动作，放顶栏而不是塞进列表里的某个分段标题。
+                if (section == STORE) {
+                    IconButton(
+                        onClick = activity::refreshUpdatesForUi,
+                        enabled = !activity.isUpdateOperationRunningForUi("__check__"),
+                    ) { Icon(Icons.Rounded.Refresh, "刷新仓库") }
+                }
+            },
+        )
     }
 }
 
@@ -198,7 +331,15 @@ private fun AppNavigationBar(activity: MainActivity, selectedSection: Int) {
             NavigationBarItem(
                 selected = selectedSection == destination.section,
                 onClick = { activity.navigateForUi(destination.section) },
-                icon = { Icon(destination.icon, contentDescription = null) },
+                icon = {
+                    BadgedBox(
+                        badge = {
+                            if (destination.section == STORE && activity.availableUpdateCountForUi() > 0) {
+                                Badge { Text(activity.availableUpdateCountForUi().toString()) }
+                            }
+                        },
+                    ) { Icon(destination.icon, contentDescription = destination.label) }
+                },
                 label = { Text(destination.label) },
             )
         }
@@ -210,11 +351,6 @@ private fun AppNavigationRail(activity: MainActivity, selectedSection: Int) {
     NavigationRail(
         modifier = Modifier.fillMaxHeight(),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        header = {
-            Box(Modifier.padding(vertical = 20.dp).size(48.dp), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            }
-        },
     ) {
         destinations.forEach { destination ->
             NavigationRailItem(
@@ -230,11 +366,50 @@ private fun AppNavigationRail(activity: MainActivity, selectedSection: Int) {
 @Composable
 private fun AppContent(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val selected = activity.selectedPluginForUi()
+    val section = activity.currentSectionForUi()
     when {
+        // 插件详情和关于都是压在分区之上的独立页面，不参与左右滑动。
         selected != null -> PluginDetailScreen(activity, selected, refreshVersion, modifier.fillMaxSize())
-        activity.currentSectionForUi() == DASHBOARD -> DashboardScreen(activity, refreshVersion, modifier.fillMaxSize())
-        activity.currentSectionForUi() == MANAGER -> ManagerScreen(activity, refreshVersion, modifier.fillMaxSize())
-        else -> PluginListScreen(activity, refreshVersion, modifier.fillMaxSize())
+        section == ABOUT -> AboutScreen(activity, refreshVersion, modifier.fillMaxSize())
+        else -> SectionPager(activity, section, refreshVersion, modifier.fillMaxSize())
+    }
+}
+
+/**
+ * 五个一级分区的左右滑动容器。
+ *
+ * 页码与宿主的 `currentSection` 双向同步：底栏点击走 [MainActivity.navigateForUi]，由下面第一个
+ * effect 把页面滑过去；手指滑动则由第二个 effect 回写分区。两边都先比对当前值再动作，避免互相触发。
+ */
+@Composable
+private fun SectionPager(activity: MainActivity, section: Int, refreshVersion: Int, modifier: Modifier = Modifier) {
+    val pageCount = destinations.size
+    val initialPage = section.coerceIn(0, pageCount - 1)
+    val pagerState = rememberPagerState(initialPage = initialPage) { pageCount }
+    LaunchedEffect(section) {
+        val target = section.coerceIn(0, pageCount - 1)
+        if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            if (page != activity.currentSectionForUi()) activity.navigateForUi(page)
+        }
+    }
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier,
+        // 主页小部件是插件提供的 AndroidView，越界回弹时容易把它们一起拖出可视区，关掉更稳。
+        pageSpacing = 0.dp,
+        beyondViewportPageCount = 0,
+        key = { it },
+    ) { page ->
+        when (page) {
+            DASHBOARD -> DashboardScreen(activity, refreshVersion, Modifier.fillMaxSize())
+            PLUGINS -> PluginListScreen(activity, refreshVersion, Modifier.fillMaxSize())
+            MANAGER -> ManagerScreen(activity, refreshVersion, Modifier.fillMaxSize())
+            STORE -> PluginRepositoryScreen(activity, refreshVersion, Modifier.fillMaxSize())
+            else -> SettingsScreen(activity, refreshVersion, Modifier.fillMaxSize())
+        }
     }
 }
 
@@ -242,8 +417,12 @@ private fun AppContent(activity: MainActivity, refreshVersion: Int, modifier: Mo
 private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val plugins = activity.pluginsForUi()
     val widgets = activity.widgetsForUi()
-    val externalCount = plugins.count { it.removable() }
+    val hidden = activity.allWidgetsForUi().filterNot(activity::isWidgetVisibleForUi)
+    var addSheetVisible by remember { mutableStateOf(false) }
     val listState = rememberPageListState(activity, "dashboard")
+    if (addSheetVisible) {
+        AddWidgetSheet(activity, hidden) { addSheetVisible = false }
+    }
 
     LazyColumn(
         state = listState,
@@ -259,7 +438,7 @@ private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifie
             )
             Text("工具台", style = MaterialTheme.typography.headlineLarge)
             Text(
-                "集中查看运行状态，并快速进入常用工具。",
+                "集中查看运行状态，快速进入常用工具。",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -271,16 +450,33 @@ private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifie
                     Column {
                         Text("${plugins.size} 个工具已就绪", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "${plugins.size - externalCount} 个内置 · $externalCount 个外部 · ${widgets.size} 个主页组件",
+                            "${widgets.size} 个主页组件",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
                 }
             }
         }
-        item { SectionHeader("主页小部件", "拖动时虚影预览落点；长按后松开可调整或隐藏") }
+        item {
+            // 隐藏项的入口跟着「有没有隐藏项」出现在分段标题右侧，而不是常驻一个空位。
+            SectionHeader("主页小部件", "长按调整大小或移除 · 长按拖动排序") {
+                if (hidden.isNotEmpty()) {
+                    TextButton(onClick = { addSheetVisible = true }) { Text("添加 ${hidden.size}") }
+                }
+            }
+        }
         if (widgets.isEmpty()) {
-            item { EmptyState("主页很清爽", "可在插件管理的界面管理中重新显示小部件。") }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
+                    if (hidden.isEmpty()) {
+                        EmptyState("主页很清爽", "在管理中开启插件的主页显示。")
+                        OutlinedButton(onClick = { activity.navigateForUi(MANAGER) }) { Text("前往管理") }
+                    } else {
+                        EmptyState("主页很清爽", "${hidden.size} 个小部件被移除了，可以重新添加回来。")
+                        OutlinedButton(onClick = { addSheetVisible = true }) { Text("添加小部件") }
+                    }
+                }
+            }
         } else {
             item {
                 WidgetGrid(widgets, activity, Modifier.fillMaxWidth())
@@ -402,6 +598,18 @@ private fun WidgetGrid(widgets: List<HomeWidget>, activity: MainActivity, modifi
                                 if (target !== widget) activity.moveWidgetToUi(widget, target)
                             }
                         },
+                        onMoveEarlier = {
+                            widgets.getOrNull(index - 1)?.let { activity.moveWidgetToUi(widget, it) }
+                        },
+                        onMoveLater = {
+                            widgets.getOrNull(index + 1)?.let { activity.moveWidgetToUi(widget, it) }
+                        },
+                        onMoveFirst = {
+                            widgets.firstOrNull()?.takeIf { it !== widget }?.let { activity.moveWidgetToUi(widget, it) }
+                        },
+                        onMoveLast = {
+                            widgets.lastOrNull()?.takeIf { it !== widget }?.let { activity.moveWidgetToUi(widget, it) }
+                        },
                     )
                 }
             }
@@ -415,8 +623,8 @@ private fun WidgetGrid(widgets: List<HomeWidget>, activity: MainActivity, modifi
         val unitWidth = ((gridWidth - gapPx * 3).coerceAtLeast(0)) / 4f
         val placeables = arrayOfNulls<androidx.compose.ui.layout.Placeable>(measurables.size)
         val positions = Array(measurables.size) { IntArray(2) }
-        val logicalIndices = widgets.indices.toMutableList()
         val placeholderIndex = widgets.size
+        val logicalIndices = widgets.indices.toMutableList()
         if (draggedIndex >= 0) {
             logicalIndices.remove(draggedIndex)
             logicalIndices.add(targetIndex.coerceAtMost(logicalIndices.size), -1)
@@ -434,24 +642,31 @@ private fun WidgetGrid(widgets: List<HomeWidget>, activity: MainActivity, modifi
             rowHeight = 0
         }
 
-        logicalIndices.forEach { logicalIndex ->
-            val isPlaceholder = logicalIndex < 0
-            val widgetIndex = if (isPlaceholder) draggedIndex else logicalIndex
-            val measurableIndex = if (isPlaceholder) placeholderIndex else widgetIndex
-            val widget = widgets[widgetIndex]
-            val widthUnits = activity.widgetWidthUnitsForUi(widget).coerceIn(1, 4)
-            if (usedUnits > 0 && usedUnits + widthUnits > 4) finishRow()
-
-            val itemWidth = (unitWidth * widthUnits + gapPx * (widthUnits - 1)).roundToInt()
-            val heightUnits = activity.widgetHeightUnitsForUi(widget).coerceAtLeast(1)
+        // 摆一格：算出它落在当前行还是下一行，量好、记下位置。
+        fun placeCell(measurableIndex: Int, widthUnits: Int, heightUnits: Int) {
+            val units = widthUnits.coerceIn(1, 4)
+            if (usedUnits > 0 && usedUnits + units > 4) finishRow()
+            val itemWidth = (unitWidth * units + gapPx * (units - 1)).roundToInt()
             val itemHeight = (72.dp * heightUnits + gap * (heightUnits - 1)).roundToPx()
             val placeable = measurables[measurableIndex].measure(Constraints.fixed(itemWidth, itemHeight))
             placeables[measurableIndex] = placeable
             positions[measurableIndex][0] = ((unitWidth + gapPx) * usedUnits).roundToInt()
             rowMeasurableIndices += measurableIndex
-            usedUnits += widthUnits
+            usedUnits += units
             rowHeight = maxOf(rowHeight, placeable.height)
             if (usedUnits == 4) finishRow()
+        }
+
+        logicalIndices.forEach { logicalIndex ->
+            val isPlaceholder = logicalIndex < 0
+            val widgetIndex = if (isPlaceholder) draggedIndex else logicalIndex
+            val measurableIndex = if (isPlaceholder) placeholderIndex else widgetIndex
+            val widget = widgets[widgetIndex]
+            placeCell(
+                measurableIndex = measurableIndex,
+                widthUnits = activity.widgetWidthUnitsForUi(widget),
+                heightUnits = activity.widgetHeightUnitsForUi(widget).coerceAtLeast(1),
+            )
         }
         if (rowMeasurableIndices.isNotEmpty()) finishRow()
 
@@ -505,15 +720,19 @@ private fun WidgetTile(
     dragState: DropPreviewState,
     sourceIndex: Int,
     onDrop: (Int) -> Unit,
+    onMoveEarlier: () -> Unit,
+    onMoveLater: () -> Unit,
+    onMoveFirst: () -> Unit,
+    onMoveLast: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(24.dp)
+    val shape = SuiteShapes.Card
     var menuExpanded by remember(widget.pluginId(), widget.id()) { mutableStateOf(false) }
     val width = activity.widgetWidthUnitsForUi(widget)
     val height = activity.widgetHeightUnitsForUi(widget)
     Box(
         modifier = modifier
             .dropPreviewReorder(
-                key = widget.pluginId() + ":" + widget.id(),
+                key = widgetKey(widget),
                 onClick = onClick,
                 onLongPress = { menuExpanded = true },
                 dragState = dragState,
@@ -521,13 +740,27 @@ private fun WidgetTile(
                 onDrop = onDrop,
                 allowHorizontalDrag = true,
             )
+            .semantics {
+                customActions = listOf(
+                    CustomAccessibilityAction("上移") { onMoveEarlier(); true },
+                    CustomAccessibilityAction("下移") { onMoveLater(); true },
+                    CustomAccessibilityAction("移到开头") { onMoveFirst(); true },
+                    CustomAccessibilityAction("移到末尾") { onMoveLast(); true },
+                    CustomAccessibilityAction("从主页移除") {
+                        activity.setWidgetVisibleForUi(widget, false)
+                        true
+                    },
+                )
+            }
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         PluginAndroidView(Modifier.fillMaxSize()) { widget.createView(activity, activity) }
+        // 小部件里的 View 会把触摸事件吃掉，外层的点按、长按和拖动就都收不到了。
+        // 这层透明覆盖只拦事件不消费，手势判定仍然由上面的 dropPreviewReorder 做。
         Box(
             Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .pointerInput(widget.pluginId(), widget.id()) {
                     awaitPointerEventScope {
                         while (true) awaitPointerEvent()
@@ -536,22 +769,20 @@ private fun WidgetTile(
         )
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
             widget.supportedSizes().forEach { size ->
+                val selected = width == size.widthUnits && height == size.heightUnits
                 DropdownMenuItem(
                     text = { Text("尺寸 ${size.widthUnits}×${size.heightUnits}") },
-                    leadingIcon = {
-                        if (width == size.widthUnits && height == size.heightUnits) {
-                            Icon(Icons.Rounded.Check, null)
-                        }
-                    },
+                    leadingIcon = { if (selected) Icon(Icons.Rounded.Check, "当前尺寸") },
                     onClick = {
                         activity.setWidgetSizeForUi(widget, size.widthUnits, size.heightUnits)
                         menuExpanded = false
                     },
                 )
             }
+            HorizontalDivider()
             DropdownMenuItem(
-                text = { Text("不在主页显示") },
-                leadingIcon = { Icon(Icons.Rounded.VisibilityOff, null) },
+                text = { Text("从主页移除") },
+                leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
                 onClick = {
                     activity.setWidgetVisibleForUi(widget, false)
                     menuExpanded = false
@@ -561,6 +792,43 @@ private fun WidgetTile(
     }
 }
 
+@Composable
+private fun AddWidgetSheet(activity: MainActivity, hidden: List<HomeWidget>, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Text("添加小部件", modifier = Modifier.padding(horizontal = SuiteSpacing.xl), style = MaterialTheme.typography.titleLarge)
+        if (hidden.isEmpty()) {
+            // 「全都显示了」和「根本没有小部件可用」是两种情况，出口也不一样。
+            val nothingAvailable = activity.allWidgetsForUi().isEmpty()
+            Text(
+                if (nothingAvailable) "已启用的插件都没有提供主页小部件，可在管理中启用更多插件。"
+                else "所有小部件都已显示在主页。",
+                modifier = Modifier.padding(SuiteSpacing.xl),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            hidden.forEach { widget ->
+                SuiteSettingsRow(
+                    widget.title(),
+                    supportingText = "${widget.supportedSizes().size} 种尺寸",
+                    leadingIcon = Icons.Rounded.Add,
+                    onClick = {
+                        activity.setWidgetVisibleForUi(widget, true)
+                        onDismiss()
+                    },
+                )
+            }
+        }
+        Spacer(Modifier.height(SuiteSpacing.xxl))
+    }
+}
+
+/**
+ * 长按拿起、拖动排序、点击打开——三件事共用一次手势判定。
+ *
+ * 不用 `combinedClickable` 叠 `detectDragGesturesAfterLongPress`：那样长按会先触发点击语义，
+ * 再由拖动接手，松手时容易同时算成「点开插件」和「排序」。这里自己判距离与时长，
+ * 位移没超过 touchSlop 才算点按或长按，超过就交给下面的拖动识别。
+ */
 @Composable
 private fun Modifier.dropPreviewReorder(
     key: String,
@@ -611,6 +879,7 @@ private fun Modifier.dropPreviewReorder(
 @Composable
 private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val plugins = activity.pluginsForUi()
+    val hiddenCount = activity.allToolsForUi().count { !activity.isToolVisibleForUi(it) }
     val listState = rememberPageListState(activity, "tools")
     LazyColumn(
         state = listState,
@@ -619,12 +888,29 @@ private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifi
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("工具", style = MaterialTheme.typography.headlineLarge)
-            Text("点击打开；拖动时虚影预览落点，松手后保存排序", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
+            Text(
+                "点击打开 · 长按拖动排序或调整",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(SuiteSpacing.xs))
         }
         if (plugins.isEmpty()) item { EmptyState("没有可用工具", "请先在插件管理中启用插件。") }
         if (plugins.isNotEmpty()) item { ToolReorderList(activity, plugins, Modifier.fillMaxWidth()) }
+        if (hiddenCount > 0) {
+            // 隐藏项不在这一页出现，得说清它们去哪了，否则「工具少了一个」看不出是自己隐藏的。
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "$hiddenCount 个工具已隐藏",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { activity.navigateForUi(MANAGER) }) { Text("在管理中恢复") }
+                }
+            }
+        }
     }
 }
 
@@ -644,22 +930,35 @@ private fun ToolReorderList(
         content = {
             plugins.forEachIndexed { index, plugin ->
                 key(plugin.id()) {
+                    fun moveTo(target: ToolPlugin?) {
+                        target?.takeIf { it !== plugin }?.let { activity.moveToolToUi(plugin.id(), it.id()) }
+                    }
                     PluginListCard(
+                        activity = activity,
                         plugin = plugin,
-                        onOpen = { activity.openPluginForUi(plugin) },
-                        modifier = Modifier.dropPreviewReorder(
-                            key = plugin.id(),
-                            onClick = { activity.openPluginForUi(plugin) },
-                            onLongPress = {},
-                            dragState = dragState,
-                            sourceIndex = index,
-                            onDrop = { destination ->
-                                plugins.getOrNull(destination)?.let { target ->
-                                    if (target !== plugin) activity.moveToolToUi(plugin.id(), target.id())
-                                }
-                            },
-                            allowHorizontalDrag = false,
-                        ),
+                        interaction = { onLongPress ->
+                            Modifier.dropPreviewReorder(
+                                key = plugin.id(),
+                                onClick = { activity.openPluginForUi(plugin) },
+                                onLongPress = onLongPress,
+                                dragState = dragState,
+                                sourceIndex = index,
+                                onDrop = { destination -> moveTo(plugins.getOrNull(destination)) },
+                                allowHorizontalDrag = false,
+                            )
+                        },
+                        modifier = Modifier.semantics {
+                            customActions = listOf(
+                                CustomAccessibilityAction("上移") { moveTo(plugins.getOrNull(index - 1)); true },
+                                CustomAccessibilityAction("下移") { moveTo(plugins.getOrNull(index + 1)); true },
+                                CustomAccessibilityAction("移到开头") { moveTo(plugins.firstOrNull()); true },
+                                CustomAccessibilityAction("移到末尾") { moveTo(plugins.lastOrNull()); true },
+                                CustomAccessibilityAction("从工具页隐藏") {
+                                    activity.setToolVisibleForUi(plugin, false)
+                                    true
+                                },
+                            )
+                        },
                     )
                 }
             }
@@ -729,61 +1028,120 @@ private fun ToolReorderList(
     }
 }
 
+/**
+ * 图标底座：圆角方块 + secondaryContainer 底色。
+ *
+ * 之前每处都是裸 [Icon] 直接染 primary，图标本身的视觉重量差异（盾牌很实、扩展块很空）
+ * 会让列表看上去参差不齐。统一加底座后，无论插件给什么图标，列表左沿都是同一个方块。
+ * [dense] 对应管理屏那种一行一项的密排场景。
+ */
 @Composable
-private fun PluginListCard(plugin: ToolPlugin, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    SuiteCard(modifier = modifier) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(
-                Modifier.size(44.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(pluginIcon(plugin), null, tint = MaterialTheme.colorScheme.primary)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(plugin.title(), style = MaterialTheme.typography.titleLarge)
-                Text(plugin.description(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip(onClick = onOpen, label = { Text("v${plugin.version()}") })
+private fun IconBox(
+    icon: ImageVector,
+    contentDescription: String?,
+    dense: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .size(if (dense) 38.dp else 48.dp)
+            .background(
+                MaterialTheme.colorScheme.secondaryContainer,
+                if (dense) SuiteShapes.Chip else SuiteShapes.Inner,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription,
+            Modifier.size(if (dense) 20.dp else 24.dp),
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+    }
+}
+
+/**
+ * 工具页的一张卡。
+ *
+ * [interaction] 由调用方给出，参数是「长按时要做什么」——菜单的展开状态归这张卡自己管，
+ * 但手势判定要和排序拖动共用一次 pointerInput，只能在外面拼。
+ */
+@Composable
+private fun PluginListCard(
+    activity: MainActivity,
+    plugin: ToolPlugin,
+    interaction: @Composable (onLongPress: () -> Unit) -> Modifier,
+    modifier: Modifier = Modifier,
+) {
+    var menuExpanded by remember(plugin.id()) { mutableStateOf(false) }
+    SuiteCard(modifier = modifier.then(interaction { menuExpanded = true })) {
+        Row(horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+            IconBox(pluginIcon(plugin), "${plugin.title()}工具")
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                // 版本号在标题右侧做次要标签，而不是标题下方的独立 chip：
+                // chip 的视觉重量跟「可点」暗示都太强，版本号只是参考信息。
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
+                    Text(plugin.title(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        "v${plugin.version()}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+                Text(
+                    plugin.description(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+        }
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text("从工具页隐藏") },
+                leadingIcon = { Icon(Icons.Rounded.VisibilityOff, null) },
+                onClick = {
+                    menuExpanded = false
+                    activity.setToolVisibleForUi(plugin, false)
+                },
+            )
+            if (activity.canDisablePluginForUi(plugin)) {
+                DropdownMenuItem(
+                    text = { Text("停用插件") },
+                    leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
+                    onClick = {
+                        menuExpanded = false
+                        activity.disablePluginForUi(plugin)
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("在管理中设置") },
+                leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                onClick = {
+                    menuExpanded = false
+                    activity.navigateForUi(MANAGER)
+                },
+            )
         }
     }
 }
 
 @Composable
 private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int, modifier: Modifier = Modifier) {
-    Box(modifier.semantics { stateDescription = "plugin-$refreshVersion" }) {
-        PluginAndroidView(
-            Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-        ) { plugin.createView(activity, activity) }
-        IconButton(
-            onClick = activity::closePluginForUi,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(16.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f), CircleShape),
-        ) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回上一页")
-        }
-    }
+    PluginAndroidView(
+        modifier
+            .semantics { stateDescription = "plugin-$refreshVersion" }
+            .fillMaxSize()
+            .padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.sm),
+    ) { plugin.createView(activity, activity) }
 }
 
 @Composable
 private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
-    if (activity.isPluginRepositoryOpenForUi()) {
-        PluginRepositoryScreen(activity, refreshVersion, modifier)
-        return
-    }
-    if (activity.isInterfaceManagementOpenForUi()) {
-        InterfaceManagementScreen(activity, refreshVersion, modifier)
-        return
-    }
     val optionalBuiltIns = activity.optionalBuiltInPlugins()
     val imported = activity.importedDescriptorsForUi()
-    val appUpdate = activity.appUpdateForUi()
     val listState = rememberPageListState(activity, "manager")
     LazyColumn(
         state = listState,
@@ -792,139 +1150,163 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("插件管理", style = MaterialTheme.typography.headlineLarge)
-                    Text("启用、停用、导入和导出插件。", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = activity::showPluginRepositoryForUi) {
-                    Icon(Icons.Rounded.Extension, null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("插件仓库")
-                }
-                Button(onClick = activity::importPlugin) {
-                    Icon(Icons.Rounded.Add, null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("导入插件")
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = activity::showInterfaceManagementForUi) {
-                    Icon(Icons.Rounded.Tune, null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("界面管理")
-                }
-                OutlinedButton(
-                    onClick = activity::refreshUpdatesForUi,
-                    enabled = !activity.isUpdateOperationRunningForUi("__check__"),
-                ) {
-                    Text("检查更新")
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = activity::exportMigration) {
-                    Text("导出迁移包")
-                }
-                OutlinedButton(onClick = activity::importMigration) {
-                    Text("导入迁移包")
-                }
-            }
+            Text("控制插件是否启用，以及在哪里显示。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        item {
-            Notice(
-                activity.updateStatusForUi(),
-                warning = activity.updateStatusForUi().startsWith("检查更新失败"),
+        item { SectionHeader("系统工具") }
+        if (optionalBuiltIns.isEmpty()) item { EmptyState("没有可选系统工具", "核心应用能力会始终保持启用。") }
+        items(optionalBuiltIns, key = ToolPlugin::id) { plugin ->
+            ManagedPluginCard(
+                pluginId = plugin.id(),
+                title = plugin.title(),
+                version = plugin.version(),
+                icon = pluginIcon(plugin),
+                enabled = activity.isBuiltInPluginEnabled(plugin.id()),
+                loadedPlugin = activity.findToolForUi(plugin.id()),
+                refreshVersion = refreshVersion,
+                onEnabledChange = { activity.setBuiltInPluginEnabled(plugin.id(), it) },
+                activity = activity,
             )
         }
-        if (appUpdate != null) {
-            item {
-                SuiteCard {
-                    Text("Android Tool Suite ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "发现新的宿主版本。下载校验完成后将交给 Android 系统安装器确认。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(
-                        onClick = activity::installAppUpdateForUi,
-                        enabled = !activity.isUpdateOperationRunningForUi("__app__"),
-                    ) {
-                        Text(if (activity.isUpdateOperationRunningForUi("__app__")) "正在下载…" else "下载并安装")
+        item { SectionHeader("已安装插件", "${imported.size} 个") }
+        if (imported.isEmpty()) item { EmptyState("尚未安装插件", "可在仓库中安装，或导入本地插件包。") }
+        items(imported, key = ImportedPluginDescriptor::id) { descriptor ->
+            ManagedPluginCard(
+                pluginId = descriptor.id,
+                title = descriptor.title,
+                version = descriptor.version,
+                icon = Icons.Rounded.Extension,
+                enabled = activity.isImportedPluginEnabled(descriptor.id),
+                loadedPlugin = activity.findToolForUi(descriptor.id),
+                refreshVersion = refreshVersion,
+                onEnabledChange = { activity.setImportedPluginEnabled(descriptor.id, it) },
+                activity = activity,
+                removable = true,
+                loadFailed = activity.isImportedPluginEnabled(descriptor.id) && !activity.isPluginLoadedForUi(descriptor.id),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManagedPluginCard(
+    activity: MainActivity,
+    pluginId: String,
+    title: String,
+    version: String,
+    icon: ImageVector,
+    enabled: Boolean,
+    loadedPlugin: ToolPlugin?,
+    refreshVersion: Int,
+    onEnabledChange: (Boolean) -> Unit,
+    removable: Boolean = false,
+    loadFailed: Boolean = false,
+) {
+    var expanded by remember(title) { mutableStateOf(false) }
+    val hasHomeWidgets = enabled && loadedPlugin != null && activity.hasHomeWidgetsForUi(loadedPlugin)
+    val toolVisible = loadedPlugin?.let(activity::isToolVisibleForUi) ?: false
+    val homeVisible = loadedPlugin?.let(activity::isPluginHomeVisibleForUi) ?: false
+    val summary = buildString {
+        append(
+            when {
+                !enabled -> "v$version · 已停用"
+                toolVisible && hasHomeWidgets && homeVisible -> "v$version · 工具页 · 主页"
+                toolVisible -> "v$version · 仅工具页"
+                hasHomeWidgets && homeVisible -> "v$version · 仅主页"
+                else -> "v$version · 已隐藏"
+            },
+        )
+        // 关掉更新检查是个容易忘的设置，收起时也得看得见。
+        if (removable && !activity.isPluginUpdateCheckEnabledForUi(pluginId)) append(" · 不检查更新")
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = if (enabled) 1f else 0.62f }
+            .semantics { stateDescription = "managed-plugin-$title-$refreshVersion" },
+        shape = SuiteShapes.Card,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        // 展开项用内描边标出来。多项可同时展开，没有描边时很难看出某个开关区属于上面哪张卡。
+        border = if (expanded) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+    ) {
+        Column {
+            // 内边距放在 Row 里而不是外层 Column 上：否则卡片左右各 16dp 是死区，
+            // 点在标题左侧或箭头右侧都展不开。
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    // 停用的插件也要能展开：删除和导出在展开区里，停用之后才更需要它们。
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md),
+            ) {
+                IconBox(icon, null, dense = true)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
+                Icon(
+                    if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    if (expanded) "收起" else "展开",
+                    tint = if (expanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (expanded) {
+                HorizontalDivider()
+                Column(Modifier.padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.xs)) {
+                    if (loadedPlugin != null) {
+                        VisibilitySwitch(
+                            "在工具页显示",
+                            toolVisible,
+                            { activity.setToolVisibleForUi(loadedPlugin, it) },
+                            modifier = Modifier.heightIn(min = 40.dp),
+                        )
+                        if (hasHomeWidgets) {
+                            VisibilitySwitch(
+                                "在主页显示",
+                                homeVisible,
+                                { activity.setPluginHomeVisibleForUi(loadedPlugin, it) },
+                                modifier = Modifier.heightIn(min = 40.dp),
+                            )
+                        } else {
+                            // 明确说清「没有」，否则少一行开关会被当成加载失败。
+                            Text(
+                                "此插件没有主页小部件",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = SuiteSpacing.sm),
+                            )
+                        }
+                    }
+                    // 外部插件才有更新与删除；内置插件跟着应用走。
+                    if (removable) {
+                        VisibilitySwitch(
+                            "检查更新",
+                            activity.isPluginUpdateCheckEnabledForUi(pluginId),
+                            { activity.setPluginUpdateCheckEnabledForUi(pluginId, it) },
+                            modifier = Modifier.heightIn(min = 40.dp),
+                        )
+                        Row(
+                            Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.sm),
+                            horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
+                        ) {
+                            OutlinedButton(onClick = { activity.exportPlugin(pluginId) }, modifier = Modifier.weight(1f)) {
+                                Text("导出")
+                            }
+                            OutlinedButton(
+                                onClick = { activity.requestDeletePluginForUi(pluginId) },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("删除") }
+                        }
                     }
                 }
             }
-        }
-        item { Notice("插件代码与宿主运行在同一进程，能够使用宿主进程已有的能力。请只安装来自可信来源的插件。", warning = true) }
-        item { Notice("迁移包只包含宿主布局、仓库选择和插件包，不包含账号凭据或插件业务数据。") }
-        item { SectionHeader("内置插件", "可选能力可按需停用") }
-        if (optionalBuiltIns.isEmpty()) item { EmptyState("没有可选内置插件", "核心宿主能力会始终保持启用。") }
-        items(optionalBuiltIns, key = ToolPlugin::id) { plugin -> BuiltInManagerCard(activity, plugin) }
-        item { SectionHeader("外部插件", "${imported.size} 个已安装") }
-        if (imported.isEmpty()) item { EmptyState("尚未导入插件", "只支持包含可执行代码的完整 .atsplugin 插件包。") }
-        items(imported, key = ImportedPluginDescriptor::id) { descriptor -> ImportedManagerCard(activity, descriptor) }
-    }
-}
-
-@Composable
-private fun InterfaceManagementScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
-    val tools = activity.allToolsForUi()
-    val listState = rememberPageListState(activity, "interface-management")
-    LazyColumn(
-        state = listState,
-        modifier = modifier.semantics { stateDescription = "interface-management-$refreshVersion" },
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = activity::closeInterfaceManagementForUi) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回插件管理")
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("界面管理", style = MaterialTheme.typography.headlineLarge)
-                    Text("按插件管理工具页和主页的显示状态。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (loadFailed) {
+                Column(Modifier.padding(start = SuiteSpacing.lg, end = SuiteSpacing.lg, bottom = SuiteSpacing.md)) {
+                    ErrorState("插件无法加载", "请重新安装插件。", onRetry = activity::importPlugin)
                 }
             }
-        }
-        item { SectionHeader("插件显示", "隐藏界面入口不会停用插件") }
-        if (tools.isEmpty()) item { EmptyState("没有可管理的插件", "请先在插件管理中启用插件。") }
-        items(tools, key = ToolPlugin::id) { plugin ->
-            PluginVisibilityCard(activity, plugin, refreshVersion)
-        }
-    }
-}
-
-@Composable
-private fun PluginVisibilityCard(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int) {
-    val hasHomeWidgets = activity.hasHomeWidgetsForUi(plugin)
-    SuiteCard(
-        modifier = Modifier.semantics {
-            stateDescription = "plugin-visibility-${plugin.id()}-$refreshVersion"
-        },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(plugin.title(), style = MaterialTheme.typography.titleMedium)
-            Text(plugin.description(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            VisibilitySwitch(
-                label = "工具页",
-                checked = activity.isToolVisibleForUi(plugin),
-                onCheckedChange = { activity.setToolVisibleForUi(plugin, it) },
-                modifier = Modifier.weight(1f),
-            )
-            VisibilitySwitch(
-                label = "主页",
-                checked = hasHomeWidgets && activity.isPluginHomeVisibleForUi(plugin),
-                onCheckedChange = { activity.setPluginHomeVisibleForUi(plugin, it) },
-                modifier = Modifier.weight(1f),
-                enabled = hasHomeWidgets,
-            )
         }
     }
 }
@@ -949,125 +1331,36 @@ private fun VisibilitySwitch(
 }
 
 @Composable
-private fun BuiltInManagerCard(activity: MainActivity, plugin: ToolPlugin) {
-    val enabled = activity.isBuiltInPluginEnabled(plugin.id())
-    SuiteCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(plugin.title(), style = MaterialTheme.typography.titleLarge)
-                Text(plugin.description(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(checked = enabled, onCheckedChange = { activity.setBuiltInPluginEnabled(plugin.id(), it) })
-        }
-        PluginMetadata(plugin)
-    }
-}
-
-@Composable
-private fun ImportedManagerCard(activity: MainActivity, descriptor: ImportedPluginDescriptor) {
-    val enabled = activity.isImportedPluginEnabled(descriptor.id)
-    val loaded = activity.isPluginLoadedForUi(descriptor.id)
-    SuiteCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(descriptor.title, style = MaterialTheme.typography.titleLarge)
-                Text("v${descriptor.version} · ${descriptor.author}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            Switch(checked = enabled, onCheckedChange = { activity.setImportedPluginEnabled(descriptor.id, it) })
-        }
-        Text(descriptor.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            activity.repositoryVerificationLabelForUi(descriptor.id),
-            style = MaterialTheme.typography.labelMedium,
-            color = if (activity.isRepositoryVerifiedForUi(descriptor.id)) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (enabled && !loaded) {
-            Notice("插件代码未能加载，请重新导入与当前宿主版本匹配的完整插件包。", warning = true)
-        }
-        if (descriptor.dependencies.isNotEmpty()) Text("依赖：${descriptor.dependencies.joinToString()}", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { activity.exportPlugin(descriptor.id) }, modifier = Modifier.weight(1f)) { Text("导出") }
-            OutlinedButton(onClick = { activity.deleteImportedPlugin(descriptor.id) }, modifier = Modifier.weight(1f)) { Text("删除") }
-        }
-    }
-}
-
-@Composable
 private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
     val plugins = activity.repositoryPluginsForUi()
+    val installed = activity.importedDescriptorsForUi()
+    val installedIds = installed.mapTo(mutableSetOf(), ImportedPluginDescriptor::id)
+    val available = plugins.filterNot { it.id in installedIds }
     val appUpdate = activity.appUpdateForUi()
     val listState = rememberPageListState(activity, "plugin-repository")
+    var showRisk by remember { mutableStateOf(activity.shouldShowStoreRiskForUi()) }
+    if (showRisk) {
+        AlertDialog(
+            onDismissRequest = { showRisk = false; activity.acknowledgeStoreRiskForUi() },
+            title = { Text("安装可信插件") },
+            text = { Text("插件拥有与本应用相同的权限，请只安装可信来源的插件。") },
+            confirmButton = {
+                TextButton(onClick = { showRisk = false; activity.acknowledgeStoreRiskForUi() }) { Text("知道了") }
+            },
+        )
+    }
     LazyColumn(
         state = listState,
         modifier = modifier.semantics { stateDescription = "plugin-repository-$refreshVersion" },
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = activity::closePluginRepositoryForUi) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回插件管理")
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("插件仓库", style = MaterialTheme.typography.headlineLarge)
-                    Text(
-                        "${activity.pluginRepositoryChannelLabelForUi()} · 仅收录 Android Tool Suite 组织维护的插件。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("插件来源", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (activity.isDebugPluginRepositoryForUi()) {
-                    OutlinedButton(
-                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_RELEASE) },
-                    ) { Text("正式仓库") }
-                    Button(
-                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_DEBUG) },
-                    ) { Text("调试仓库") }
-                } else {
-                    Button(
-                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_RELEASE) },
-                    ) { Text("正式仓库") }
-                    OutlinedButton(
-                        onClick = { activity.selectPluginRepositoryChannelForUi(UpdateCatalog.CHANNEL_DEBUG) },
-                    ) { Text("调试仓库") }
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = activity::refreshUpdatesForUi,
-                    enabled = !activity.isUpdateOperationRunningForUi("__check__"),
-                ) {
-                    Text("刷新仓库")
-                }
-                OutlinedButton(onClick = activity::installAllPluginUpdatesForUi) {
-                    Text("全部更新")
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = activity::importPlugin) {
-                Text("导入本地插件包")
-            }
-        }
-        item {
-            Notice(
-                activity.updateStatusForUi()
-                        + if (activity.isUpdateCatalogCachedForUi()) " · 当前显示已验证缓存" else "",
-                warning = activity.updateStatusForUi().startsWith("检查更新失败"),
-            )
-        }
         if (appUpdate != null) {
             item {
                 SuiteCard {
-                    Text("宿主更新 ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
+                    Text("应用更新 ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "需要先更新宿主时，部分新插件会保持不可安装状态。",
+                        "部分新插件需要先更新应用。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1075,27 +1368,166 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
                         onClick = activity::installAppUpdateForUi,
                         enabled = !activity.isUpdateOperationRunningForUi("__app__"),
                     ) {
-                        Text("更新宿主")
+                        Text("更新应用")
                     }
                 }
             }
         }
-        if (activity.isDebugPluginRepositoryForUi()) {
-            item {
-                Notice(
-                    "调试仓库展示 main 分支最新通过 CI 的构建，可能尚未经过正式发布验收；切回正式仓库可恢复正式版。",
-                    warning = true,
+        item {
+            // 副标题同时给出总数和可更新数，「全部更新」按钮出现的原因就在旁边写着。
+            val updatableCount = activity.availablePluginUpdatesForUi().size
+            SectionHeader(
+                "已安装",
+                if (updatableCount > 0) "${installed.size} 个 · $updatableCount 项可更新" else "${installed.size} 个",
+            ) {
+                if (activity.availableUpdateCountForUi() > 0) {
+                    TextButton(onClick = activity::installAllUpdatesForUi) { Text("全部更新") }
+                }
+            }
+        }
+        if (activity.updateCheckStateForUi() == MainActivity.UpdateCheckState.FAILED) {
+            item { ErrorState("仓库刷新失败", activity.updateErrorForUi(), activity::refreshUpdatesForUi) }
+        }
+        if (installed.isEmpty()) item { EmptyState("还没有安装外部插件", "从下方选择插件，或导入本地插件包。") }
+        items(installed, key = ImportedPluginDescriptor::id) { descriptor ->
+            InstalledRepositoryCard(activity, descriptor, plugins.firstOrNull { it.id == descriptor.id })
+        }
+        item { SectionHeader("可安装", "${available.size} 个") }
+        if (plugins.isEmpty() && activity.updateCheckStateForUi() != MainActivity.UpdateCheckState.CHECKING) {
+            item { EmptyState("仓库暂不可用", "请检查网络后刷新；首次发布完成前仓库也可能为空。") }
+        } else if (available.isEmpty()) {
+            item { EmptyState("没有更多插件", "所有可用插件都已经安装。") }
+        }
+        items(available, key = UpdateCatalog.PluginRelease::id) { release ->
+            RepositoryPluginCard(activity, release)
+        }
+        item {
+            OutlinedButton(onClick = activity::importPlugin, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Add, null)
+                Spacer(Modifier.width(SuiteSpacing.sm))
+                Text("导入本地插件包")
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstalledRepositoryCard(
+    activity: MainActivity,
+    descriptor: ImportedPluginDescriptor,
+    latest: UpdateCatalog.PluginRelease?,
+) {
+    var menuExpanded by remember(descriptor.id) { mutableStateOf(false) }
+    var versionSheetVisible by remember(descriptor.id) { mutableStateOf(false) }
+    val versions = activity.repositoryPluginVersionsForUi(descriptor.id)
+    val hasUpdate = latest != null && activity.isRepositoryPluginUpdateAvailableForUi(latest)
+    val updateChecked = activity.isPluginUpdateCheckEnabledForUi(descriptor.id)
+    if (versionSheetVisible) {
+        VersionPickerSheet(activity, descriptor.title, versions) { versionSheetVisible = false }
+    }
+    SuiteCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+            IconBox(Icons.Rounded.Extension, null, dense = true)
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                    Text(descriptor.title, style = MaterialTheme.typography.titleMedium)
+                    if (activity.isRepositoryVerifiedForUi(descriptor.id)) Icon(Icons.Rounded.Verified, "已验证", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
+                // 副标题直接说清「要往哪走」，而不是只报一个当前版本号。
+                Text(
+                    when {
+                        hasUpdate -> "${descriptor.version} → ${latest?.versionName}"
+                        !updateChecked -> "不检查更新 · ${descriptor.version}"
+                        else -> "已是最新 · ${descriptor.version}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                // 已安装的插件不在「可安装」列表里出现，切版本、降级的入口只能挂在这张卡上。
+                if (versions.isNotEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("选择版本…") },
+                        leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                        onClick = { menuExpanded = false; versionSheetVisible = true },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(if (updateChecked) "不检查此插件更新" else "检查此插件更新") },
+                    leadingIcon = { Icon(if (updateChecked) Icons.Rounded.NotificationsOff else Icons.Rounded.Notifications, null) },
+                    onClick = {
+                        menuExpanded = false
+                        activity.setPluginUpdateCheckEnabledForUi(descriptor.id, !updateChecked)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("导出插件包") },
+                    leadingIcon = { Icon(Icons.Rounded.FileUpload, null) },
+                    onClick = { menuExpanded = false; activity.exportPlugin(descriptor.id) },
+                )
+                DropdownMenuItem(
+                    text = { Text("删除") },
+                    leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                    onClick = { menuExpanded = false; activity.requestDeletePluginForUi(descriptor.id) },
                 )
             }
         }
-        item { Notice("仓库插件会执行在宿主进程中。索引签名与文件哈希只能确认发布来源，不能形成运行时沙箱。", warning = true) }
-        item { SectionHeader(activity.pluginRepositoryChannelLabelForUi(), "${plugins.size} 个可用") }
-        if (plugins.isEmpty()) {
-            item { EmptyState("仓库暂不可用", "请检查网络后刷新；首次发布完成前仓库也可能为空。") }
+        if (hasUpdate) {
+            Button(
+                onClick = { activity.installRepositoryPluginVersionForUi(requireNotNull(latest)) },
+                enabled = !activity.isUpdateOperationRunningForUi(descriptor.id),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("更新到 v${latest.versionName}") }
         }
-        items(plugins, key = UpdateCatalog.PluginRelease::id) { release ->
-            RepositoryPluginCard(activity, release)
+    }
+}
+
+/**
+ * 版本列表。每一行自己说明这次跳转是升级、降级还是被拦下的，点了直接装。
+ *
+ * 不做「先选中再确认」两步：选版本这件事本身就只有一个后续动作。
+ */
+@Composable
+private fun VersionPickerSheet(
+    activity: MainActivity,
+    title: String,
+    versions: List<UpdateCatalog.PluginRelease>,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Text(title, modifier = Modifier.padding(horizontal = SuiteSpacing.xl), style = MaterialTheme.typography.titleLarge)
+        Text(
+            "可切换到其他已发布版本。降级需要目标版本能读取当前数据格式。",
+            modifier = Modifier.padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.sm),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        LazyColumn(Modifier.heightIn(max = 420.dp)) {
+            items(versions, key = UpdateCatalog.PluginRelease::sha256) { version ->
+                val installed = activity.isRepositoryPluginVersionInstalledForUi(version)
+                val selectable = activity.isRepositoryPluginVersionSelectableForUi(version)
+                val label = version.versionName +
+                        if (version.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${version.commitSha.take(7)}" else ""
+                SuiteSettingsRow(
+                    label,
+                    supportingText = activity.repositoryPluginTransitionLabelForUi(version),
+                    leading = { if (installed) Icon(Icons.Rounded.Check, "当前安装") else Spacer(Modifier.size(24.dp)) },
+                    trailingText = if (selectable) activity.repositoryPluginActionLabelForUi(version) else null,
+                    emphasized = selectable,
+                    onClick = if (selectable) {
+                        {
+                            activity.installRepositoryPluginVersionForUi(version)
+                            onDismiss()
+                        }
+                    } else {
+                        null
+                    },
+                )
+            }
         }
+        Spacer(Modifier.height(SuiteSpacing.xxl))
     }
 }
 
@@ -1112,27 +1544,25 @@ private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.
     val selectable = activity.isRepositoryPluginVersionSelectableForUi(selected)
     val actionText = activity.repositoryPluginActionLabelForUi(selected)
     SuiteCard {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md),
+        ) {
+            IconBox(Icons.Rounded.Extension, null, dense = true)
             Column(Modifier.weight(1f)) {
-                Text(selected.title, style = MaterialTheme.typography.titleLarge)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                    Text(selected.title, style = MaterialTheme.typography.titleMedium)
+                    Icon(Icons.Rounded.Verified, "已验证发布", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
                 Text(
-                    "v${selected.versionName} · ${selected.author}"
+                    selected.versionName
                             + if (selected.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${selected.commitSha.take(7)}" else "",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Button(
-                onClick = { activity.installRepositoryPluginVersionForUi(selected) },
-                enabled = compatible && !busy && selectable,
-            ) {
-                Text(actionText)
-            }
-        }
-        Box {
-            OutlinedButton(onClick = { versionMenuExpanded = true }) {
-                Text("选择版本：${selected.versionName}" + if (selected.channel == UpdateCatalog.CHANNEL_DEBUG) " (${selected.commitSha.take(7)})" else "")
-            }
+            IconButton(onClick = { versionMenuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "选择版本") }
             DropdownMenu(
                 expanded = versionMenuExpanded,
                 onDismissRequest = { versionMenuExpanded = false },
@@ -1179,9 +1609,285 @@ private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.
             )
         }
         if (!compatible) {
-            Notice("要求宿主 versionCode ≥ ${selected.minHostVersionCode}", warning = true)
+            Notice("需要应用 ${activity.requiredAppVersionLabelForUi(selected.minHostVersionCode)} 或更高版本", warning = true)
+            Button(onClick = activity::installAppUpdateForUi, modifier = Modifier.fillMaxWidth(), enabled = activity.appUpdateForUi() != null) {
+                Text("更新应用")
+            }
+        } else {
+            Button(
+                onClick = { activity.installRepositoryPluginVersionForUi(selected) },
+                enabled = !busy && selectable,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(actionText) }
         }
     }
+}
+
+@Composable
+private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    val listState = rememberPageListState(activity, "settings")
+    var themeMenu by remember { mutableStateOf(false) }
+    var colorMenu by remember { mutableStateOf(false) }
+    var channelMenu by remember { mutableStateOf(false) }
+    val themeLabel = when (activity.themePreferenceForUi()) {
+        "light" -> "浅色"
+        "dark" -> "深色"
+        else -> "跟随系统"
+    }
+    val colorLabel = if (activity.colorPreferenceForUi() == "dynamic") "跟随壁纸" else "默认配色"
+    LazyColumn(
+        state = listState,
+        modifier = modifier.semantics { stateDescription = "settings-$refreshVersion" },
+        contentPadding = PaddingValues(vertical = SuiteSpacing.lg),
+    ) {
+        item {
+            SuiteSettingsGroup("外观") {
+                Box {
+                    // 带 ▾ 的行是「点开有得选」，跟只报状态的行区分开。
+                    SuiteSettingsRow(
+                        "主题",
+                        trailingText = themeLabel,
+                        trailing = { Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        onClick = { themeMenu = true },
+                    )
+                    DropdownMenu(expanded = themeMenu, onDismissRequest = { themeMenu = false }) {
+                        listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (value, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                leadingIcon = { RadioButton(selected = activity.themePreferenceForUi() == value, onClick = null) },
+                                onClick = { themeMenu = false; activity.setThemePreferenceForUi(value) },
+                            )
+                        }
+                    }
+                }
+                Box {
+                    SuiteSettingsRow(
+                        "配色",
+                        supportingText = "应用自带配色，或跟随系统壁纸取色",
+                        trailingText = colorLabel,
+                        trailing = { Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        onClick = { colorMenu = true },
+                    )
+                    DropdownMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false }) {
+                        listOf("brand" to "默认配色", "dynamic" to "跟随壁纸").forEach { (value, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                leadingIcon = { RadioButton(selected = activity.colorPreferenceForUi() == value, onClick = null) },
+                                onClick = { colorMenu = false; activity.setColorPreferenceForUi(value) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SuiteSettingsGroup("更新") {
+                SuiteSettingsSwitchRow(
+                    "自动检查更新",
+                    checked = activity.autoCheckUpdatesForUi(),
+                    onCheckedChange = activity::setAutoCheckUpdatesForUi,
+                    supportingText = "启动时静默检查，仅在有更新时提示",
+                )
+                SuiteSettingsRow(
+                    "立即检查更新",
+                    onClick = activity::checkUpdatesManuallyForUi,
+                    trailingText = if (activity.isUpdateOperationRunningForUi("__check__")) "正在检查…" else null,
+                    emphasized = true,
+                )
+                SuiteSettingsRow("上次检查", trailingText = formatLastChecked(activity.lastUpdateCheckForUi()))
+            }
+        }
+        item {
+            SuiteSettingsGroup("备份与迁移") {
+                SuiteSettingsRow("导出迁移包", onClick = activity::exportMigration, emphasized = true)
+                SuiteSettingsRow("导入迁移包", onClick = activity::importMigration, emphasized = true)
+                Text(
+                    "包含布局与插件包，不含账号与插件数据。",
+                    modifier = Modifier.padding(horizontal = SuiteSpacing.ScreenPadding, vertical = SuiteSpacing.sm),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (activity.isDebugBuildForUi()) {
+            item {
+                SuiteSettingsGroup("开发者选项") {
+                    Box {
+                        SuiteSettingsRow(
+                            "插件仓库渠道",
+                            supportingText = if (activity.isDebugPluginRepositoryForUi()) "调试版本可能不稳定" else null,
+                            trailingText = activity.pluginRepositoryChannelLabelForUi(),
+                            trailing = { Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                            onClick = { channelMenu = true },
+                        )
+                        DropdownMenu(expanded = channelMenu, onDismissRequest = { channelMenu = false }) {
+                            listOf(UpdateCatalog.CHANNEL_RELEASE to "正式仓库", UpdateCatalog.CHANNEL_DEBUG to "调试仓库").forEach { (value, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    leadingIcon = { RadioButton(selected = activity.pluginRepositoryChannelForUi() == value, onClick = null) },
+                                    onClick = { channelMenu = false; activity.selectPluginRepositoryChannelForUi(value) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SuiteSettingsGroup("关于") {
+                SuiteSettingsRow(
+                    "安卓工具合集",
+                    supportingText = activity.appVersionNameForUi(),
+                    leading = { IconBox(Icons.Rounded.Build, null, dense = true) },
+                    trailing = { Icon(Icons.Rounded.ChevronRight, null) },
+                    onClick = activity::showAboutForUi,
+                )
+            }
+        }
+    }
+}
+
+private fun formatLastChecked(timestamp: Long): String {
+    if (timestamp <= 0L) return "尚未检查"
+    val now = System.currentTimeMillis()
+    val sameDay = SimpleDateFormat("yyyyMMdd", Locale.CHINA).format(Date(now)) ==
+            SimpleDateFormat("yyyyMMdd", Locale.CHINA).format(Date(timestamp))
+    return if (sameDay) SimpleDateFormat("今天 HH:mm", Locale.CHINA).format(Date(timestamp))
+    else SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(Date(timestamp))
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun AboutScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    val clipboard = LocalClipboardManager.current
+    val fullVersion = "${activity.appVersionNameForUi()} (${activity.appVersionCodeForUi()}) · SDK ${activity.pluginSdkVersionForUi()} · ${activity.buildTypeForUi()}"
+    LazyColumn(
+        modifier = modifier.semantics { stateDescription = "about-$refreshVersion" },
+        contentPadding = PaddingValues(horizontal = SuiteSpacing.ScreenPadding, vertical = SuiteSpacing.xxl),
+        verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xl),
+    ) {
+        item {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier
+                        .size(66.dp)
+                        .background(MaterialTheme.colorScheme.primary, SuiteShapes.Inner),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Build, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                }
+                Spacer(Modifier.height(SuiteSpacing.md))
+                Text("安卓工具合集", style = MaterialTheme.typography.headlineSmall)
+                Text(activity.appVersionNameForUi(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item {
+            // 一整组不分小标题：这一屏只有「这个应用的身份信息」一件事，
+            // 拆成「版本信息 / 项目」两组只是给五行内容加了两条无用的分割。
+            SuiteSettingsGroup("") {
+                SuiteSettingsRow(
+                    "版本号",
+                    // 长按能复制这件事必须写出来，否则没有任何提示。
+                    supportingText = "长按复制完整版本串",
+                    trailingText = "${activity.appVersionNameForUi()} (${activity.appVersionCodeForUi()})",
+                    modifier = Modifier.combinedClickable(
+                        onClickLabel = "复制完整版本信息",
+                        onClick = {
+                            clipboard.setText(AnnotatedString(fullVersion))
+                            activity.showToast("已复制完整版本信息")
+                        },
+                        onLongClick = {
+                            clipboard.setText(AnnotatedString(fullVersion))
+                            activity.showToast("已复制完整版本信息")
+                        },
+                    ),
+                )
+                SuiteSettingsRow("插件 SDK", trailingText = activity.pluginSdkVersionForUi())
+                SuiteSettingsRow("构建类型", trailingText = activity.buildTypeForUi())
+                if (activity.buildCommitForUi().isNotBlank()) SuiteSettingsRow("构建提交", trailingText = activity.buildCommitForUi().take(12))
+                SuiteSettingsRow(
+                    "项目地址",
+                    supportingText = "github.com/android-tool-suite",
+                    trailing = { Icon(Icons.Rounded.ChevronRight, null) },
+                    onClick = activity::openProjectForUi,
+                )
+                SuiteSettingsRow(
+                    "开源许可",
+                    trailing = { Icon(Icons.Rounded.ChevronRight, null) },
+                    onClick = activity::showOpenSourceLicensesForUi,
+                )
+            }
+            Text(
+                "插件仓库仅收录 Android Tool Suite 组织维护的插件。",
+                modifier = Modifier.padding(horizontal = SuiteSpacing.ScreenPadding, vertical = SuiteSpacing.md),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun UpdatePromptRow(icon: ImageVector, title: String, transition: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+        IconBox(icon, null, dense = true)
+        Text(title, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(transition, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun UpdatePrompt(activity: MainActivity) {
+    if (!activity.isUpdatePromptVisibleForUi()) return
+    val appUpdate = activity.appUpdateForUi()
+    val pluginUpdates = activity.availablePluginUpdatesForUi()
+    AlertDialog(
+        onDismissRequest = activity::closeUpdatePromptForUi,
+        title = { Text("发现 ${activity.availableUpdateCountForUi()} 项更新") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+                if (appUpdate != null) {
+                    UpdatePromptRow(
+                        icon = Icons.Rounded.Build,
+                        title = "安卓工具合集",
+                        transition = "${activity.appVersionNameForUi()} → ${appUpdate.versionName}",
+                    )
+                }
+                pluginUpdates.forEach { release ->
+                    UpdatePromptRow(
+                        icon = Icons.Rounded.Extension,
+                        title = release.title,
+                        transition = "→ ${release.versionName}",
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = activity::dismissCurrentUpdatesForUi) { Text("本次不再提示") }
+                TextButton(onClick = activity::closeUpdatePromptForUi) { Text("稍后") }
+                Button(onClick = activity::installAllUpdatesForUi) { Text("全部更新") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ComposeDialog(activity: MainActivity) {
+    val dialog = activity.composeDialogForUi() ?: return
+    AlertDialog(
+        onDismissRequest = activity::dismissComposeDialogForUi,
+        title = { Text(dialog.title) },
+        text = { Text(dialog.message) },
+        dismissButton = {
+            if (dialog.dismissLabel.isNotBlank()) {
+                TextButton(onClick = activity::dismissComposeDialogForUi) { Text(dialog.dismissLabel) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = activity::confirmComposeDialogForUi) { Text(dialog.confirmLabel) }
+        },
+    )
 }
 
 @Composable

@@ -3,7 +3,6 @@ package com.androidtoolsuite.app.host;
 import com.androidtoolsuite.app.BuildConfig;
 import com.androidtoolsuite.app.IShellService;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
@@ -17,17 +16,7 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.provider.Settings;
-import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.ViewParent;
-import android.view.Window;
-import android.widget.Button;
-import android.widget.CheckBox;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
@@ -46,7 +35,9 @@ import com.androidtoolsuite.app.plugin.api.PluginHost;
 import com.androidtoolsuite.app.plugins.builtin.shizuku.ShizukuPlugin;
 import com.androidtoolsuite.app.plugin.api.ToolPlugin;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
-import com.androidtoolsuite.app.ui.UiKit;
+import com.androidtoolsuite.app.ui.SuiteColorPreference;
+import com.androidtoolsuite.app.ui.SuiteThemePreference;
+import com.androidtoolsuite.app.ui.SuiteThemePreferences;
 import com.androidtoolsuite.app.update.UpdateCatalog;
 import com.androidtoolsuite.app.update.UpdateClient;
 import com.androidtoolsuite.app.update.AppUpdatePolicy;
@@ -66,16 +57,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -97,6 +85,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final int SECTION_DASHBOARD = 0;
     private static final int SECTION_PLUGINS = 1;
     private static final int SECTION_MANAGER = 2;
+    private static final int SECTION_STORE = 3;
+    private static final int SECTION_SETTINGS = 4;
+    private static final int SECTION_ABOUT = 5;
 
     private static final String PREFS_NAME = "main_ui";
     private static final String PREF_HIDDEN_WIDGETS = "hidden_widgets";
@@ -106,27 +97,64 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final String PREF_FULL_WIDTH_WIDGETS = "full_width_widgets";
     private static final String PREF_WIDGET_SIZES = "widget_sizes";
     private static final String PREF_PLUGIN_REPOSITORY_CHANNEL = "plugin_repository_channel";
+    private static final String PREF_THEME = "theme_preference";
+    private static final String PREF_COLOR = "color_preference";
+    private static final String PREF_AUTO_CHECK_UPDATES = "auto_check_updates";
+    private static final String PREF_LAST_UPDATE_CHECK = "last_update_check";
+    private static final String PREF_DISMISSED_UPDATE_VERSIONS = "dismissed_update_versions";
+    private static final String PREF_STORE_RISK_ACKNOWLEDGED = "store_risk_acknowledged";
+    private static final String PREF_UPDATE_CHECK_EXCLUDED = "update_check_excluded_plugins";
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
-    private final List<Button> bottomButtons = new ArrayList<>();
-    private LinearLayout contentRoot;
-    private LinearLayout bottomBar;
     private ToolPlugin selectedPlugin;
     private ExternalPluginStore externalPluginStore;
     private BuiltInPluginStateStore builtInPluginStateStore;
     private UpdateClient updateClient;
     private UpdateCatalog updateCatalog;
     private String updateStatus = "尚未检查更新";
-    private boolean updateCatalogCached;
+    private UpdateCheckState updateCheckState = UpdateCheckState.IDLE;
+    private String updateError = "";
+    private String snackbarMessage;
+    private String snackbarAction;
+    private boolean updatePromptVisible;
+    private ComposeDialogState composeDialog;
     private final Set<String> updateOperations = new HashSet<>();
     private SharedPreferences uiPreferences;
     private String pendingExportPluginId;
     private int currentSection = SECTION_DASHBOARD;
     private int pluginReturnSection = SECTION_PLUGINS;
-    private boolean interfaceManagementOpen;
-    private boolean pluginRepositoryOpen;
     private final HostUiState composeState = new HostUiState();
     private final Map<String, int[]> composeScrollPositions = new LinkedHashMap<>();
+
+    public enum UpdateCheckState {
+        IDLE,
+        CHECKING,
+        UP_TO_DATE,
+        AVAILABLE,
+        FAILED
+    }
+
+    public static final class ComposeDialogState {
+        public final String title;
+        public final String message;
+        public final String dismissLabel;
+        public final String confirmLabel;
+        private final Runnable onConfirm;
+
+        private ComposeDialogState(
+                String title,
+                String message,
+                String dismissLabel,
+                String confirmLabel,
+                Runnable onConfirm
+        ) {
+            this.title = title;
+            this.message = message;
+            this.dismissLabel = dismissLabel;
+            this.confirmLabel = confirmLabel;
+            this.onConfirm = onConfirm;
+        }
+    }
 
     private final OnBackPressedCallback appBackCallback = new OnBackPressedCallback(true) {
         @Override
@@ -184,6 +212,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
         updateClient = new UpdateClient(this);
         uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        syncSuiteThemePreferences();
         loadPlugins();
         setContentView(createContentView());
         getOnBackPressedDispatcher().addCallback(this, appBackCallback);
@@ -204,7 +233,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     @Override
     protected void onStart() {
         super.onStart();
-        checkForUpdates(false);
+        if (autoCheckUpdatesForUi()) {
+            checkForUpdates(false, false, false);
+        }
     }
 
     @Override
@@ -242,19 +273,16 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private boolean handleAppBack() {
-        if (pluginRepositoryOpen) {
-            closePluginRepositoryForUi();
-            return true;
-        }
-        if (interfaceManagementOpen) {
-            closeInterfaceManagementForUi();
-            return true;
-        }
         if (selectedPlugin != null) {
             closePluginForUi();
             return true;
         }
-        if (currentSection == SECTION_MANAGER || currentSection == SECTION_PLUGINS) {
+        // 关于是设置的子页，返回回到设置；设置本身是底栏一级分区，返回直接回主页。
+        if (currentSection == SECTION_ABOUT) {
+            showSettingsForUi();
+            return true;
+        }
+        if (currentSection != SECTION_DASHBOARD) {
             showDashboard();
             return true;
         }
@@ -262,11 +290,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public boolean canHandleBackForUi() {
-        return interfaceManagementOpen
-                || pluginRepositoryOpen
-                || selectedPlugin != null
-                || currentSection == SECTION_MANAGER
-                || currentSection == SECTION_PLUGINS;
+        return selectedPlugin != null || currentSection != SECTION_DASHBOARD;
     }
 
     public void handleBackForUi() {
@@ -295,6 +319,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             showPluginList();
         } else if ("manager".equals(destination)) {
             showPluginManager();
+        } else if ("store".equals(destination)) {
+            showPluginRepositoryForUi();
+        } else if ("settings".equals(destination)) {
+            showSettingsForUi();
+        } else if ("about".equals(destination)) {
+            showAboutForUi();
         } else if (destination.startsWith("plugin:")) {
             ToolPlugin plugin = findPlugin(destination.substring("plugin:".length()));
             if (plugin != null) {
@@ -309,252 +339,29 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return HostAppUiKt.createHostAppView(this);
     }
 
-    private void addBottomButton(String text, int section) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setOnClickListener(v -> {
-            if (section == SECTION_DASHBOARD) {
-                showDashboard();
-            } else if (section == SECTION_PLUGINS) {
-                showPluginList();
-            } else {
-                showPluginManager();
-            }
-        });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
-        if (!bottomButtons.isEmpty()) {
-            params.leftMargin = dp(6);
-        }
-        bottomBar.addView(button, params);
-        bottomButtons.add(button);
-    }
-
     private void showDashboard() {
         currentSection = SECTION_DASHBOARD;
         selectedPlugin = null;
-        interfaceManagementOpen = false;
-        pluginRepositoryOpen = false;
         invalidateComposeUi();
-    }
-
-    private View createDashboardView() {
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(0, dp(8), 0, dp(8));
-        scrollView.addView(root, new ScrollView.LayoutParams(-1, -2));
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.VERTICAL);
-
-        TextView date = new TextView(this);
-        date.setText(new SimpleDateFormat("yyyy年M月d日", Locale.CHINA).format(new Date()));
-        UiKit.styleCaption(date);
-        header.addView(date, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView title = new TextView(this);
-        title.setText("工具台");
-        UiKit.styleTitle(title, 30);
-        header.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView subtitle = new TextView(this);
-        subtitle.setText(String.format(Locale.US, "%d 个插件 · %d 个主页小部件", plugins.size(), collectWidgets().size()));
-        UiKit.styleBody(subtitle);
-        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
-        subtitleParams.topMargin = dp(2);
-        header.addView(subtitle, subtitleParams);
-        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
-
-        LinearLayout quick = UiKit.card(this);
-        quick.setBackground(UiKit.roundedStroke(0xFFEAF6F4, 0xFFD2E8E4, 8, this));
-        LinearLayout.LayoutParams quickParams = new LinearLayout.LayoutParams(-1, -2);
-        quickParams.topMargin = dp(18);
-
-        TextView quickTitle = new TextView(this);
-        quickTitle.setText("运行概览");
-        UiKit.styleTitle(quickTitle, 18);
-        quick.addView(quickTitle, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView quickText = new TextView(this);
-        quickText.setText(buildDashboardSummary());
-        UiKit.styleBody(quickText);
-        LinearLayout.LayoutParams quickTextParams = new LinearLayout.LayoutParams(-1, -2);
-        quickTextParams.topMargin = dp(6);
-        quick.addView(quickText, quickTextParams);
-        root.addView(quick, quickParams);
-
-        addSectionLabel(root, "主页小部件", dp(20));
-        List<WidgetRegistration> widgets = collectWidgets();
-        boolean hasVisibleWidget = false;
-        for (WidgetRegistration registration : widgets) {
-            if (isWidgetVisible(registration.key)) {
-                LinearLayout.LayoutParams widgetParams = new LinearLayout.LayoutParams(-1, -2);
-                widgetParams.bottomMargin = dp(10);
-                root.addView(registration.widget.createView(this, this), widgetParams);
-                hasVisibleWidget = true;
-            }
-        }
-        if (!hasVisibleWidget) {
-            root.addView(createEmptyCard("还没有启用主页小部件。你可以在下方自由组合插件的小部件。"), new LinearLayout.LayoutParams(-1, -2));
-        }
-
-        addSectionLabel(root, "自定义主页", dp(12));
-        LinearLayout customizer = UiKit.card(this);
-        for (WidgetRegistration registration : widgets) {
-            CheckBox checkBox = new CheckBox(this);
-            checkBox.setText(registration.widget.title() + " · " + registration.pluginTitle);
-            checkBox.setTextSize(14);
-            checkBox.setTextColor(UiKit.COLOR_TEXT);
-            checkBox.setChecked(isWidgetVisible(registration.key));
-            checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                setWidgetVisible(registration.key, isChecked);
-                showDashboard();
-            });
-            customizer.addView(checkBox, new LinearLayout.LayoutParams(-1, -2));
-        }
-        if (widgets.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("插件还没有注册主页小部件。");
-            UiKit.styleBody(empty);
-            customizer.addView(empty, new LinearLayout.LayoutParams(-1, -2));
-        }
-        root.addView(customizer, new LinearLayout.LayoutParams(-1, -2));
-        return scrollView;
     }
 
     private void showPluginList() {
         currentSection = SECTION_PLUGINS;
         selectedPlugin = null;
-        interfaceManagementOpen = false;
-        pluginRepositoryOpen = false;
         invalidateComposeUi();
     }
 
-    private View createPluginListView() {
-        ScrollView scrollView = new ScrollView(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(0, dp(8), 0, dp(8));
-        scrollView.addView(root, new ScrollView.LayoutParams(-1, -2));
-
-        TextView title = new TextView(this);
-        title.setText("插件");
-        UiKit.styleTitle(title, 30);
-        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView subtitle = new TextView(this);
-        subtitle.setText("每个插件都有自己的页面。点开插件即可进入它的功能界面。");
-        UiKit.styleBody(subtitle);
-        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
-        subtitleParams.topMargin = dp(4);
-        root.addView(subtitle, subtitleParams);
-
-        for (ToolPlugin plugin : plugins) {
-            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
-            rowParams.topMargin = dp(12);
-            root.addView(createPluginRow(plugin), rowParams);
-        }
-        return scrollView;
-    }
-
-    private View createPluginRow(ToolPlugin plugin) {
-        LinearLayout row = UiKit.card(this);
-        row.setOnClickListener(v -> openPlugin(plugin));
-
-        TextView title = new TextView(this);
-        title.setText(plugin.title());
-        UiKit.styleTitle(title, 18);
-        row.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView description = new TextView(this);
-        description.setText(plugin.description());
-        UiKit.styleBody(description);
-        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2);
-        descriptionParams.topMargin = dp(4);
-        row.addView(description, descriptionParams);
-
-        TextView meta = new TextView(this);
-        meta.setText((plugin.removable() ? "外部插件" : "内置插件")
-                + " · 版本 " + plugin.version()
-                + " · 依赖 " + plugin.dependencies().size()
-                + " · 小部件 " + plugin.createHomeWidgets(this, this).size());
-        UiKit.styleCaption(meta);
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
-        metaParams.topMargin = dp(8);
-        row.addView(meta, metaParams);
-
-        Button open = new Button(this);
-        open.setText("打开");
-        UiKit.styleSecondaryButton(open);
-        open.setOnClickListener(v -> openPlugin(plugin));
-        LinearLayout.LayoutParams openParams = new LinearLayout.LayoutParams(-1, dp(44));
-        openParams.topMargin = dp(10);
-        row.addView(open, openParams);
-        return row;
-    }
-
     private void openPlugin(ToolPlugin plugin) {
-        pluginReturnSection = currentSection == SECTION_DASHBOARD
-                ? SECTION_DASHBOARD
-                : SECTION_PLUGINS;
+        pluginReturnSection = currentSection;
         selectedPlugin = plugin;
         plugin.onSelected();
         invalidateComposeUi();
     }
 
-    private void detachFromParent(View view) {
-        ViewParent parent = view.getParent();
-        if (parent instanceof ViewGroup) {
-            ((ViewGroup) parent).removeView(view);
-        }
-    }
-
     private void showPluginManager() {
         currentSection = SECTION_MANAGER;
         selectedPlugin = null;
-        interfaceManagementOpen = false;
-        pluginRepositoryOpen = false;
         invalidateComposeUi();
-    }
-
-    private void updateBottomButtons() {
-        for (int i = 0; i < bottomButtons.size(); i++) {
-            UiKit.styleTab(bottomButtons.get(i), i == currentSection);
-        }
-    }
-
-    private void addSectionLabel(LinearLayout root, String text, int topMargin) {
-        TextView label = new TextView(this);
-        label.setText(text);
-        UiKit.styleTitle(label, 18);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.topMargin = topMargin;
-        params.bottomMargin = dp(8);
-        root.addView(label, params);
-    }
-
-    private View createEmptyCard(String message) {
-        LinearLayout card = UiKit.card(this);
-        TextView text = new TextView(this);
-        text.setText(message);
-        text.setGravity(Gravity.CENTER);
-        UiKit.styleBody(text);
-        card.addView(text, new LinearLayout.LayoutParams(-1, -2));
-        return card;
-    }
-
-    private String buildDashboardSummary() {
-        int external = 0;
-        for (ToolPlugin plugin : plugins) {
-            if (plugin.removable()) {
-                external++;
-            }
-        }
-        return "内置插件 " + (plugins.size() - external)
-                + " 个，外部插件 " + external
-                + " 个。插件管理负责导入、导出、删除和权限授予。";
     }
 
     private List<WidgetRegistration> collectWidgets() {
@@ -700,14 +507,16 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
         loadPlugins();
         selectedPlugin = findPlugin(preferredPluginId);
-        if (currentSection == SECTION_DASHBOARD) {
-            showDashboard();
-        } else if (currentSection == SECTION_MANAGER) {
-            showPluginManager();
-        } else if (selectedPlugin != null) {
+        if (selectedPlugin != null) {
             openPlugin(selectedPlugin);
-        } else {
+            return;
+        }
+        // 装卸插件不该顺带把用户挪到别的分区：在仓库里删一个插件，之后还应该留在仓库。
+        // 只有原来打开的就是插件详情、而那个插件没了，才退回工具页。
+        if (currentSection == SECTION_PLUGINS) {
             showPluginList();
+        } else {
+            navigateForUi(currentSection);
         }
     }
 
@@ -763,13 +572,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         composeScrollPositions.put(page, new int[]{Math.max(0, index), Math.max(0, offset)});
     }
 
-    public void rebuildComposeUi() {
-        if (isFinishing() || isDestroyed()) {
-            return;
-        }
-        setContentView(createContentView());
-    }
-
     public int currentSectionForUi() {
         return currentSection;
     }
@@ -786,8 +588,40 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return orderedTools(true);
     }
 
+    public ToolPlugin findToolForUi(String pluginId) {
+        return findPlugin(pluginId);
+    }
+
     public boolean isToolVisibleForUi(ToolPlugin plugin) {
         return !uiPreferences.getStringSet(PREF_HIDDEN_TOOLS, new LinkedHashSet<>()).contains(plugin.id());
+    }
+
+    /**
+     * 这个插件能不能被停用。
+     *
+     * 必需内置插件（宿主自身能力）不行；可选内置插件和外部插件都行。工具页的长按菜单据此决定
+     * 要不要显示「停用插件」——把一个停不掉的开关摆出来只会让人以为功能坏了。
+     */
+    public boolean canDisablePluginForUi(ToolPlugin plugin) {
+        if (findImportedDescriptor(plugin.id()) != null) {
+            return true;
+        }
+        // 只认可选内置插件。必需内置插件即使传进 setBuiltInPluginEnabled 也停不掉。
+        for (ToolPlugin optional : ToolRegistry.createOptionalBuiltInPlugins()) {
+            if (optional.id().equals(plugin.id())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 停用插件，自动分派到内置或外部两条通道。依赖校验与提示由被调用方负责。 */
+    public void disablePluginForUi(ToolPlugin plugin) {
+        if (findImportedDescriptor(plugin.id()) != null) {
+            setImportedPluginEnabled(plugin.id(), false);
+        } else if (canDisablePluginForUi(plugin)) {
+            setBuiltInPluginEnabled(plugin.id(), false);
+        }
     }
 
     public void setToolVisibleForUi(ToolPlugin plugin, boolean visible) {
@@ -810,6 +644,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         tools.add(Math.max(0, Math.min(tools.size(), target)), moved);
         List<String> ids = new ArrayList<>();
         for (ToolPlugin tool : tools) ids.add(tool.id());
+        saveOrder(PREF_TOOL_ORDER, ids);
+        invalidateComposeUi();
+    }
+
+    public void restoreToolOrderForUi(List<String> ids) {
         saveOrder(PREF_TOOL_ORDER, ids);
         invalidateComposeUi();
     }
@@ -878,12 +717,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
     }
 
-    public boolean isWidgetFullWidthForUi(HomeWidget widget) {
-        return widgetWidthUnitsForUi(widget) == 4;
-    }
-
-    public void setWidgetFullWidthForUi(HomeWidget widget, boolean fullWidth) {
-        setWidgetSizeForUi(widget, fullWidth ? 4 : 2, widgetHeightUnitsForUi(widget));
+    public void restoreWidgetOrderForUi(List<String> keys) {
+        saveOrder(PREF_WIDGET_ORDER, keys);
+        invalidateComposeUi();
     }
 
     public int widgetWidthUnitsForUi(HomeWidget widget) {
@@ -902,23 +738,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         sizes.add(key + "=" + requested.widthUnits + "x" + requested.heightUnits);
         uiPreferences.edit().putStringSet(PREF_WIDGET_SIZES, sizes).apply();
         invalidateComposeUi();
-    }
-
-    public int widgetSizeIndexForUi(HomeWidget widget) {
-        return widget.supportedSizes().indexOf(currentWidgetSizeForUi(widget));
-    }
-
-    public int widgetSizeCountForUi(HomeWidget widget) {
-        return widget.supportedSizes().size();
-    }
-
-    public void changeWidgetSizeForUi(HomeWidget widget, int direction) {
-        List<HomeWidgetSize> supported = widget.supportedSizes();
-        if (supported.isEmpty()) return;
-        int current = Math.max(0, supported.indexOf(currentWidgetSizeForUi(widget)));
-        int target = Math.max(0, Math.min(supported.size() - 1, current + direction));
-        HomeWidgetSize size = supported.get(target);
-        setWidgetSizeForUi(widget, size.widthUnits, size.heightUnits);
     }
 
     private HomeWidgetSize currentWidgetSizeForUi(HomeWidget widget) {
@@ -968,7 +787,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     public void navigateForUi(int section) {
         if (section == SECTION_DASHBOARD) showDashboard();
         else if (section == SECTION_PLUGINS) showPluginList();
-        else showPluginManager();
+        else if (section == SECTION_MANAGER) showPluginManager();
+        else if (section == SECTION_STORE) showPluginRepositoryForUi();
+        else if (section == SECTION_SETTINGS) showSettingsForUi();
+        else if (section == SECTION_ABOUT) showAboutForUi();
     }
 
     public void openPluginForUi(ToolPlugin plugin) {
@@ -983,57 +805,258 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public void closePluginForUi() {
-        if (pluginReturnSection == SECTION_DASHBOARD) {
-            showDashboard();
-        } else {
-            showPluginList();
-        }
+        selectedPlugin = null;
+        currentSection = pluginReturnSection;
+        invalidateComposeUi();
     }
 
     public List<ImportedPluginDescriptor> importedDescriptorsForUi() {
         return externalPluginStore.load();
     }
 
-    public boolean isInterfaceManagementOpenForUi() {
-        return interfaceManagementOpen;
-    }
-
-    public void showInterfaceManagementForUi() {
-        currentSection = SECTION_MANAGER;
-        selectedPlugin = null;
-        pluginRepositoryOpen = false;
-        interfaceManagementOpen = true;
-        invalidateComposeUi();
-    }
-
-    public void closeInterfaceManagementForUi() {
-        interfaceManagementOpen = false;
-        invalidateComposeUi();
-    }
-
-    public boolean isPluginRepositoryOpenForUi() {
-        return pluginRepositoryOpen;
-    }
-
     public void showPluginRepositoryForUi() {
-        currentSection = SECTION_MANAGER;
+        currentSection = SECTION_STORE;
         selectedPlugin = null;
-        interfaceManagementOpen = false;
-        pluginRepositoryOpen = true;
         invalidateComposeUi();
     }
 
-    public void closePluginRepositoryForUi() {
-        pluginRepositoryOpen = false;
+    public void showSettingsForUi() {
+        currentSection = SECTION_SETTINGS;
+        selectedPlugin = null;
         invalidateComposeUi();
     }
 
-    public String updateStatusForUi() {
-        return updateStatus;
+    public void showAboutForUi() {
+        currentSection = SECTION_ABOUT;
+        selectedPlugin = null;
+        invalidateComposeUi();
     }
 
-    public boolean isUpdateCatalogCachedForUi() {
-        return updateCatalogCached;
+    public UpdateCheckState updateCheckStateForUi() {
+        return updateCheckState;
+    }
+
+    public String updateErrorForUi() {
+        return updateError;
+    }
+
+    public int availableUpdateCountForUi() {
+        if (updateCatalog == null) return 0;
+        int available = appUpdateForUi() == null ? 0 : 1;
+        for (UpdateCatalog.PluginRelease release : updateCatalog.plugins) {
+            if (isRepositoryPluginUpdateAvailableForUi(release)) available++;
+        }
+        return available;
+    }
+
+    public List<UpdateCatalog.PluginRelease> availablePluginUpdatesForUi() {
+        if (updateCatalog == null) return Collections.emptyList();
+        List<UpdateCatalog.PluginRelease> result = new ArrayList<>();
+        for (UpdateCatalog.PluginRelease release : updateCatalog.plugins) {
+            if (isRepositoryPluginUpdateAvailableForUi(release)) result.add(release);
+        }
+        return result;
+    }
+
+    public boolean isUpdatePromptVisibleForUi() {
+        return updatePromptVisible && availableUpdateCountForUi() > 0;
+    }
+
+    public void closeUpdatePromptForUi() {
+        updatePromptVisible = false;
+        invalidateComposeUi();
+    }
+
+    public void dismissCurrentUpdatesForUi() {
+        String fingerprint = currentUpdateFingerprint();
+        if (!fingerprint.isEmpty()) {
+            uiPreferences.edit().putString(PREF_DISMISSED_UPDATE_VERSIONS, fingerprint).apply();
+        }
+        closeUpdatePromptForUi();
+    }
+
+    public void installAllUpdatesForUi() {
+        updatePromptVisible = false;
+        if (appUpdateForUi() != null) installAppUpdateForUi();
+        installAllPluginUpdatesForUi();
+        invalidateComposeUi();
+    }
+
+    public String consumeSnackbarMessageForUi() {
+        String value = snackbarMessage;
+        snackbarMessage = null;
+        return value;
+    }
+
+    public String consumeSnackbarActionForUi() {
+        String value = snackbarAction;
+        snackbarAction = null;
+        return value;
+    }
+
+    public void retrySnackbarActionForUi() {
+        checkForUpdates(true, true, false);
+    }
+
+    public ComposeDialogState composeDialogForUi() {
+        return composeDialog;
+    }
+
+    public void dismissComposeDialogForUi() {
+        composeDialog = null;
+        invalidateComposeUi();
+    }
+
+    public void confirmComposeDialogForUi() {
+        ComposeDialogState dialog = composeDialog;
+        composeDialog = null;
+        invalidateComposeUi();
+        if (dialog != null && dialog.onConfirm != null) dialog.onConfirm.run();
+    }
+
+    private void showComposeDialog(
+            String title,
+            String message,
+            String dismissLabel,
+            String confirmLabel,
+            Runnable onConfirm
+    ) {
+        composeDialog = new ComposeDialogState(title, message, dismissLabel, confirmLabel, onConfirm);
+        invalidateComposeUi();
+    }
+
+    public String themePreferenceForUi() {
+        return uiPreferences.getString(PREF_THEME, "system");
+    }
+
+    public void setThemePreferenceForUi(String value) {
+        String selected = "light".equals(value) || "dark".equals(value) ? value : "system";
+        uiPreferences.edit().putString(PREF_THEME, selected).apply();
+        syncSuiteThemePreferences();
+        invalidateComposeUi();
+    }
+
+    public String colorPreferenceForUi() {
+        return "dynamic".equals(uiPreferences.getString(PREF_COLOR, "brand")) ? "dynamic" : "brand";
+    }
+
+    public void setColorPreferenceForUi(String value) {
+        uiPreferences.edit().putString(PREF_COLOR, "dynamic".equals(value) ? "dynamic" : "brand").apply();
+        syncSuiteThemePreferences();
+        invalidateComposeUi();
+    }
+
+    private void syncSuiteThemePreferences() {
+        SuiteThemePreference theme;
+        switch (themePreferenceForUi()) {
+            case "light": theme = SuiteThemePreference.LIGHT; break;
+            case "dark": theme = SuiteThemePreference.DARK; break;
+            default: theme = SuiteThemePreference.SYSTEM; break;
+        }
+        SuiteColorPreference color = "dynamic".equals(colorPreferenceForUi())
+                ? SuiteColorPreference.DYNAMIC
+                : SuiteColorPreference.BRAND;
+        SuiteThemePreferences.INSTANCE.update(theme, color);
+    }
+
+    public boolean autoCheckUpdatesForUi() {
+        return uiPreferences.getBoolean(PREF_AUTO_CHECK_UPDATES, true);
+    }
+
+    public void setAutoCheckUpdatesForUi(boolean enabled) {
+        uiPreferences.edit().putBoolean(PREF_AUTO_CHECK_UPDATES, enabled).apply();
+        invalidateComposeUi();
+    }
+
+    /**
+     * 单个插件是否参与更新检查。
+     *
+     * 记的是「排除集合」而不是「包含集合」：新装的插件默认跟着检查，只有用户显式关掉的才落盘。
+     * 关掉之后这个插件不再计入更新角标、更新弹窗和「全部更新」，但仓库里仍然可以手动选版本安装。
+     */
+    public boolean isPluginUpdateCheckEnabledForUi(String pluginId) {
+        return !uiPreferences.getStringSet(PREF_UPDATE_CHECK_EXCLUDED, new LinkedHashSet<>()).contains(pluginId);
+    }
+
+    public void setPluginUpdateCheckEnabledForUi(String pluginId, boolean enabled) {
+        Set<String> excluded = new LinkedHashSet<>(
+                uiPreferences.getStringSet(PREF_UPDATE_CHECK_EXCLUDED, new LinkedHashSet<>())
+        );
+        if (enabled) excluded.remove(pluginId); else excluded.add(pluginId);
+        uiPreferences.edit().putStringSet(PREF_UPDATE_CHECK_EXCLUDED, excluded).apply();
+        invalidateComposeUi();
+    }
+
+    public long lastUpdateCheckForUi() {
+        return uiPreferences.getLong(PREF_LAST_UPDATE_CHECK, 0L);
+    }
+
+    public void checkUpdatesManuallyForUi() {
+        checkForUpdates(true, true, false);
+    }
+
+    public String appVersionNameForUi() {
+        return BuildConfig.VERSION_NAME;
+    }
+
+    public int appVersionCodeForUi() {
+        return BuildConfig.VERSION_CODE;
+    }
+
+    public String pluginSdkVersionForUi() {
+        return BuildConfig.PLUGIN_SDK_VERSION;
+    }
+
+    public String buildTypeForUi() {
+        return BuildConfig.BUILD_TYPE;
+    }
+
+    public String buildCommitForUi() {
+        return BuildConfig.BUILD_COMMIT_SHA;
+    }
+
+    public boolean isDebugBuildForUi() {
+        return BuildConfig.DEBUG;
+    }
+
+    public String requiredAppVersionLabelForUi(int minVersionCode) {
+        if (minVersionCode <= BuildConfig.VERSION_CODE) return BuildConfig.VERSION_NAME;
+        if (minVersionCode == 15) return "1.5.0";
+        return "更新版本";
+    }
+
+    public boolean shouldShowStoreRiskForUi() {
+        return !uiPreferences.getBoolean(PREF_STORE_RISK_ACKNOWLEDGED, false);
+    }
+
+    public void acknowledgeStoreRiskForUi() {
+        uiPreferences.edit().putBoolean(PREF_STORE_RISK_ACKNOWLEDGED, true).apply();
+    }
+
+    public void requestDeletePluginForUi(String pluginId) {
+        ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
+        if (descriptor == null) return;
+        showComposeDialog(
+                "删除 " + descriptor.title + "？",
+                "插件包会从应用中移除。插件自行保存的业务数据不会自动清理。",
+                "取消",
+                "删除",
+                () -> deleteImportedPlugin(pluginId)
+        );
+    }
+
+    public void openProjectForUi() {
+        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/android-tool-suite")));
+    }
+
+    public void showOpenSourceLicensesForUi() {
+        showComposeDialog(
+                "开源许可",
+                "Android Tool Suite 及其组件使用的开源许可随各组件源码发布。可从项目地址查看完整版权与许可文件。",
+                "",
+                "知道了",
+                null
+        );
     }
 
     public List<UpdateCatalog.PluginRelease> repositoryPluginsForUi() {
@@ -1079,10 +1102,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
         uiPreferences.edit().putString(PREF_PLUGIN_REPOSITORY_CHANNEL, selected).apply();
         updateCatalog = null;
-        updateCatalogCached = false;
         updateStatus = "正在切换到" + pluginRepositoryChannelLabelForUi() + "…";
+        updateCheckState = UpdateCheckState.CHECKING;
         invalidateComposeUi();
-        checkForUpdates(true);
+        checkForUpdates(true, false, true);
     }
 
     public UpdateCatalog.AppRelease appUpdateForUi() {
@@ -1105,11 +1128,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return updateOperations.contains(id);
     }
 
-    public boolean isRepositoryPluginInstalledForUi(String id) {
-        return findImportedDescriptor(id) != null;
-    }
-
     public boolean isRepositoryPluginUpdateAvailableForUi(UpdateCatalog.PluginRelease release) {
+        if (!isPluginUpdateCheckEnabledForUi(release.id)) {
+            return false;
+        }
         ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
         return PluginUpdatePolicy.isUpdateAvailable(
                 release,
@@ -1164,7 +1186,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return "正在下载…";
         }
         if (release.minHostVersionCode > BuildConfig.VERSION_CODE) {
-            return "需要更新宿主";
+            return "需要更新应用";
         }
         switch (assessPluginTransition(release)) {
             case INSTALL:
@@ -1199,21 +1221,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return externalPluginStore.isRepositoryVerified(pluginId);
     }
 
-    public String repositorySourceForUi(String pluginId) {
-        return externalPluginStore.sourceReleaseUrl(pluginId);
-    }
-
-    public String repositoryVerificationLabelForUi(String pluginId) {
-        if (!externalPluginStore.isRepositoryVerified(pluginId)) {
-            return "来源：本地导入 · 未经仓库验证";
-        }
-        return UpdateCatalog.CHANNEL_DEBUG.equals(externalPluginStore.repositoryChannel(pluginId))
-                ? "来源：调试插件仓库 · 已校验"
-                : "来源：正式插件仓库 · 已校验";
-    }
-
     public void refreshUpdatesForUi() {
-        checkForUpdates(true);
+        checkForUpdates(true, true, true);
     }
 
     public void installAppUpdateForUi() {
@@ -1274,7 +1283,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return;
         }
         if (release.minHostVersionCode > BuildConfig.VERSION_CODE) {
-            showToast("请先将宿主更新到兼容版本");
+            showToast("请先将应用更新到兼容版本");
             return;
         }
         PluginUpdatePolicy.Transition transition = assessPluginTransition(release);
@@ -1303,18 +1312,16 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         if (transition == PluginUpdatePolicy.Transition.DOWNGRADE_COMPATIBLE
                 || transition == PluginUpdatePolicy.Transition.REINSTALL_COMPATIBLE) {
             boolean downgrade = transition == PluginUpdatePolicy.Transition.DOWNGRADE_COMPATIBLE;
-            new AlertDialog.Builder(this)
-                    .setTitle(downgrade ? "确认降级插件" : "确认使用保留数据")
-                    .setMessage((downgrade
+            showComposeDialog(
+                    downgrade ? "确认降级插件" : "确认使用保留数据",
+                    (downgrade
                             ? "将 " + release.title + " 降级到 " + release.versionName + "。"
                             : "重新安装 " + release.title + " " + release.versionName + "。")
-                            + "目标版本声明可读取当前数据格式，但安装不会回滚或清理插件已经写入的业务数据。建议先使用插件自身的导出功能备份。")
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton(
-                            downgrade ? "继续降级" : "继续安装",
-                            (dialog, which) -> performRepositoryPluginInstall(release)
-                    )
-                    .show();
+                            + "目标版本声明可读取当前数据格式，但安装不会回滚或清理插件已经写入的业务数据。建议先使用插件自身的导出功能备份。",
+                    "取消",
+                    downgrade ? "继续降级" : "继续安装",
+                    () -> performRepositoryPluginInstall(release)
+            );
             return;
         }
         performRepositoryPluginInstall(release);
@@ -1377,11 +1384,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private void showBlockedPluginTransitionDialog(String title, String message) {
-        new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setMessage(message)
-                .setPositiveButton("知道了", null)
-                .show();
+        showComposeDialog(title, message, "", "知道了", null);
     }
 
     private PluginUpdatePolicy.Transition assessPluginTransition(UpdateCatalog.PluginRelease release) {
@@ -1455,12 +1458,14 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
-    private void checkForUpdates(boolean force) {
+    private void checkForUpdates(boolean force, boolean userInitiated, boolean repositoryRefresh) {
         if (updateOperations.contains("__check__")) {
             return;
         }
         updateOperations.add("__check__");
         updateStatus = "正在检查" + pluginRepositoryChannelLabelForUi() + "更新…";
+        updateCheckState = UpdateCheckState.CHECKING;
+        updateError = "";
         invalidateComposeUi();
         String appChannel = BuildConfig.DEBUG
                 ? UpdateCatalog.CHANNEL_DEBUG
@@ -1470,19 +1475,23 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             public void onSuccess(UpdateCatalog catalog, boolean cached) {
                 updateOperations.remove("__check__");
                 updateCatalog = catalog;
-                updateCatalogCached = cached;
-                int available = appUpdateForUi() == null ? 0 : 1;
-                for (UpdateCatalog.PluginRelease release : catalog.plugins) {
-                    if (isRepositoryPluginUpdateAvailableForUi(release)) {
-                        available++;
-                    }
-                }
+                uiPreferences.edit().putLong(PREF_LAST_UPDATE_CHECK, System.currentTimeMillis()).apply();
+                int available = availableUpdateCountForUi();
                 if (available > 0) {
                     updateStatus = "发现 " + available + " 项更新"
                             + (cached ? "（缓存索引）" : "");
+                    updateCheckState = UpdateCheckState.AVAILABLE;
+                    updatePromptVisible = !currentUpdateFingerprint().equals(
+                            uiPreferences.getString(PREF_DISMISSED_UPDATE_VERSIONS, "")
+                    );
                 } else {
                     updateStatus = "已是最新版本"
                             + (cached ? "（缓存索引）" : "");
+                    updateCheckState = UpdateCheckState.UP_TO_DATE;
+                    updatePromptVisible = false;
+                    if (userInitiated && !repositoryRefresh) {
+                        enqueueSnackbar("已是最新版本", null);
+                    }
                 }
                 invalidateComposeUi();
             }
@@ -1490,11 +1499,38 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             @Override
             public void onError(String message) {
                 updateOperations.remove("__check__");
-                updateCatalogCached = false;
                 updateStatus = "检查更新失败：" + message;
+                updateError = message;
+                updatePromptVisible = false;
+                if (userInitiated) {
+                    updateCheckState = UpdateCheckState.FAILED;
+                    if (!repositoryRefresh) enqueueSnackbar(updateStatus, "重试");
+                } else {
+                    updateCheckState = UpdateCheckState.IDLE;
+                    updateError = "";
+                }
                 invalidateComposeUi();
             }
         });
+    }
+
+    private String currentUpdateFingerprint() {
+        if (updateCatalog == null) return "";
+        List<String> versions = new ArrayList<>();
+        UpdateCatalog.AppRelease appRelease = appUpdateForUi();
+        if (appRelease != null) versions.add("app:" + appRelease.versionCode);
+        for (UpdateCatalog.PluginRelease release : updateCatalog.plugins) {
+            if (isRepositoryPluginUpdateAvailableForUi(release)) {
+                versions.add(release.id + ":" + release.versionCode + ":" + release.sha256);
+            }
+        }
+        Collections.sort(versions);
+        return String.join("|", versions);
+    }
+
+    private void enqueueSnackbar(String message, String action) {
+        snackbarMessage = message;
+        snackbarAction = action;
     }
 
     private void validateRepositoryPlugin(
@@ -1512,7 +1548,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             throw new IOException("插件兼容性信息与仓库索引不一致");
         }
         if (descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
-            throw new IOException("当前宿主版本不兼容此插件");
+            throw new IOException("当前应用版本不兼容此插件");
         }
         if (!descriptor.dependencies.equals(release.dependencies)) {
             throw new IOException("插件依赖信息与仓库索引不一致");
@@ -1792,7 +1828,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     @Override
     public void showToast(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        runOnUiThread(() -> {
+            enqueueSnackbar(message, null);
+            invalidateComposeUi();
+        });
     }
 
     @Override
@@ -1824,7 +1863,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 return;
             }
             if (descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
-                showToast("当前宿主版本不兼容此插件");
+                showToast("当前应用版本不兼容此插件");
                 return;
             }
             boolean updating = findImportedDescriptor(descriptor.id) != null;
@@ -1898,14 +1937,15 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
             String message = "来源：" + snapshot.sourcePackage + " " + snapshot.sourceVersionName
                     + "\n插件：" + prepared.size() + " 个"
-                    + "\n\n将迁移宿主布局、仓库选择、插件包与启用状态。"
+                    + "\n\n将迁移应用布局、仓库选择、插件包与启用状态。"
                     + "目标端独有插件会保留；账号凭据和插件业务数据不会迁移。";
-            new AlertDialog.Builder(this)
-                    .setTitle("导入 Android Tool Suite 迁移包？")
-                    .setMessage(message)
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("导入", (dialog, which) -> applyMigration(snapshot, prepared))
-                    .show();
+            showComposeDialog(
+                    "导入 Android Tool Suite 迁移包？",
+                    message,
+                    "取消",
+                    "导入",
+                    () -> applyMigration(snapshot, prepared)
+            );
         } catch (IOException | JSONException error) {
             showToast("读取迁移包失败：" + error.getMessage());
         }
@@ -2119,7 +2159,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 throw new IOException("插件 ID 与内置插件冲突：" + entry.id);
             }
             if (pluginImport.descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
-                throw new IOException("插件要求更高版本宿主：" + pluginImport.descriptor.title);
+                throw new IOException("插件要求更高版本应用：" + pluginImport.descriptor.title);
             }
             preflightPlugin(pluginImport);
             prepared.add(new PreparedMigrationPlugin(pluginImport, entry.enabled));
@@ -2244,21 +2284,21 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 @Override
                 public void apply() throws IOException {
                     if (!applyHostSettings(mergedHost)) {
-                        throw new IOException("无法保存宿主设置");
+                        throw new IOException("无法保存应用设置");
                     }
                 }
 
                 @Override
                 public void rollback() throws IOException {
                     if (!applyHostSettings(previousHost)) {
-                        throw new IOException("无法恢复宿主设置");
+                        throw new IOException("无法恢复应用设置");
                     }
                 }
             });
             MigrationTransaction.execute(operations);
             reloadPlugins(null);
             updateCatalog = null;
-            checkForUpdates(true);
+            checkForUpdates(true, false, false);
             showToast("迁移完成：已导入 " + prepared.size() + " 个插件");
         } catch (IOException | JSONException error) {
             reloadPlugins(null);
@@ -2556,10 +2596,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             shellServiceBinding = false;
             shellServiceArgs = null;
         }
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private static final class WidgetRegistration {

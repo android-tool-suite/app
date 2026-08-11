@@ -7,6 +7,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+@Deprecated
 public final class UiKit {
     public static final int COLOR_BACKGROUND = 0xFFF5F7F8;
     public static final int COLOR_SURFACE = 0xFFFFFFFF;

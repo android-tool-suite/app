@@ -25,6 +25,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
@@ -32,13 +36,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+// 浅色档的容器色刻意压得比 Material 生成器给的更暗、更不饱和：
+// primaryContainer 会铺满主页顶部那张摘要卡，#9EF2E2 那种亮青在浅色背景上是整屏最刺眼的一块。
 private val LightColors = lightColorScheme(
     primary = Color(0xFF006B5F),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFF9EF2E2),
+    primaryContainer = Color(0xFFC3E4DC),
     onPrimaryContainer = Color(0xFF00201B),
     secondary = Color(0xFF4A635E),
-    secondaryContainer = Color(0xFFCDE8E1),
+    secondaryContainer = Color(0xFFD5E7E2),
     tertiary = Color(0xFF446179),
     background = Color(0xFFF7FAF8),
     surface = Color(0xFFF7FAF8),
@@ -62,6 +68,17 @@ private val DarkColors = darkColorScheme(
     error = Color(0xFFFFB4AB),
 )
 
+/**
+ * SDK 1.1.0 的固定语义色。
+ *
+ * 这几个值只有浅色一档，放在深色面板上对比度不足，已由成对的 [SuiteSemantic] 取代。
+ * 仍然保留是因为它是 1.1.0 的公开 API，外部插件可能已经编译进去了——直接删会让那些插件
+ * 在运行时抛 NoSuchFieldError。新代码不要再用。
+ */
+@Deprecated(
+    message = "改用 SuiteSemantic.current，它有浅色与深色两套值。",
+    replaceWith = ReplaceWith("SuiteSemantic.current"),
+)
 object SuiteColors {
     val Success = Color(0xFF1B6B45)
     val Warning = Color(0xFF8A4F00)
@@ -69,10 +86,25 @@ object SuiteColors {
     val Info = Color(0xFF245D91)
 }
 
+enum class SuiteThemePreference { SYSTEM, LIGHT, DARK }
+enum class SuiteColorPreference { BRAND, DYNAMIC }
+
+object SuiteThemePreferences {
+    var themePreference: SuiteThemePreference by mutableStateOf(SuiteThemePreference.SYSTEM)
+        private set
+    var colorPreference: SuiteColorPreference by mutableStateOf(SuiteColorPreference.BRAND)
+        private set
+
+    fun update(theme: SuiteThemePreference, color: SuiteColorPreference) {
+        themePreference = theme
+        colorPreference = color
+    }
+}
+
 @Composable
 fun SuiteTheme(
     darkTheme: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -82,17 +114,42 @@ fun SuiteTheme(
         darkTheme -> DarkColors
         else -> LightColors
     }
-    MaterialTheme(
-        colorScheme = scheme,
-        typography = MaterialTheme.typography.copy(
-            headlineLarge = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold, fontSize = 32.sp),
-            headlineSmall = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-            titleLarge = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-            titleMedium = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            labelLarge = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-        ),
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalSuiteSemanticColors provides if (darkTheme) DarkSemanticColors else LightSemanticColors,
+        LocalSuiteDarkTheme provides darkTheme,
+    ) {
+        MaterialTheme(
+            colorScheme = scheme,
+            shapes = MaterialTheme.shapes.copy(
+                extraSmall = SuiteShapes.Chip,
+                medium = SuiteShapes.Inner,
+                large = SuiteShapes.Card,
+                extraLarge = SuiteShapes.Dialog,
+            ),
+            typography = MaterialTheme.typography.copy(
+                headlineLarge = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold, fontSize = 32.sp),
+                headlineSmall = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                titleLarge = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                titleMedium = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                labelLarge = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            ),
+            content = content,
+        )
+    }
+}
+
+@Composable
+fun SuiteTheme(
+    themePreference: SuiteThemePreference,
+    colorPreference: SuiteColorPreference,
+    content: @Composable () -> Unit,
+) {
+    val darkTheme = when (themePreference) {
+        SuiteThemePreference.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+        SuiteThemePreference.LIGHT -> false
+        SuiteThemePreference.DARK -> true
+    }
+    SuiteTheme(darkTheme, colorPreference == SuiteColorPreference.DYNAMIC, content)
 }
 
 @Composable
@@ -103,7 +160,7 @@ fun SuiteCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = SuiteShapes.Card,
         colors = CardDefaults.cardColors(containerColor = containerColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -131,9 +188,9 @@ fun SectionHeader(title: String, subtitle: String? = null, action: (@Composable 
 
 @Composable
 fun Notice(text: String, warning: Boolean = false, modifier: Modifier = Modifier) {
-    val color = if (warning) SuiteColors.WarningContainer else MaterialTheme.colorScheme.secondaryContainer
-    val onColor = if (warning) Color(0xFF2B1700) else MaterialTheme.colorScheme.onSecondaryContainer
-    Surface(modifier.fillMaxWidth(), color = color, shape = RoundedCornerShape(18.dp)) {
+    val color = if (warning) SuiteSemantic.current.warningContainer else MaterialTheme.colorScheme.secondaryContainer
+    val onColor = if (warning) SuiteSemantic.current.onWarning else MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(modifier.fillMaxWidth(), color = color, shape = SuiteShapes.Inner) {
         Text(text, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = onColor)
     }
 }
@@ -145,11 +202,19 @@ fun EmptyState(title: String, body: String, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (body.isNotBlank()) {
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
 /** Creates a correctly-owned Compose root for Java-based plugin entry points. */
 fun composePluginView(activity: Activity, content: @Composable () -> Unit): View = ComposeView(activity).apply {
-    setContent { SuiteTheme { content() } }
+    setContent {
+        SuiteTheme(
+            themePreference = SuiteThemePreferences.themePreference,
+            colorPreference = SuiteThemePreferences.colorPreference,
+            content = content,
+        )
+    }
 }

@@ -122,7 +122,7 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | `delete-plugin` | `-Plugin <id>` | 删除外部插件；有已启用依赖方时拒绝 |
 | `set-plugin-enabled` | `-Plugin <id> -Enabled $true/$false` | 启停插件并校验依赖 |
 | `set-widget-visible` | `-Widget <plugin:id> -Visible $true/$false` | 显示或隐藏主页组件 |
-| `navigate` | `-Destination dashboard/plugins/manager/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
+| `navigate` | `-Destination dashboard/plugins/manager/store/settings/about/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
 | `reset-state` | 无 | 删除外部插件，停用可选内置插件并恢复组件显示状态 |
 
 完整例子：
