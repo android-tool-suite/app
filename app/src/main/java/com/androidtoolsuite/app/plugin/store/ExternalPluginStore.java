@@ -27,11 +27,15 @@ public final class ExternalPluginStore {
     private static final String PREF_SHA256_PREFIX = "sha256_";
     private static final String PREF_CHANNEL_PREFIX = "channel_";
     private static final String PREF_VERIFIED_PREFIX = "verified_";
+    private static final String PREF_DATA_FORMAT_PREFIX = "data_format_";
+    private static final String PREF_MAY_HAVE_DATA_PREFIX = "may_have_data_";
     private static final String PREF_ROLLBACK_JSON_PREFIX = "rollback_json_";
     private static final String PREF_ROLLBACK_SOURCE_PREFIX = "rollback_source_";
     private static final String PREF_ROLLBACK_SHA256_PREFIX = "rollback_sha256_";
     private static final String PREF_ROLLBACK_CHANNEL_PREFIX = "rollback_channel_";
     private static final String PREF_ROLLBACK_VERIFIED_PREFIX = "rollback_verified_";
+    private static final String PREF_ROLLBACK_DATA_FORMAT_PREFIX = "rollback_data_format_";
+    private static final String PREF_ROLLBACK_MAY_HAVE_DATA_PREFIX = "rollback_may_have_data_";
     private static final String MISSING_VALUE = "__ats_missing__";
 
     private final Context context;
@@ -96,6 +100,7 @@ public final class ExternalPluginStore {
                 .remove(PREF_SHA256_PREFIX + pluginId)
                 .remove(PREF_CHANNEL_PREFIX + pluginId)
                 .remove(PREF_VERIFIED_PREFIX + pluginId)
+                .putBoolean(PREF_MAY_HAVE_DATA_PREFIX + pluginId, true)
                 .commit();
         deleteRecursively(pluginDir(pluginId));
     }
@@ -106,7 +111,8 @@ public final class ExternalPluginStore {
             String sourceReleaseUrl,
             String sha256,
             String channel,
-            boolean verified
+            boolean verified,
+            int dataFormatVersion
     ) throws IOException, JSONException {
         String pluginId = descriptor.id;
         File codeFile = pluginCodeFile(pluginId);
@@ -136,6 +142,8 @@ public final class ExternalPluginStore {
         String oldSha256 = preferences.getString(PREF_SHA256_PREFIX + pluginId, MISSING_VALUE);
         String oldChannel = preferences.getString(PREF_CHANNEL_PREFIX + pluginId, MISSING_VALUE);
         boolean oldVerified = preferences.getBoolean(PREF_VERIFIED_PREFIX + pluginId, false);
+        int oldDataFormatVersion = preferences.getInt(PREF_DATA_FORMAT_PREFIX + pluginId, 0);
+        boolean oldMayHaveData = preferences.getBoolean(PREF_MAY_HAVE_DATA_PREFIX + pluginId, false);
         if (codeFile.exists() && !codeFile.renameTo(backupFile)) {
             pendingFile.delete();
             throw new IOException("无法备份现有插件代码");
@@ -161,10 +169,14 @@ public final class ExternalPluginStore {
                 .putString(PREF_ROLLBACK_SHA256_PREFIX + pluginId, oldSha256)
                 .putString(PREF_ROLLBACK_CHANNEL_PREFIX + pluginId, oldChannel)
                 .putBoolean(PREF_ROLLBACK_VERIFIED_PREFIX + pluginId, oldVerified)
+                .putInt(PREF_ROLLBACK_DATA_FORMAT_PREFIX + pluginId, oldDataFormatVersion)
+                .putBoolean(PREF_ROLLBACK_MAY_HAVE_DATA_PREFIX + pluginId, oldMayHaveData)
+                .putBoolean(PREF_MAY_HAVE_DATA_PREFIX + pluginId, true)
                 .putBoolean(PREF_VERIFIED_PREFIX + pluginId, verified);
         putOrRemove(editor, PREF_SOURCE_PREFIX + pluginId, sourceReleaseUrl);
         putOrRemove(editor, PREF_SHA256_PREFIX + pluginId, sha256);
         putOrRemove(editor, PREF_CHANNEL_PREFIX + pluginId, channel);
+        putOrRemove(editor, PREF_DATA_FORMAT_PREFIX + pluginId, dataFormatVersion);
         if (!editor.commit()) {
             codeFile.delete();
             if (backupFile.exists()) {
@@ -218,6 +230,15 @@ public final class ExternalPluginStore {
                 PREF_VERIFIED_PREFIX + pluginId,
                 preferences.getBoolean(PREF_ROLLBACK_VERIFIED_PREFIX + pluginId, false)
         );
+        putOrRemove(
+                editor,
+                PREF_DATA_FORMAT_PREFIX + pluginId,
+                preferences.getInt(PREF_ROLLBACK_DATA_FORMAT_PREFIX + pluginId, 0)
+        );
+        editor.putBoolean(
+                PREF_MAY_HAVE_DATA_PREFIX + pluginId,
+                preferences.getBoolean(PREF_ROLLBACK_MAY_HAVE_DATA_PREFIX + pluginId, false)
+        );
         editor.commit();
         clearRollbackState(pluginId);
     }
@@ -240,6 +261,14 @@ public final class ExternalPluginStore {
             return "release";
         }
         return channel;
+    }
+
+    public int dataFormatVersion(String pluginId) {
+        return Math.max(0, preferences.getInt(PREF_DATA_FORMAT_PREFIX + pluginId, 0));
+    }
+
+    public boolean mayHavePluginData(String pluginId) {
+        return preferences.getBoolean(PREF_MAY_HAVE_DATA_PREFIX + pluginId, false);
     }
 
     public void savePluginCode(String pluginId, byte[] bytes) throws IOException {
@@ -300,7 +329,11 @@ public final class ExternalPluginStore {
             }
         }
         if (descriptor == null) {
-            return PluginState.missing(pluginId);
+            return PluginState.missing(
+                    pluginId,
+                    mayHavePluginData(pluginId),
+                    dataFormatVersion(pluginId)
+            );
         }
         File codeFile = pluginCodeFile(pluginId);
         if (!codeFile.isFile()) {
@@ -322,7 +355,9 @@ public final class ExternalPluginStore {
                 sourceReleaseUrl(pluginId),
                 verifiedSha256(pluginId),
                 repositoryChannel(pluginId),
-                isRepositoryVerified(pluginId)
+                isRepositoryVerified(pluginId),
+                dataFormatVersion(pluginId),
+                mayHavePluginData(pluginId)
         );
     }
 
@@ -331,6 +366,7 @@ public final class ExternalPluginStore {
             if (findRawDescriptor(state.pluginId) != null) {
                 delete(state.pluginId);
             }
+            restoreDataHistory(state.pluginId, state.mayHaveData, state.dataFormatVersion);
             return;
         }
         installPlugin(
@@ -339,7 +375,8 @@ public final class ExternalPluginStore {
                 state.sourceReleaseUrl,
                 state.sha256,
                 state.channel,
-                state.verified
+                state.verified,
+                state.dataFormatVersion
         );
         confirmInstall(state.pluginId);
         setEnabled(state.pluginId, state.enabled);
@@ -411,6 +448,8 @@ public final class ExternalPluginStore {
                 .remove(PREF_ROLLBACK_SHA256_PREFIX + pluginId)
                 .remove(PREF_ROLLBACK_CHANNEL_PREFIX + pluginId)
                 .remove(PREF_ROLLBACK_VERIFIED_PREFIX + pluginId)
+                .remove(PREF_ROLLBACK_DATA_FORMAT_PREFIX + pluginId)
+                .remove(PREF_ROLLBACK_MAY_HAVE_DATA_PREFIX + pluginId)
                 .commit();
     }
 
@@ -429,6 +468,21 @@ public final class ExternalPluginStore {
         } else {
             editor.putString(key, value);
         }
+    }
+
+    private static void putOrRemove(SharedPreferences.Editor editor, String key, int value) {
+        if (value <= 0) {
+            editor.remove(key);
+        } else {
+            editor.putInt(key, value);
+        }
+    }
+
+    private void restoreDataHistory(String pluginId, boolean mayHaveData, int dataFormatVersion) {
+        SharedPreferences.Editor editor = preferences.edit()
+                .putBoolean(PREF_MAY_HAVE_DATA_PREFIX + pluginId, mayHaveData);
+        putOrRemove(editor, PREF_DATA_FORMAT_PREFIX + pluginId, dataFormatVersion);
+        editor.commit();
     }
 
     private void deleteRecursively(File file) {
@@ -455,6 +509,8 @@ public final class ExternalPluginStore {
         public final String sha256;
         public final String channel;
         public final boolean verified;
+        public final int dataFormatVersion;
+        public final boolean mayHaveData;
 
         private PluginState(
                 String pluginId,
@@ -464,7 +520,9 @@ public final class ExternalPluginStore {
                 String sourceReleaseUrl,
                 String sha256,
                 String channel,
-                boolean verified
+                boolean verified,
+                int dataFormatVersion,
+                boolean mayHaveData
         ) {
             this.pluginId = pluginId;
             this.descriptor = descriptor;
@@ -474,10 +532,23 @@ public final class ExternalPluginStore {
             this.sha256 = sha256;
             this.channel = channel;
             this.verified = verified;
+            this.dataFormatVersion = Math.max(0, dataFormatVersion);
+            this.mayHaveData = mayHaveData;
         }
 
-        static PluginState missing(String pluginId) {
-            return new PluginState(pluginId, null, null, false, "", "", "", false);
+        static PluginState missing(String pluginId, boolean mayHaveData, int dataFormatVersion) {
+            return new PluginState(
+                    pluginId,
+                    null,
+                    null,
+                    false,
+                    "",
+                    "",
+                    "",
+                    false,
+                    dataFormatVersion,
+                    mayHaveData
+            );
         }
 
         boolean exists() {

@@ -1040,6 +1040,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return updateCatalog == null ? Collections.emptyList() : updateCatalog.plugins;
     }
 
+    public List<UpdateCatalog.PluginRelease> repositoryPluginVersionsForUi(String pluginId) {
+        return updateCatalog == null
+                ? Collections.emptyList()
+                : updateCatalog.versionsForPlugin(pluginId);
+    }
+
     public String pluginRepositoryChannelForUi() {
         String fallback = BuildConfig.DEBUG
                 ? UpdateCatalog.CHANNEL_DEBUG
@@ -1111,11 +1117,82 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 externalPluginStore.isRepositoryVerified(release.id),
                 externalPluginStore.repositoryChannel(release.id),
                 externalPluginStore.verifiedSha256(release.id)
-        );
+        ) && isRepositoryPluginVersionSelectableForUi(release);
     }
 
     public boolean isRepositoryPluginCompatibleForUi(UpdateCatalog.PluginRelease release) {
         return release.minHostVersionCode <= BuildConfig.VERSION_CODE;
+    }
+
+    public boolean isRepositoryPluginVersionInstalledForUi(UpdateCatalog.PluginRelease release) {
+        ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
+        if (installed == null || !externalPluginStore.isRepositoryVerified(release.id)) {
+            return false;
+        }
+        return release.sha256.equalsIgnoreCase(externalPluginStore.verifiedSha256(release.id));
+    }
+
+    public String repositoryPluginTransitionLabelForUi(UpdateCatalog.PluginRelease release) {
+        PluginUpdatePolicy.Transition transition = assessPluginTransition(release);
+        int currentDataFormat = currentPluginDataFormatVersion(release.id);
+        switch (transition) {
+            case INSTALL:
+                return release.hasDataCompatibilityDeclaration()
+                        ? "首次安装 · 数据格式 v" + release.dataFormatVersion
+                        : "首次安装 · 此版本未声明数据格式";
+            case REINSTALL_COMPATIBLE:
+                return "检测到保留数据 · 目标版本可读取数据格式 v" + currentDataFormat;
+            case CURRENT:
+                return "当前已安装此构建";
+            case UPGRADE:
+                return "升级到所选版本";
+            case REPLACE:
+                return "切换到所选构建";
+            case DOWNGRADE_COMPATIBLE:
+                return "可降级 · 目标版本可读取当前数据格式 v" + currentDataFormat;
+            case DOWNGRADE_UNKNOWN:
+                return "已阻止降级 · 当前或目标版本未声明数据兼容性";
+            case DATA_INCOMPATIBLE:
+                return "已阻止安装 · 目标版本无法读取当前数据格式 v" + currentDataFormat;
+            default:
+                return "";
+        }
+    }
+
+    public String repositoryPluginActionLabelForUi(UpdateCatalog.PluginRelease release) {
+        if (updateOperations.contains(release.id)) {
+            return "正在下载…";
+        }
+        if (release.minHostVersionCode > BuildConfig.VERSION_CODE) {
+            return "需要更新宿主";
+        }
+        switch (assessPluginTransition(release)) {
+            case INSTALL:
+                return "安装";
+            case REINSTALL_COMPATIBLE:
+                return "重新安装";
+            case CURRENT:
+                return "已安装";
+            case UPGRADE:
+                return "升级";
+            case REPLACE:
+                return "切换版本";
+            case DOWNGRADE_COMPATIBLE:
+                return "降级";
+            case DOWNGRADE_UNKNOWN:
+            case DATA_INCOMPATIBLE:
+                return "无法安全降级";
+            default:
+                return "安装";
+        }
+    }
+
+    public boolean isRepositoryPluginVersionSelectableForUi(UpdateCatalog.PluginRelease release) {
+        PluginUpdatePolicy.Transition transition = assessPluginTransition(release);
+        return release.minHostVersionCode <= BuildConfig.VERSION_CODE
+                && transition != PluginUpdatePolicy.Transition.CURRENT
+                && transition != PluginUpdatePolicy.Transition.DOWNGRADE_UNKNOWN
+                && transition != PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE;
     }
 
     public boolean isRepositoryVerifiedForUi(String pluginId) {
@@ -1184,15 +1261,67 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             showToast("插件仓库中不存在该插件");
             return;
         }
+        installRepositoryPluginVersionForUi(release);
+    }
+
+    public void installRepositoryPluginVersionForUi(UpdateCatalog.PluginRelease release) {
+        if (release == null || updateCatalog == null || updateOperations.contains(release.id)) {
+            return;
+        }
+        List<UpdateCatalog.PluginRelease> versions = updateCatalog.versionsForPlugin(release.id);
+        if (!versions.contains(release)) {
+            showToast("所选插件版本已失效，请刷新仓库");
+            return;
+        }
         if (release.minHostVersionCode > BuildConfig.VERSION_CODE) {
             showToast("请先将宿主更新到兼容版本");
             return;
         }
-        ImportedPluginDescriptor installed = findImportedDescriptor(pluginId);
-        if (installed != null && !isRepositoryPluginUpdateAvailableForUi(release)) {
-            showToast("已安装最新版本");
+        PluginUpdatePolicy.Transition transition = assessPluginTransition(release);
+        if (transition == PluginUpdatePolicy.Transition.CURRENT) {
+            showToast("当前已安装此版本");
             return;
         }
+        if (transition == PluginUpdatePolicy.Transition.DOWNGRADE_UNKNOWN) {
+            showBlockedPluginTransitionDialog(
+                    "无法确认数据兼容性",
+                    "目标版本或当前安装版本没有声明数据格式。为避免旧版插件损坏新版数据，应用不会直接覆盖安装。请先使用插件自身的导出功能备份业务数据，再由插件提供兼容声明后降级。"
+            );
+            return;
+        }
+        if (transition == PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE) {
+            int currentDataFormat = currentPluginDataFormatVersion(release.id);
+            showBlockedPluginTransitionDialog(
+                    "数据格式不兼容",
+                    "当前插件可能已经写入数据格式 v" + currentDataFormat
+                            + "，而目标版本仅支持 v" + release.minReadableDataFormatVersion
+                            + "–v" + release.maxReadableDataFormatVersion
+                            + "。继续安装可能造成数据丢失，因此已阻止。"
+            );
+            return;
+        }
+        if (transition == PluginUpdatePolicy.Transition.DOWNGRADE_COMPATIBLE
+                || transition == PluginUpdatePolicy.Transition.REINSTALL_COMPATIBLE) {
+            boolean downgrade = transition == PluginUpdatePolicy.Transition.DOWNGRADE_COMPATIBLE;
+            new AlertDialog.Builder(this)
+                    .setTitle(downgrade ? "确认降级插件" : "确认使用保留数据")
+                    .setMessage((downgrade
+                            ? "将 " + release.title + " 降级到 " + release.versionName + "。"
+                            : "重新安装 " + release.title + " " + release.versionName + "。")
+                            + "目标版本声明可读取当前数据格式，但安装不会回滚或清理插件已经写入的业务数据。建议先使用插件自身的导出功能备份。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton(
+                            downgrade ? "继续降级" : "继续安装",
+                            (dialog, which) -> performRepositoryPluginInstall(release)
+                    )
+                    .show();
+            return;
+        }
+        performRepositoryPluginInstall(release);
+    }
+
+    private void performRepositoryPluginInstall(UpdateCatalog.PluginRelease release) {
+        String pluginId = release.id;
         updateOperations.add(pluginId);
         updateStatus = "正在下载 " + release.title + "…";
         invalidateComposeUi();
@@ -1211,7 +1340,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                             release.releaseUrl,
                             release.sha256,
                             release.channel,
-                            true
+                            true,
+                            release.dataFormatVersion
                     );
                     installStarted = true;
                     reloadPlugins(pluginId);
@@ -1244,6 +1374,71 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 invalidateComposeUi();
             }
         });
+    }
+
+    private void showBlockedPluginTransitionDialog(String title, String message) {
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+
+    private PluginUpdatePolicy.Transition assessPluginTransition(UpdateCatalog.PluginRelease release) {
+        ImportedPluginDescriptor installed = findImportedDescriptor(release.id);
+        return PluginUpdatePolicy.assessTransition(
+                release,
+                installed,
+                externalPluginStore.isRepositoryVerified(release.id),
+                externalPluginStore.verifiedSha256(release.id),
+                externalPluginStore.mayHavePluginData(release.id),
+                currentPluginDataFormatVersion(release.id),
+                isOlderPluginBuild(release, installed)
+        );
+    }
+
+    private int currentPluginDataFormatVersion(String pluginId) {
+        int stored = externalPluginStore.dataFormatVersion(pluginId);
+        if (stored > 0 || updateCatalog == null) {
+            return stored;
+        }
+        String installedSha = externalPluginStore.verifiedSha256(pluginId);
+        if (installedSha.isEmpty()) {
+            return 0;
+        }
+        for (UpdateCatalog.PluginRelease candidate : updateCatalog.versionsForPlugin(pluginId)) {
+            if (candidate.sha256.equalsIgnoreCase(installedSha)) {
+                return candidate.dataFormatVersion;
+            }
+        }
+        return 0;
+    }
+
+    private boolean isOlderPluginBuild(
+            UpdateCatalog.PluginRelease target,
+            ImportedPluginDescriptor installed
+    ) {
+        if (installed == null || target.versionCode != installed.versionCode) {
+            return installed != null && target.versionCode < installed.versionCode;
+        }
+        if (!externalPluginStore.isRepositoryVerified(target.id)) {
+            return true;
+        }
+        String installedChannel = externalPluginStore.repositoryChannel(target.id);
+        if (!target.channel.equals(installedChannel)) {
+            return true;
+        }
+        String installedSha = externalPluginStore.verifiedSha256(target.id);
+        List<UpdateCatalog.PluginRelease> versions = updateCatalog.versionsForPlugin(target.id);
+        int targetIndex = versions.indexOf(target);
+        int installedIndex = -1;
+        for (int index = 0; index < versions.size(); index++) {
+            if (versions.get(index).sha256.equalsIgnoreCase(installedSha)) {
+                installedIndex = index;
+                break;
+            }
+        }
+        return targetIndex >= 0 && installedIndex >= 0 && targetIndex > installedIndex;
     }
 
     public void installAllPluginUpdatesForUi() {
@@ -1635,7 +1830,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             boolean updating = findImportedDescriptor(descriptor.id) != null;
             boolean wasEnabled = externalPluginStore.isEnabled(descriptor.id);
             preflightPlugin(pluginImport);
-            externalPluginStore.installPlugin(descriptor, pluginImport.codeBytes, "", "", "", false);
+            externalPluginStore.installPlugin(descriptor, pluginImport.codeBytes, "", "", "", false, 0);
             installStarted = true;
             reloadPlugins(descriptor.id);
             if (wasEnabled && findPlugin(descriptor.id) == null) {
@@ -2017,7 +2212,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                                 "",
                                 "",
                                 "",
-                                false
+                                false,
+                                0
                         );
                         externalPluginStore.confirmInstall(descriptor.id);
                         externalPluginStore.setEnabled(descriptor.id, item.enabled);

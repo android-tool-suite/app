@@ -1101,48 +1101,85 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
 
 @Composable
 private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.PluginRelease) {
-    val installed = activity.isRepositoryPluginInstalledForUi(release.id)
-    val updateAvailable = activity.isRepositoryPluginUpdateAvailableForUi(release)
-    val compatible = activity.isRepositoryPluginCompatibleForUi(release)
-    val busy = activity.isUpdateOperationRunningForUi(release.id)
-    val actionText = when {
-        busy -> "正在下载…"
-        !compatible -> "需要更新宿主"
-        !installed -> "安装"
-        updateAvailable -> "更新"
-        else -> "已是最新"
-    }
+    val versions = activity.repositoryPluginVersionsForUi(release.id)
+    val versionsKey = versions.joinToString("|") { it.sha256 }
+    var selectedIndex by remember(release.id, versionsKey) { mutableIntStateOf(0) }
+    var versionMenuExpanded by remember(release.id, versionsKey) { mutableStateOf(false) }
+    if (selectedIndex !in versions.indices) selectedIndex = 0
+    val selected = versions.getOrElse(selectedIndex) { release }
+    val compatible = activity.isRepositoryPluginCompatibleForUi(selected)
+    val busy = activity.isUpdateOperationRunningForUi(selected.id)
+    val selectable = activity.isRepositoryPluginVersionSelectableForUi(selected)
+    val actionText = activity.repositoryPluginActionLabelForUi(selected)
     SuiteCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(release.title, style = MaterialTheme.typography.titleLarge)
+                Text(selected.title, style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "v${release.versionName} · ${release.author}"
-                            + if (release.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${release.commitSha.take(7)}" else "",
+                    "v${selected.versionName} · ${selected.author}"
+                            + if (selected.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${selected.commitSha.take(7)}" else "",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
             Button(
-                onClick = { activity.installRepositoryPluginForUi(release.id) },
-                enabled = compatible && !busy && (!installed || updateAvailable),
+                onClick = { activity.installRepositoryPluginVersionForUi(selected) },
+                enabled = compatible && !busy && selectable,
             ) {
                 Text(actionText)
             }
         }
+        Box {
+            OutlinedButton(onClick = { versionMenuExpanded = true }) {
+                Text("选择版本：${selected.versionName}" + if (selected.channel == UpdateCatalog.CHANNEL_DEBUG) " (${selected.commitSha.take(7)})" else "")
+            }
+            DropdownMenu(
+                expanded = versionMenuExpanded,
+                onDismissRequest = { versionMenuExpanded = false },
+            ) {
+                versions.forEachIndexed { index, version ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("${version.versionName}" + if (version.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${version.commitSha.take(7)}" else "")
+                                if (activity.isRepositoryPluginVersionInstalledForUi(version)) {
+                                    Text("当前安装", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        },
+                        leadingIcon = {
+                            if (index == selectedIndex) Icon(Icons.Rounded.Check, null)
+                        },
+                        onClick = {
+                            selectedIndex = index
+                            versionMenuExpanded = false
+                        },
+                    )
+                }
+            }
+        }
         Text(
-            release.description,
+            activity.repositoryPluginTransitionLabelForUi(selected),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (selectable || activity.isRepositoryPluginVersionInstalledForUi(selected)) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.error
+            },
+        )
+        Text(
+            selected.description,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (release.dependencies.isNotEmpty()) {
+        if (selected.dependencies.isNotEmpty()) {
             Text(
-                "依赖：${release.dependencies.joinToString()}",
+                "依赖：${selected.dependencies.joinToString()}",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
         if (!compatible) {
-            Notice("要求宿主 versionCode ≥ ${release.minHostVersionCode}", warning = true)
+            Notice("要求宿主 versionCode ≥ ${selected.minHostVersionCode}", warning = true)
         }
     }
 }

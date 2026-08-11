@@ -1,7 +1,9 @@
 package com.androidtoolsuite.app.update;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import org.json.JSONException;
 import org.junit.Test;
@@ -127,5 +129,84 @@ public final class UpdateCatalogTest {
                 + "\"size\":1,"
                 + "\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\""
                 + "}]}");
+    }
+
+    @Test
+    public void parsesHistoricalPluginVersionsAndDataCompatibility() throws Exception {
+        UpdateCatalog catalog = UpdateCatalog.parse("{"
+                + "\"schemaVersion\":1,"
+                + "\"channel\":\"release\","
+                + "\"app\":{\"title\":\"ATS\",\"versions\":[]},"
+                + "\"plugins\":[{"
+                + "\"id\":\"sample\",\"title\":\"Sample\",\"versions\":["
+                + pluginVersionJson("2.0.0", 2, 2, 1, 2) + ","
+                + pluginVersionJson("1.0.0", 1, 1, 1, 1)
+                + "]}]}"
+        );
+
+        assertEquals(1, catalog.plugins.size());
+        assertEquals(2, catalog.versionsForPlugin("sample").size());
+        UpdateCatalog.PluginRelease latest = catalog.findPlugin("sample");
+        assertNotNull(latest);
+        assertEquals(2, latest.versionCode);
+        assertTrue(latest.canReadDataFormat(1));
+        assertTrue(latest.canReadDataFormat(2));
+        assertFalse(catalog.versionsForPlugin("sample").get(1).canReadDataFormat(2));
+    }
+
+    @Test
+    public void latestIndexControlsDefaultWhileCatalogProvidesHistory() throws Exception {
+        UpdateCatalog latest = UpdateCatalog.parse("{"
+                + "\"schemaVersion\":1,\"plugins\":["
+                + pluginVersionJson("1.0.0", 1, 1, 1, 1)
+                + "]}"
+        );
+        UpdateCatalog history = UpdateCatalog.parse("{"
+                + "\"schemaVersion\":1,\"plugins\":[{"
+                + "\"id\":\"sample\",\"title\":\"Sample\",\"versions\":["
+                + pluginVersionJson("2.0.0", 2, 2, 1, 2) + ","
+                + pluginVersionJson("1.0.0", 1, 1, 1, 1)
+                + "]}]}"
+        );
+
+        UpdateCatalog combined = UpdateCatalog.combine(latest, latest, history);
+
+        assertEquals(1, combined.findPlugin("sample").versionCode);
+        assertEquals(1, combined.versionsForPlugin("sample").get(0).versionCode);
+        assertEquals(2, combined.versionsForPlugin("sample").get(1).versionCode);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsInvalidDataCompatibilityRange() throws Exception {
+        UpdateCatalog.parse("{"
+                + "\"schemaVersion\":1,\"plugins\":["
+                + pluginVersionJson("1.0.0", 1, 2, 3, 2)
+                + "]}"
+        );
+    }
+
+    private static String pluginVersionJson(
+            String versionName,
+            int versionCode,
+            int dataFormatVersion,
+            int minReadable,
+            int maxReadable
+    ) {
+        return "{"
+                + "\"id\":\"sample\","
+                + "\"title\":\"Sample\","
+                + "\"repositoryUrl\":\"https://example.test/repo\","
+                + "\"versionName\":\"" + versionName + "\","
+                + "\"versionCode\":" + versionCode + ","
+                + "\"releaseUrl\":\"https://example.test/release/" + versionName + "\","
+                + "\"downloadUrl\":\"https://example.test/plugin/" + versionName + "\","
+                + "\"size\":1,"
+                + "\"sha256\":\"" + Integer.toHexString(versionCode).repeat(64) + "\","
+                + "\"dataCompatibility\":{"
+                + "\"schemaVersion\":1,"
+                + "\"dataFormatVersion\":" + dataFormatVersion + ","
+                + "\"minReadableDataFormatVersion\":" + minReadable + ","
+                + "\"maxReadableDataFormatVersion\":" + maxReadable
+                + "}}";
     }
 }

@@ -6,8 +6,10 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class UpdateCatalog {
@@ -19,19 +21,29 @@ public final class UpdateCatalog {
     public final String generatedAt;
     public final AppRelease app;
     public final List<PluginRelease> plugins;
+    private final Map<String, List<PluginRelease>> pluginVersions;
 
     private UpdateCatalog(
             int schemaVersion,
             String channel,
             String generatedAt,
             AppRelease app,
-            List<PluginRelease> plugins
+            List<PluginRelease> plugins,
+            Map<String, List<PluginRelease>> pluginVersions
     ) {
         this.schemaVersion = schemaVersion;
         this.channel = channel;
         this.generatedAt = generatedAt;
         this.app = app;
         this.plugins = Collections.unmodifiableList(new ArrayList<>(plugins));
+        LinkedHashMap<String, List<PluginRelease>> immutableVersions = new LinkedHashMap<>();
+        for (Map.Entry<String, List<PluginRelease>> entry : pluginVersions.entrySet()) {
+            immutableVersions.put(
+                    entry.getKey(),
+                    Collections.unmodifiableList(new ArrayList<>(entry.getValue()))
+            );
+        }
+        this.pluginVersions = Collections.unmodifiableMap(immutableVersions);
     }
 
     public static UpdateCatalog parse(String rawJson) throws JSONException {
@@ -45,19 +57,46 @@ public final class UpdateCatalog {
             throw new JSONException("不支持的更新通道：" + channel);
         }
 
+        boolean historyCatalog = isHistoryCatalog(root);
         AppRelease app = null;
         JSONObject appJson = root.optJSONObject("app");
         if (appJson != null) {
-            app = AppRelease.fromJson(appJson, channel);
+            JSONArray versions = appJson.optJSONArray("versions");
+            JSONObject latest = versions == null ? appJson : versions.optJSONObject(0);
+            if (latest != null) {
+                app = AppRelease.fromJson(latest, channel);
+            }
         }
 
         List<PluginRelease> plugins = new ArrayList<>();
+        LinkedHashMap<String, List<PluginRelease>> pluginVersions = new LinkedHashMap<>();
         JSONArray pluginArray = root.optJSONArray("plugins");
         if (pluginArray != null) {
             for (int index = 0; index < pluginArray.length(); index++) {
                 JSONObject pluginJson = pluginArray.optJSONObject(index);
                 if (pluginJson != null) {
-                    plugins.add(PluginRelease.fromJson(pluginJson, channel));
+                    List<PluginRelease> versions = new ArrayList<>();
+                    JSONArray versionArray = pluginJson.optJSONArray("versions");
+                    if (historyCatalog && versionArray != null) {
+                        for (int versionIndex = 0; versionIndex < versionArray.length(); versionIndex++) {
+                            JSONObject versionJson = versionArray.optJSONObject(versionIndex);
+                            if (versionJson != null) {
+                                PluginRelease release = PluginRelease.fromJson(versionJson, channel);
+                                String groupId = required(pluginJson, "id");
+                                if (!groupId.equals(release.id)) {
+                                    throw new JSONException("插件历史版本 ID 不一致：" + groupId);
+                                }
+                                versions.add(release);
+                            }
+                        }
+                    } else {
+                        versions.add(PluginRelease.fromJson(pluginJson, channel));
+                    }
+                    if (!versions.isEmpty()) {
+                        PluginRelease latest = versions.get(0);
+                        plugins.add(latest);
+                        pluginVersions.put(latest.id, versions);
+                    }
                 }
             }
         }
@@ -66,17 +105,50 @@ public final class UpdateCatalog {
                 channel,
                 clean(root.optString("generatedAt")),
                 app,
-                plugins
+                plugins,
+                pluginVersions
         );
     }
 
     public static UpdateCatalog combine(UpdateCatalog appCatalog, UpdateCatalog pluginCatalog) {
+        return combine(appCatalog, pluginCatalog, pluginCatalog);
+    }
+
+    public static UpdateCatalog combine(
+            UpdateCatalog appCatalog,
+            UpdateCatalog pluginLatestCatalog,
+            UpdateCatalog pluginHistoryCatalog
+    ) {
+        List<PluginRelease> latestPlugins = new ArrayList<>(pluginLatestCatalog.plugins);
+        LinkedHashMap<String, PluginRelease> latestById = new LinkedHashMap<>();
+        for (PluginRelease latest : latestPlugins) {
+            latestById.put(latest.id, latest);
+        }
+        for (PluginRelease historical : pluginHistoryCatalog.plugins) {
+            if (!latestById.containsKey(historical.id)) {
+                latestPlugins.add(historical);
+                latestById.put(historical.id, historical);
+            }
+        }
+
+        LinkedHashMap<String, List<PluginRelease>> versionsByPlugin = new LinkedHashMap<>();
+        for (PluginRelease latest : latestPlugins) {
+            List<PluginRelease> ordered = new ArrayList<>();
+            ordered.add(latest);
+            for (PluginRelease historical : pluginHistoryCatalog.versionsForPlugin(latest.id)) {
+                if (!historical.sha256.equalsIgnoreCase(latest.sha256)) {
+                    ordered.add(historical);
+                }
+            }
+            versionsByPlugin.put(latest.id, ordered);
+        }
         return new UpdateCatalog(
-                pluginCatalog.schemaVersion,
-                pluginCatalog.channel,
-                pluginCatalog.generatedAt,
+                pluginLatestCatalog.schemaVersion,
+                pluginLatestCatalog.channel,
+                pluginHistoryCatalog.generatedAt,
                 appCatalog == null ? null : appCatalog.app,
-                pluginCatalog.plugins
+                latestPlugins,
+                versionsByPlugin
         );
     }
 
@@ -87,6 +159,11 @@ public final class UpdateCatalog {
             }
         }
         return null;
+    }
+
+    public List<PluginRelease> versionsForPlugin(String pluginId) {
+        List<PluginRelease> versions = pluginVersions.get(pluginId);
+        return versions == null ? Collections.emptyList() : versions;
     }
 
     public abstract static class ReleaseAsset {
@@ -146,6 +223,9 @@ public final class UpdateCatalog {
         public final int minHostVersionCode;
         public final String sdkVersion;
         public final Set<String> dependencies;
+        public final int dataFormatVersion;
+        public final int minReadableDataFormatVersion;
+        public final int maxReadableDataFormatVersion;
 
         private PluginRelease(JSONObject json, String channel) throws JSONException {
             super(json, channel);
@@ -157,11 +237,57 @@ public final class UpdateCatalog {
             minHostVersionCode = Math.max(0, json.optInt("minHostVersionCode", 0));
             sdkVersion = clean(json.optString("sdkVersion"));
             dependencies = Collections.unmodifiableSet(readStrings(json.optJSONArray("dependencies")));
+            JSONObject compatibility = json.optJSONObject("dataCompatibility");
+            if (compatibility == null) {
+                dataFormatVersion = 0;
+                minReadableDataFormatVersion = 0;
+                maxReadableDataFormatVersion = 0;
+            } else {
+                int schemaVersion = positive(compatibility, "schemaVersion");
+                if (schemaVersion != 1) {
+                    throw new JSONException("不支持的数据兼容声明版本：" + schemaVersion);
+                }
+                dataFormatVersion = positive(compatibility, "dataFormatVersion");
+                minReadableDataFormatVersion = positive(
+                        compatibility,
+                        "minReadableDataFormatVersion"
+                );
+                maxReadableDataFormatVersion = positive(
+                        compatibility,
+                        "maxReadableDataFormatVersion"
+                );
+                if (minReadableDataFormatVersion > dataFormatVersion
+                        || dataFormatVersion > maxReadableDataFormatVersion) {
+                    throw new JSONException("插件数据兼容范围无效：" + id);
+                }
+            }
         }
 
         static PluginRelease fromJson(JSONObject json, String channel) throws JSONException {
             return new PluginRelease(json, channel);
         }
+
+        public boolean hasDataCompatibilityDeclaration() {
+            return dataFormatVersion > 0;
+        }
+
+        public boolean canReadDataFormat(int version) {
+            return hasDataCompatibilityDeclaration()
+                    && version >= minReadableDataFormatVersion
+                    && version <= maxReadableDataFormatVersion;
+        }
+    }
+
+    private static boolean isHistoryCatalog(JSONObject root) {
+        JSONObject app = root.optJSONObject("app");
+        if (app != null && app.optJSONArray("versions") != null) {
+            return true;
+        }
+        JSONArray plugins = root.optJSONArray("plugins");
+        return plugins != null
+                && plugins.length() > 0
+                && plugins.optJSONObject(0) != null
+                && plugins.optJSONObject(0).optJSONArray("versions") != null;
     }
 
     private static int positive(JSONObject json, String name) throws JSONException {

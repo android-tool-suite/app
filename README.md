@@ -11,7 +11,7 @@ Android Tool Suite 的主体应用仓库。宿主内置“插件管理”和 Shi
 3. 构建并安装 `app` 模块。
 4. 打开 App，授予 Shizuku 权限。
 5. 在底部导航进入“主页”“插件”或“管理”。
-6. 在“插件管理 → 插件仓库”中选择正式或调试仓库，安装、更新官方插件，也可以从同一页面导入本地 `.atsplugin`。
+6. 在“插件管理 → 插件仓库”中选择正式或调试仓库，再为每个插件选择具体历史版本进行安装、升级或安全降级；也可以从同一页面导入本地 `.atsplugin`。
 7. 启用插件后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
 8. 可用搜索框按应用名、服务名或包名过滤列表。
 9. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
@@ -48,6 +48,8 @@ plugin-sdk/
 只支持导入完整 `.atsplugin` 插件包：包内必须同时包含 `manifest.json`、`plugin.apk`，清单还必须声明 `plugin.entryClass`。单个 JSON、只有说明信息的包以及缺少可执行入口的包都会被拒绝。插件默认停用，可以通过 `dependencies` 声明依赖；依赖未满足时不能启用，未启用的插件不会进入主页和工具列表。
 
 完整包格式与 SDK 接入方式见 `docs/plugin-package-format.md`。
+
+历史版本降级的数据格式契约与维护规则见 [插件数据兼容声明](docs/plugin-data-compatibility.md)。该声明属于发布元数据，不修改插件 SDK 公共 API。
 
 向本机 Maven 仓库发布 SDK：
 
@@ -94,7 +96,9 @@ gradle clean collectArtifacts
 
 `main` 分支 CI 成功后会使用稳定专用签名创建 `debug-<完整提交 SHA>` 历史快照，同时更新名为 `debug` 的滚动预发布，二者都提供 `android-tool-suite-debug.apk`、发布元数据和校验和；`v<versionName>` 标签仍使用 GitHub Environment 中的正式签名密钥生成 `android-tool-suite.apk` 正式 Release。两类发布完成后由 GitHub App 生成短时 installation token，发送事件通知发布目录重建。Pages 发布中心会展示宿主 APK 和插件，并允许选择正式或调试历史版本。
 
-Release 使用包名 `com.androidtoolsuite.app`，Debug 使用 `com.androidtoolsuite.app.debug`，因此可以同时安装且数据完全隔离。应用启动时最多每 24 小时读取一次签名更新索引：Release 始终检查正式宿主，Debug 检查带稳定签名的滚动调试宿主；插件源仍可独立选择正式或调试仓库。插件更新在索引、大小、SHA-256 与预加载校验成功后事务式替换。
+Release 使用包名 `com.androidtoolsuite.app`，Debug 使用 `com.androidtoolsuite.app.debug`，因此可以同时安装且数据完全隔离。应用启动时最多每 24 小时读取一次签名更新索引：Release 始终检查正式宿主，Debug 检查带稳定签名的滚动调试宿主；插件源仍可独立选择正式或调试仓库。应用会读取签名后的历史目录并展示各版本；插件更新在目录签名、大小、SHA-256 与预加载校验成功后事务式替换。
+
+插件发布元数据可以声明 `dataFormatVersion` 以及目标版本可读取的数据格式范围。降级只有在当前数据格式和目标兼容范围都明确且匹配时才会执行，并会再次要求确认；声明不兼容或旧版本缺少声明时，应用会阻止覆盖。宿主迁移包不包含插件业务数据，因此降级前仍应使用插件自身的 UIGF、记录导出等功能备份。
 
 插件管理页可以导出和导入 `.atsbackup` 迁移包，用于复制宿主布局、仓库选择、插件包和启用状态。迁移包不会包含 Phigros SessionToken、米游社会话、抽卡记录或其他插件业务数据；这些数据继续使用插件自己的导出功能或在目标应用重新登录。
 

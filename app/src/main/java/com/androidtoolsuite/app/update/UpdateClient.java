@@ -32,6 +32,8 @@ import java.util.concurrent.Executors;
 public final class UpdateClient {
     private static final String PREFS_NAME = "update_client";
     private static final String PREF_LAST_SUCCESS_PREFIX = "last_success_";
+    private static final String PAYLOAD_INDEX = "index-v1";
+    private static final String PAYLOAD_CATALOG = "catalog-v1";
     private static final long CHECK_INTERVAL_MS = 24L * 60L * 60L * 1000L;
     private static final int MAX_INDEX_BYTES = 2 * 1024 * 1024;
     private static final long MAX_ASSET_BYTES = 150L * 1024L * 1024L;
@@ -60,14 +62,34 @@ public final class UpdateClient {
             try {
                 String selectedAppChannel = normalizeChannel(appChannel);
                 String selectedChannel = normalizeChannel(pluginChannel);
-                CatalogResult app = loadCatalog(selectedAppChannel, force);
-                CatalogResult plugins = selectedAppChannel.equals(selectedChannel)
+                CatalogResult app = loadCatalog(
+                        selectedAppChannel,
+                        PAYLOAD_INDEX,
+                        indexUrl(selectedAppChannel),
+                        force
+                );
+                CatalogResult pluginLatest = selectedAppChannel.equals(selectedChannel)
                         ? app
-                        : loadCatalog(selectedChannel, force);
+                        : loadCatalog(
+                                selectedChannel,
+                                PAYLOAD_INDEX,
+                                indexUrl(selectedChannel),
+                                force
+                        );
+                CatalogResult pluginHistory = loadCatalog(
+                        selectedChannel,
+                        PAYLOAD_CATALOG,
+                        catalogUrl(selectedChannel),
+                        force
+                );
                 deliverCatalog(
                         callback,
-                        UpdateCatalog.combine(app.catalog, plugins.catalog),
-                        app.cached || plugins.cached
+                        UpdateCatalog.combine(
+                                app.catalog,
+                                pluginLatest.catalog,
+                                pluginHistory.catalog
+                        ),
+                        app.cached || pluginLatest.cached || pluginHistory.cached
                 );
             } catch (IOException | GeneralSecurityException | JSONException error) {
                 deliverError(callback, readableMessage(error));
@@ -152,36 +174,36 @@ public final class UpdateClient {
         }
     }
 
-    private CatalogResult loadCatalog(String channel, boolean force)
+    private CatalogResult loadCatalog(String channel, String payload, String url, boolean force)
             throws IOException, GeneralSecurityException, JSONException {
-        long lastSuccess = preferences.getLong(PREF_LAST_SUCCESS_PREFIX + channel, 0L);
+        String cacheKey = channel + "_" + payload;
+        long lastSuccess = preferences.getLong(PREF_LAST_SUCCESS_PREFIX + cacheKey, 0L);
         if (!force && System.currentTimeMillis() - lastSuccess < CHECK_INTERVAL_MS) {
-            UpdateCatalog cached = readCachedCatalog(channel);
+            UpdateCatalog cached = readCachedCatalog(channel, payload);
             if (cached != null) {
                 return new CatalogResult(cached, true);
             }
         }
 
         try {
-            String indexUrl = indexUrl(channel);
-            byte[] indexBytes = readUrl(indexUrl, MAX_INDEX_BYTES);
-            byte[] signatureBytes = readUrl(indexUrl + ".sig", 64 * 1024);
-            verifySignature(indexBytes, signatureBytes, publicKey);
+            byte[] payloadBytes = readUrl(url, MAX_INDEX_BYTES);
+            byte[] signatureBytes = readUrl(url + ".sig", 64 * 1024);
+            verifySignature(payloadBytes, signatureBytes, publicKey);
             UpdateCatalog catalog = UpdateCatalog.parse(
-                    new String(indexBytes, StandardCharsets.UTF_8)
+                    new String(payloadBytes, StandardCharsets.UTF_8)
             );
             if (!channel.equals(catalog.channel)) {
                 throw new JSONException("更新索引通道不匹配");
             }
             ensureCacheDirectory();
-            writeAtomically(indexCacheFile(channel), indexBytes);
-            writeAtomically(signatureCacheFile(channel), signatureBytes);
+            writeAtomically(payloadCacheFile(channel, payload), payloadBytes);
+            writeAtomically(signatureCacheFile(channel, payload), signatureBytes);
             preferences.edit()
-                    .putLong(PREF_LAST_SUCCESS_PREFIX + channel, System.currentTimeMillis())
+                    .putLong(PREF_LAST_SUCCESS_PREFIX + cacheKey, System.currentTimeMillis())
                     .apply();
             return new CatalogResult(catalog, false);
         } catch (IOException | GeneralSecurityException | JSONException error) {
-            UpdateCatalog cached = readCachedCatalog(channel);
+            UpdateCatalog cached = readCachedCatalog(channel, payload);
             if (cached != null) {
                 return new CatalogResult(cached, true);
             }
@@ -189,17 +211,17 @@ public final class UpdateClient {
         }
     }
 
-    private UpdateCatalog readCachedCatalog(String channel) {
+    private UpdateCatalog readCachedCatalog(String channel, String payload) {
         try {
-            File indexFile = indexCacheFile(channel);
-            File signatureFile = signatureCacheFile(channel);
-            if (!indexFile.isFile() || !signatureFile.isFile()) {
+            File payloadFile = payloadCacheFile(channel, payload);
+            File signatureFile = signatureCacheFile(channel, payload);
+            if (!payloadFile.isFile() || !signatureFile.isFile()) {
                 return null;
             }
-            byte[] indexBytes = readFile(indexFile, MAX_INDEX_BYTES);
+            byte[] payloadBytes = readFile(payloadFile, MAX_INDEX_BYTES);
             byte[] signatureBytes = readFile(signatureFile, 64 * 1024);
-            verifySignature(indexBytes, signatureBytes, publicKey);
-            UpdateCatalog catalog = UpdateCatalog.parse(new String(indexBytes, StandardCharsets.UTF_8));
+            verifySignature(payloadBytes, signatureBytes, publicKey);
+            UpdateCatalog catalog = UpdateCatalog.parse(new String(payloadBytes, StandardCharsets.UTF_8));
             return channel.equals(catalog.channel) ? catalog : null;
         } catch (IOException | GeneralSecurityException | JSONException ignored) {
             return null;
@@ -218,12 +240,18 @@ public final class UpdateClient {
                 : BuildConfig.UPDATE_RELEASE_INDEX_URL;
     }
 
-    private File indexCacheFile(String channel) {
-        return new File(cacheDirectory, channel + "-index-v1.json");
+    private static String catalogUrl(String channel) {
+        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
+                ? BuildConfig.UPDATE_DEBUG_CATALOG_URL
+                : BuildConfig.UPDATE_RELEASE_CATALOG_URL;
     }
 
-    private File signatureCacheFile(String channel) {
-        return new File(cacheDirectory, channel + "-index-v1.json.sig");
+    private File payloadCacheFile(String channel, String payload) {
+        return new File(cacheDirectory, channel + "-" + payload + ".json");
+    }
+
+    private File signatureCacheFile(String channel, String payload) {
+        return new File(cacheDirectory, channel + "-" + payload + ".json.sig");
     }
 
     private void downloadToFile(String url, long expectedSize, File outputFile) throws IOException {
