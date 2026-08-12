@@ -561,6 +561,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
+    /** 重载插件集合，但不把刚安装的插件当成导航目标。 */
+    private void reloadPluginsKeepingCurrentPage() {
+        reloadPlugins(selectedPlugin == null ? null : selectedPlugin.id());
+    }
+
     private ToolPlugin findPlugin(String pluginId) {
         if (pluginId == null) {
             return null;
@@ -1403,11 +1408,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                             release.dataFormatVersion
                     );
                     installStarted = true;
-                    reloadPlugins(pluginId);
+                    reloadPluginsKeepingCurrentPage();
                     if (wasEnabled && findPlugin(pluginId) == null) {
                         externalPluginStore.rollbackInstall(pluginId);
                         installStarted = false;
-                        reloadPlugins(pluginId);
+                        reloadPluginsKeepingCurrentPage();
                         throw new IOException("新版本插件无法加载，已恢复旧版本");
                     }
                     externalPluginStore.confirmInstall(pluginId);
@@ -1930,11 +1935,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             preflightPlugin(pluginImport);
             externalPluginStore.installPlugin(descriptor, pluginImport.codeBytes, "", "", "", false, 0);
             installStarted = true;
-            reloadPlugins(descriptor.id);
+            reloadPluginsKeepingCurrentPage();
             if (wasEnabled && findPlugin(descriptor.id) == null) {
                 externalPluginStore.rollbackInstall(descriptor.id);
                 installStarted = false;
-                reloadPlugins(descriptor.id);
+                reloadPluginsKeepingCurrentPage();
                 throw new IOException("新版本插件无法加载，已恢复旧版本");
             }
             externalPluginStore.confirmInstall(descriptor.id);
@@ -1942,7 +1947,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         } catch (IOException | JSONException e) {
             if (installStarted && pluginId != null) {
                 externalPluginStore.rollbackInstall(pluginId);
-                reloadPlugins(pluginId);
+                reloadPluginsKeepingCurrentPage();
             }
             showToast("导入失败：" + e.getMessage());
         }

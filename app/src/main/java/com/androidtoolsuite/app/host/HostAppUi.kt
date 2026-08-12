@@ -47,6 +47,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -164,6 +165,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -289,29 +291,6 @@ private fun SyncSystemBarsWithTheme(activity: MainActivity) {
 
 private data class Destination(val section: Int, val label: String, val icon: ImageVector)
 
-private class NavigationMotionState(initialPosition: Float) {
-    var position by mutableFloatStateOf(initialPosition)
-        private set
-    var selectedPage by mutableIntStateOf(initialPosition.roundToInt())
-        private set
-    var targetPage by mutableIntStateOf(initialPosition.roundToInt())
-        private set
-
-    fun update(position: Float) {
-        val constrained = position.coerceIn(DASHBOARD.toFloat(), SETTINGS.toFloat())
-        this.position = constrained
-        selectedPage = constrained.roundToInt()
-    }
-
-    fun navigateTo(page: Int) {
-        targetPage = page.coerceIn(DASHBOARD, SETTINGS)
-    }
-
-    fun settle(page: Int) {
-        targetPage = page.coerceIn(DASHBOARD, SETTINGS)
-    }
-}
-
 private fun View.requestInteractiveFrameRate() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
     val highestRate = display?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 120f
@@ -343,14 +322,24 @@ private fun HostApp(activity: MainActivity) {
     val refreshVersion = hostRevision(activity)
     val selectedSection = activity.currentSectionForUi()
     val selectedPlugin = activity.selectedPluginForUi()
-    val navigationMotion = remember {
-        NavigationMotionState(selectedSection.coerceIn(DASHBOARD, SETTINGS).toFloat())
+    val pagerState = rememberPagerState(
+        initialPage = selectedSection.coerceIn(DASHBOARD, SETTINGS),
+        pageCount = destinations::size,
+    )
+    val navigationScope = rememberCoroutineScope()
+    var navigationJob by remember { mutableStateOf<Job?>(null) }
+    val navigateTo: (Int) -> Unit = { requestedPage ->
+        val targetPage = requestedPage.coerceIn(DASHBOARD, SETTINGS)
+        navigationJob?.cancel()
+        navigationJob = navigationScope.launch { pagerState.animateToSection(targetPage) }
     }
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(selectedSection, selectedPlugin) {
         if (selectedPlugin == null && selectedSection in DASHBOARD..SETTINGS) {
-            navigationMotion.navigateTo(selectedSection)
-            navigationMotion.update(selectedSection.toFloat())
+            if (pagerState.settledPage != selectedSection || pagerState.currentPageOffsetFraction != 0f) {
+                navigationJob?.cancel()
+                navigationJob = navigationScope.launch { pagerState.animateToSection(selectedSection) }
+            }
         }
     }
     BackHandler(enabled = activity.canHandleBackForUi()) { activity.handleBackForUi() }
@@ -380,8 +369,8 @@ private fun HostApp(activity: MainActivity) {
                 if (!expanded && showMainNavigation) {
                     AppNavigationBar(
                         activity,
-                        navigationMotion,
-                        onNavigate = navigationMotion::navigateTo,
+                        pagerState,
+                        onNavigate = navigateTo,
                     )
                 }
             },
@@ -391,8 +380,8 @@ private fun HostApp(activity: MainActivity) {
                 if (expanded && showMainNavigation) {
                     AppNavigationRail(
                         activity,
-                        navigationMotion,
-                        onNavigate = navigationMotion::navigateTo,
+                        pagerState,
+                        onNavigate = navigateTo,
                     )
                 }
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
@@ -400,7 +389,7 @@ private fun HostApp(activity: MainActivity) {
                         activity,
                         refreshVersion,
                         snackbarHostState,
-                        navigationMotion,
+                        pagerState,
                         modifier = Modifier.fillMaxSize().widthIn(max = 720.dp),
                     )
                 }
@@ -447,10 +436,10 @@ private fun AppTopBar(
 @Composable
 private fun AppNavigationBar(
     activity: MainActivity,
-    motionState: NavigationMotionState,
+    pagerState: PagerState,
     onNavigate: (Int) -> Unit,
 ) {
-    val selectedSection = motionState.selectedPage
+    val selectedSection = pagerState.currentPage
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         BoxWithConstraints(Modifier.fillMaxWidth().height(80.dp)) {
             val itemWidth = maxWidth / destinations.size
@@ -463,7 +452,8 @@ private fun AppNavigationBar(
                     .offset(y = 12.dp)
                     // 在 layer 阶段读取滑动位置，只更新 GPU 平移矩阵，不触发底栏重新组合或布局。
                     .graphicsLayer {
-                        translationX = itemWidthPx * motionState.position + indicatorInsetPx
+                        val position = pagerState.currentPage + pagerState.currentPageOffsetFraction
+                        translationX = itemWidthPx * position + indicatorInsetPx
                     }
                     .width(indicatorWidth)
                     .height(32.dp)
@@ -499,10 +489,10 @@ private fun AppNavigationBar(
 @Composable
 private fun AppNavigationRail(
     activity: MainActivity,
-    motionState: NavigationMotionState,
+    pagerState: PagerState,
     onNavigate: (Int) -> Unit,
 ) {
-    val selectedSection = motionState.selectedPage
+    val selectedSection = pagerState.currentPage
     NavigationRail(
         modifier = Modifier.fillMaxHeight(),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -523,7 +513,7 @@ private fun AppContent(
     activity: MainActivity,
     refreshVersion: Int,
     snackbarHostState: SnackbarHostState,
-    navigationMotion: NavigationMotionState,
+    pagerState: PagerState,
     modifier: Modifier = Modifier,
 ) {
     hostRevision(activity)  // 订阅：选中插件变化时 selected 不变但 Java 字段已变
@@ -535,7 +525,7 @@ private fun AppContent(
         section == ABOUT -> AboutScreen(activity, refreshVersion, modifier.fillMaxSize())
         else -> SectionPager(
             activity,
-            navigationMotion,
+            pagerState,
             refreshVersion,
             snackbarHostState,
             modifier.fillMaxSize(),
@@ -546,21 +536,18 @@ private fun AppContent(
 /**
  * 五个一级分区的左右滑动容器。
  *
- * 页码与宿主的 `currentSection` 双向同步：底栏点击走 [MainActivity.navigateForUi]，由下面第一个
- * effect 把页面滑过去；手指滑动则由第二个 effect 回写分区。两边都先比对当前值再动作，避免互相触发。
+ * [PagerState] 是页面、底栏选中态和滑动指示器的唯一状态源；宿主的 `currentSection` 只在页面停稳
+ * 后更新，用于返回栈和从插件详情返回时恢复分区。
  */
 @Composable
 private fun SectionPager(
     activity: MainActivity,
-    navigationMotion: NavigationMotionState,
+    pagerState: PagerState,
     refreshVersion: Int,
     snackbarHostState: SnackbarHostState,
     modifier: Modifier = Modifier,
 ) {
     hostRevision(activity)  // 订阅：页面切换时 section 不变但内部 Java 字段已变
-    val pageCount = destinations.size
-    val initialPage = navigationMotion.targetPage
-    val pagerState = rememberPagerState(initialPage = initialPage) { pageCount }
     val pagerFlingBehavior = PagerDefaults.flingBehavior(
         state = pagerState,
         // 默认需要拖过半页；降到 30% 后短一些的明确横划也会翻页。
@@ -576,31 +563,8 @@ private fun SectionPager(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) composeView.clearRequestedFrameRate()
         }
     }
-    LaunchedEffect(navigationMotion.targetPage) {
-        val target = navigationMotion.targetPage
-        val pageWidth = pagerState.layoutInfo.pageSize.toFloat()
-        val remainingPages = target - pagerState.currentPage - pagerState.currentPageOffsetFraction
-        if (abs(remainingPages) > 0.001f && pageWidth > 0f) {
-            // animateScrollToPage 会在长距离时预跳到目标页附近，使内容和底栏指示器瞬移。
-            // 按实际页面宽度滚动可以让两者从点按开始就走完整路径。
-            pagerState.animateScrollBy(
-                value = remainingPages * pageWidth,
-                animationSpec = tween(
-                    durationMillis = if (abs(remainingPages) <= 1f) 260 else 360,
-                    easing = FastOutSlowInEasing,
-                ),
-            )
-        }
-    }
-    LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.currentPage to pagerState.currentPageOffsetFraction }
-            .collect { (page, offset) ->
-                navigationMotion.update(page + offset)
-            }
-    }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
-            navigationMotion.settle(page)
             if (page != activity.currentSectionForUi()) activity.setMainSectionFromPagerForUi(page)
         }
     }
@@ -621,6 +585,35 @@ private fun SectionPager(
             else -> SettingsScreen(activity, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
         }
     }
+}
+
+/**
+ * 采用 AndroidX Pager 的常规跳页方式；只有跨越三页以上时绕开其有意设计的预跳行为。
+ * AndroidX 会先瞬移到目标附近再补最后一段，这适合很长的信息流，却会让本应用只有五页的底栏
+ * 看起来少播了一截。长跳转改为从当前位置连续滚完整距离，同时仍由 Pager 处理触摸中断与吸附。
+ */
+private suspend fun PagerState.animateToSection(targetPage: Int) {
+    val target = targetPage.coerceIn(0, pageCount - 1)
+    val remainingPages = target - currentPage - currentPageOffsetFraction
+    if (abs(remainingPages) < 0.001f) return
+
+    if (abs(target - currentPage) < 3) {
+        animateScrollToPage(target)
+        return
+    }
+
+    val pageDistancePx = layoutInfo.pageSize + layoutInfo.pageSpacing
+    if (pageDistancePx <= 0) {
+        animateScrollToPage(target)
+        return
+    }
+    animateScrollBy(
+        value = remainingPages * pageDistancePx,
+        animationSpec = tween(
+            durationMillis = 240 + abs(remainingPages).roundToInt() * 70,
+            easing = FastOutSlowInEasing,
+        ),
+    )
 }
 
 @Composable

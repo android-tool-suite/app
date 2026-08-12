@@ -108,8 +108,8 @@ android {
         applicationId "com.androidtoolsuite.app"
         minSdk 24
         targetSdk 35
-        versionCode 15
-        versionName "1.5.0"
+        versionCode 16
+        versionName "1.5.1"
         buildConfigField "String", "PLUGIN_SDK_VERSION", "\"${providers.gradleProperty("pluginSdkVersion").get()}\""
         buildConfigField "String", "BUILD_COMMIT_SHA", "\"${buildCommitSha}\""
         buildConfigField "String", "UPDATE_RELEASE_INDEX_URL", "\"https://android-tool-suite.github.io/plugin-registry/release/index-v1.json\""
