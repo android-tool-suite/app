@@ -173,6 +173,7 @@ dependencies {
     def shizukuVersion = "13.1.5"
     implementation project(":plugin-sdk")
     implementation "androidx.activity:activity-compose:1.10.0"
+    implementation "androidx.core:core-splashscreen:1.2.0"
     // 直接用到 WindowCompat／WindowInsetsControllerCompat 来同步状态栏图标明暗，
     // 所以显式声明，不靠传递依赖。
     implementation "androidx.core:core:1.13.1"

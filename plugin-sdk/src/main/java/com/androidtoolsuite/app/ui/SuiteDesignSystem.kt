@@ -189,7 +189,7 @@ fun SectionHeader(title: String, subtitle: String? = null, action: (@Composable 
 @Composable
 fun Notice(text: String, warning: Boolean = false, modifier: Modifier = Modifier) {
     val color = if (warning) SuiteSemantic.current.warningContainer else MaterialTheme.colorScheme.secondaryContainer
-    val onColor = if (warning) SuiteSemantic.current.onWarning else MaterialTheme.colorScheme.onSecondaryContainer
+    val onColor = if (warning) SuiteSemantic.current.onWarningContainer else MaterialTheme.colorScheme.onSecondaryContainer
     Surface(modifier.fillMaxWidth(), color = color, shape = SuiteShapes.Inner) {
         Text(text, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = onColor)
     }

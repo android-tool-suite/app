@@ -40,8 +40,8 @@ fun ErrorState(
 ) {
     Surface(modifier.fillMaxWidth(), shape = SuiteShapes.Card, color = SuiteSemantic.current.dangerContainer) {
         Column(Modifier.padding(SuiteSpacing.xl), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = SuiteSemantic.current.onDanger)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = SuiteSemantic.current.onDanger)
+            Text(title, style = MaterialTheme.typography.titleMedium, color = SuiteSemantic.current.onDangerContainer)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = SuiteSemantic.current.onDangerContainer)
             if (onRetry != null) Button(onClick = onRetry) { Text("重试") }
         }
     }
@@ -56,7 +56,7 @@ fun DismissibleNotice(
 ) {
     val colors = SuiteSemantic.current
     val background: Color = if (warning) colors.warningContainer else MaterialTheme.colorScheme.secondaryContainer
-    val foreground: Color = if (warning) colors.onWarning else MaterialTheme.colorScheme.onSecondaryContainer
+    val foreground: Color = if (warning) colors.onWarningContainer else MaterialTheme.colorScheme.onSecondaryContainer
     Surface(modifier.fillMaxWidth(), color = background, shape = SuiteShapes.Inner) {
         Row(
             Modifier.padding(start = SuiteSpacing.lg, top = SuiteSpacing.sm, bottom = SuiteSpacing.sm),
@@ -80,7 +80,7 @@ fun SuiteStatusChip(text: String, modifier: Modifier = Modifier, positive: Boole
             text,
             modifier = Modifier.padding(horizontal = SuiteSpacing.md, vertical = SuiteSpacing.xs),
             style = MaterialTheme.typography.labelMedium,
-            color = if (positive) colors.onSuccess else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (positive) colors.onSuccessContainer else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

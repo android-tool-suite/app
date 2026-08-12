@@ -63,7 +63,7 @@ public final class PluginUpdatePolicyTest {
     }
 
     @Test
-    public void downgradeRequiresKnownReadableDataFormat() throws Exception {
+    public void downgradeRequiresReadableDataFormat() throws Exception {
         UpdateCatalog.PluginRelease compatible = releaseWithDataCompatibility(5, 2, 1, 3);
         UpdateCatalog.PluginRelease incompatible = releaseWithDataCompatibility(5, 1, 1, 1);
         ImportedPluginDescriptor installed = descriptor(7);
@@ -76,7 +76,7 @@ public final class PluginUpdatePolicyTest {
         ) == PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE);
         assertTrue(PluginUpdatePolicy.assessTransition(
                 compatible, installed, true, "a".repeat(64), true, 0, true
-        ) == PluginUpdatePolicy.Transition.DOWNGRADE_UNKNOWN);
+        ) == PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE);
     }
 
     @Test
@@ -97,10 +97,23 @@ public final class PluginUpdatePolicyTest {
         ) == PluginUpdatePolicy.Transition.REINSTALL_COMPATIBLE);
         assertTrue(PluginUpdatePolicy.assessTransition(
                 release, null, false, "", true, 0, false
-        ) == PluginUpdatePolicy.Transition.DOWNGRADE_UNKNOWN);
+        ) == PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE);
         assertTrue(PluginUpdatePolicy.assessTransition(
                 release, null, false, "", false, 0, false
         ) == PluginUpdatePolicy.Transition.INSTALL);
+    }
+
+    @Test
+    public void declaredLegacyCompatibilityAcceptsUndeclaredV0Data() throws Exception {
+        UpdateCatalog.PluginRelease release = releaseWithDataCompatibility(7, 1, 0, 1);
+
+        assertTrue(release.canReadDataFormat(0));
+        assertTrue(PluginUpdatePolicy.assessTransition(
+                release, null, false, "", true, 0, false
+        ) == PluginUpdatePolicy.Transition.REINSTALL_COMPATIBLE);
+        assertTrue(PluginUpdatePolicy.assessTransition(
+                release, descriptor(8), true, "a".repeat(64), true, 0, true
+        ) == PluginUpdatePolicy.Transition.DOWNGRADE_COMPATIBLE);
     }
 
     private static UpdateCatalog.PluginRelease debugRelease(String digestCharacter) throws Exception {

@@ -17,10 +17,12 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.provider.Settings;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.content.FileProvider;
+import androidx.core.splashscreen.SplashScreen;
 
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
@@ -106,6 +108,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final String PREF_UPDATE_CHECK_EXCLUDED = "update_check_excluded_plugins";
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
+    private final Map<String, ImportedPluginDescriptor> importedDescriptorCache = new LinkedHashMap<>();
+    private final Set<String> optionalBuiltInPluginIds = new HashSet<>();
     private ToolPlugin selectedPlugin;
     private ExternalPluginStore externalPluginStore;
     private BuiltInPluginStateStore builtInPluginStateStore;
@@ -207,12 +211,29 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            // 从 ACTION_DOWN 就请求触摸升帧；Pager 进入滚动后还会对 ComposeView 继续投 HIGH 票。
+            getWindow().setFrameRateBoostOnTouchEnabled(true);
+        }
+        splashScreen.setOnExitAnimationListener(provider -> {
+            View splashView = provider.getView();
+            splashView.animate()
+                    .alpha(0f)
+                    .scaleX(1.04f)
+                    .scaleY(1.04f)
+                    .setDuration(260L)
+                    .setInterpolator(new DecelerateInterpolator())
+                    .withEndAction(provider::remove)
+                    .start();
+        });
         externalPluginStore = new ExternalPluginStore(this);
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
         updateClient = new UpdateClient(this);
         uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         syncSuiteThemePreferences();
+        // 用户看到主界面前把全部插件准备好，避免把类加载抖动摊到打开后的几秒和首次切页。
         loadPlugins();
         setContentView(createContentView());
         getOnBackPressedDispatcher().addCallback(this, appBackCallback);
@@ -454,6 +475,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     private void loadPlugins() {
         plugins.clear();
+        importedDescriptorCache.clear();
+        optionalBuiltInPluginIds.clear();
+        loadBuiltInPlugins();
+        plugins.addAll(createExternalPlugins(plugins));
+    }
+
+    private void loadBuiltInPlugins() {
         LinkedHashMap<String, String> activeVersions = new LinkedHashMap<>();
         for (ToolPlugin plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
             if (areDependenciesSatisfied(plugin.dependencies(), activeVersions)) {
@@ -464,6 +492,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             }
         }
         for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
+            optionalBuiltInPluginIds.add(plugin.id());
             if (builtInPluginStateStore.isEnabled(plugin.id()) && areDependenciesSatisfied(plugin.dependencies(), activeVersions)) {
                 plugins.add(plugin);
                 activeVersions.put(plugin.id(), plugin.version());
@@ -471,7 +500,18 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 plugin.onDestroy();
             }
         }
+    }
+
+    private List<ToolPlugin> createExternalPlugins(List<ToolPlugin> activePlugins) {
+        List<ToolPlugin> result = new ArrayList<>();
+        LinkedHashMap<String, String> activeVersions = new LinkedHashMap<>();
+        for (ToolPlugin plugin : activePlugins) {
+            activeVersions.put(plugin.id(), plugin.version());
+        }
         List<ImportedPluginDescriptor> pendingExternalPlugins = new ArrayList<>(externalPluginStore.load());
+        for (ImportedPluginDescriptor descriptor : pendingExternalPlugins) {
+            importedDescriptorCache.put(descriptor.id, descriptor);
+        }
         boolean loadedPlugin;
         do {
             loadedPlugin = false;
@@ -482,7 +522,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 } else if (areDependenciesSatisfied(descriptor.dependencies, activeVersions)) {
                     ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
                     if (plugin != null) {
-                        plugins.add(plugin);
+                        result.add(plugin);
                         activeVersions.put(plugin.id(), plugin.version());
                     }
                     pendingExternalPlugins.remove(i);
@@ -490,6 +530,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 }
             }
         } while (loadedPlugin);
+        return result;
     }
 
     private boolean areDependenciesSatisfied(Set<String> dependencies, Map<String, String> activeVersions) {
@@ -545,7 +586,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public void invalidateComposeUi() {
-        composeState.captureScrollPositions(this);
         composeState.bump();
     }
 
@@ -603,16 +643,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
      * 要不要显示「停用插件」——把一个停不掉的开关摆出来只会让人以为功能坏了。
      */
     public boolean canDisablePluginForUi(ToolPlugin plugin) {
-        if (findImportedDescriptor(plugin.id()) != null) {
-            return true;
-        }
-        // 只认可选内置插件。必需内置插件即使传进 setBuiltInPluginEnabled 也停不掉。
-        for (ToolPlugin optional : ToolRegistry.createOptionalBuiltInPlugins()) {
-            if (optional.id().equals(plugin.id())) {
-                return true;
-            }
-        }
-        return false;
+        return importedDescriptorCache.containsKey(plugin.id())
+                || optionalBuiltInPluginIds.contains(plugin.id());
     }
 
     /** 停用插件，自动分派到内置或外部两条通道。依赖校验与提示由被调用方负责。 */
@@ -793,6 +825,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         else if (section == SECTION_ABOUT) showAboutForUi();
     }
 
+    /** Pager 已经完成视觉切换时只同步返回栈语义，不再让五个缓存页面全部重组。 */
+    public void setMainSectionFromPagerForUi(int section) {
+        if (section < SECTION_DASHBOARD || section > SECTION_SETTINGS) return;
+        currentSection = section;
+        selectedPlugin = null;
+    }
+
     public void openPluginForUi(ToolPlugin plugin) {
         openPlugin(plugin);
     }
@@ -811,7 +850,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public List<ImportedPluginDescriptor> importedDescriptorsForUi() {
-        return externalPluginStore.load();
+        return new ArrayList<>(importedDescriptorCache.values());
     }
 
     public void showPluginRepositoryForUi() {
@@ -1128,6 +1167,18 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return updateOperations.contains(id);
     }
 
+    public float downloadProgressForUi(String id) {
+        return composeState.downloadProgress(id);
+    }
+
+    private void updateDownloadProgress(String id, long downloadedBytes, long totalBytes) {
+        composeState.updateDownloadProgress(id, downloadedBytes, totalBytes);
+    }
+
+    private void clearDownloadProgress(String id) {
+        composeState.clearDownloadProgress(id);
+    }
+
     public boolean isRepositoryPluginUpdateAvailableForUi(UpdateCatalog.PluginRelease release) {
         if (!isPluginUpdateCheckEnabledForUi(release.id)) {
             return false;
@@ -1161,7 +1212,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             case INSTALL:
                 return release.hasDataCompatibilityDeclaration()
                         ? "首次安装 · 数据格式 v" + release.dataFormatVersion
-                        : "首次安装 · 此版本未声明数据格式";
+                        : "首次安装 · 旧版数据格式 v0";
             case REINSTALL_COMPATIBLE:
                 return "检测到保留数据 · 目标版本可读取数据格式 v" + currentDataFormat;
             case CURRENT:
@@ -1172,8 +1223,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 return "切换到所选构建";
             case DOWNGRADE_COMPATIBLE:
                 return "可降级 · 目标版本可读取当前数据格式 v" + currentDataFormat;
-            case DOWNGRADE_UNKNOWN:
-                return "已阻止降级 · 当前或目标版本未声明数据兼容性";
             case DATA_INCOMPATIBLE:
                 return "已阻止安装 · 目标版本无法读取当前数据格式 v" + currentDataFormat;
             default:
@@ -1201,7 +1250,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 return "切换版本";
             case DOWNGRADE_COMPATIBLE:
                 return "降级";
-            case DOWNGRADE_UNKNOWN:
             case DATA_INCOMPATIBLE:
                 return "无法安全降级";
             default:
@@ -1213,7 +1261,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         PluginUpdatePolicy.Transition transition = assessPluginTransition(release);
         return release.minHostVersionCode <= BuildConfig.VERSION_CODE
                 && transition != PluginUpdatePolicy.Transition.CURRENT
-                && transition != PluginUpdatePolicy.Transition.DOWNGRADE_UNKNOWN
                 && transition != PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE;
     }
 
@@ -1238,8 +1285,14 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 : "android-tool-suite.apk";
         updateClient.download(release, fileName, new UpdateClient.DownloadCallback() {
             @Override
+            public void onProgress(long downloadedBytes, long totalBytes) {
+                updateDownloadProgress("__app__", downloadedBytes, totalBytes);
+            }
+
+            @Override
             public void onSuccess(File file) {
                 updateOperations.remove("__app__");
+                clearDownloadProgress("__app__");
                 try {
                     verifyAppUpdate(file, release);
                     launchAppInstaller(file);
@@ -1254,6 +1307,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             @Override
             public void onError(String message) {
                 updateOperations.remove("__app__");
+                clearDownloadProgress("__app__");
                 updateStatus = "应用更新失败：" + message;
                 showToast(updateStatus);
                 invalidateComposeUi();
@@ -1289,13 +1343,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         PluginUpdatePolicy.Transition transition = assessPluginTransition(release);
         if (transition == PluginUpdatePolicy.Transition.CURRENT) {
             showToast("当前已安装此版本");
-            return;
-        }
-        if (transition == PluginUpdatePolicy.Transition.DOWNGRADE_UNKNOWN) {
-            showBlockedPluginTransitionDialog(
-                    "无法确认数据兼容性",
-                    "目标版本或当前安装版本没有声明数据格式。为避免旧版插件损坏新版数据，应用不会直接覆盖安装。请先使用插件自身的导出功能备份业务数据，再由插件提供兼容声明后降级。"
-            );
             return;
         }
         if (transition == PluginUpdatePolicy.Transition.DATA_INCOMPATIBLE) {
@@ -1334,6 +1381,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
         updateClient.download(release, pluginId + ".atsplugin", new UpdateClient.DownloadCallback() {
             @Override
+            public void onProgress(long downloadedBytes, long totalBytes) {
+                updateDownloadProgress(pluginId, downloadedBytes, totalBytes);
+            }
+
+            @Override
             public void onSuccess(File file) {
                 boolean installStarted = false;
                 try {
@@ -1369,6 +1421,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     showToast(updateStatus);
                 } finally {
                     updateOperations.remove(pluginId);
+                    clearDownloadProgress(pluginId);
                     invalidateComposeUi();
                 }
             }
@@ -1376,6 +1429,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             @Override
             public void onError(String message) {
                 updateOperations.remove(pluginId);
+                clearDownloadProgress(pluginId);
                 updateStatus = "插件更新失败：" + message;
                 showToast(updateStatus);
                 invalidateComposeUi();
@@ -1466,7 +1520,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         updateStatus = "正在检查" + pluginRepositoryChannelLabelForUi() + "更新…";
         updateCheckState = UpdateCheckState.CHECKING;
         updateError = "";
-        invalidateComposeUi();
+        // 后台自动检查不展示“检查中”，避免应用刚打开后让当前页和相邻页一起重组。
+        if (userInitiated) invalidateComposeUi();
         String appChannel = BuildConfig.DEBUG
                 ? UpdateCatalog.CHANNEL_DEBUG
                 : UpdateCatalog.CHANNEL_RELEASE;
@@ -1484,16 +1539,20 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     updatePromptVisible = !currentUpdateFingerprint().equals(
                             uiPreferences.getString(PREF_DISMISSED_UPDATE_VERSIONS, "")
                     );
+                    if (userInitiated && repositoryRefresh) {
+                        enqueueSnackbar("刷新完成，发现 " + available + " 项更新", null);
+                    }
                 } else {
                     updateStatus = "已是最新版本"
                             + (cached ? "（缓存索引）" : "");
                     updateCheckState = UpdateCheckState.UP_TO_DATE;
                     updatePromptVisible = false;
-                    if (userInitiated && !repositoryRefresh) {
-                        enqueueSnackbar("已是最新版本", null);
+                    if (userInitiated) {
+                        enqueueSnackbar(repositoryRefresh ? "刷新完成，已是最新版本" : "已是最新版本", null);
                     }
                 }
-                invalidateComposeUi();
+                // 只有可见结果需要刷新：发现更新要弹提示；手动检查要更新 Snackbar/状态。
+                if (available > 0 || userInitiated) invalidateComposeUi();
             }
 
             @Override
@@ -1504,12 +1563,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 updatePromptVisible = false;
                 if (userInitiated) {
                     updateCheckState = UpdateCheckState.FAILED;
-                    if (!repositoryRefresh) enqueueSnackbar(updateStatus, "重试");
+                    enqueueSnackbar(repositoryRefresh ? "刷新失败：" + message : updateStatus, "重试");
                 } else {
                     updateCheckState = UpdateCheckState.IDLE;
                     updateError = "";
                 }
-                invalidateComposeUi();
+                if (userInitiated) invalidateComposeUi();
             }
         });
     }
@@ -1978,7 +2037,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
         externalPluginStore.setEnabled(pluginId, enabled);
         showToast(enabled ? "已启用插件" : "已停用插件");
-        reloadPlugins(enabled ? pluginId : null);
+        reloadPlugins(null);
     }
 
     @Override
@@ -2018,7 +2077,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
         builtInPluginStateStore.setEnabled(pluginId, enabled);
         showToast(enabled ? "已启用插件" : "已停用插件");
-        reloadPlugins(enabled ? pluginId : null);
+        reloadPlugins(null);
     }
 
     private boolean isBuiltInPluginId(String pluginId) {
@@ -2109,15 +2168,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private ImportedPluginDescriptor findImportedDescriptor(String pluginId) {
-        if (pluginId == null) {
-            return null;
-        }
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            if (descriptor.id.equals(pluginId)) {
-                return descriptor;
-            }
-        }
-        return null;
+        return pluginId == null ? null : importedDescriptorCache.get(pluginId);
     }
 
     private HostMigrationArchive.Snapshot createMigrationSnapshot()

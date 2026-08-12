@@ -107,7 +107,8 @@ public final class UpdateClient {
                 if (pendingFile.exists() && !pendingFile.delete()) {
                     throw new IOException("无法清理旧下载临时文件");
                 }
-                downloadToFile(release.downloadUrl, release.size, pendingFile);
+                mainHandler.post(() -> callback.onProgress(0L, release.size));
+                downloadToFile(release.downloadUrl, release.size, pendingFile, callback);
                 String actualHash = sha256(pendingFile);
                 if (!release.sha256.equalsIgnoreCase(actualHash)) {
                     throw new IOException("下载文件 SHA-256 校验失败");
@@ -254,7 +255,12 @@ public final class UpdateClient {
         return new File(cacheDirectory, channel + "-" + payload + ".json.sig");
     }
 
-    private void downloadToFile(String url, long expectedSize, File outputFile) throws IOException {
+    private void downloadToFile(
+            String url,
+            long expectedSize,
+            File outputFile,
+            DownloadCallback callback
+    ) throws IOException {
         if (expectedSize <= 0L || expectedSize > MAX_ASSET_BYTES) {
             throw new IOException("下载文件大小超出限制");
         }
@@ -268,6 +274,7 @@ public final class UpdateClient {
                  FileOutputStream output = new FileOutputStream(outputFile)) {
                 byte[] buffer = new byte[16 * 1024];
                 long total = 0L;
+                long lastProgressAt = 0L;
                 int read;
                 while ((read = input.read(buffer)) != -1) {
                     total += read;
@@ -275,6 +282,12 @@ public final class UpdateClient {
                         throw new IOException("下载文件大小与索引不一致");
                     }
                     output.write(buffer, 0, read);
+                    long now = System.currentTimeMillis();
+                    if (now - lastProgressAt >= 100L || total == expectedSize) {
+                        long downloaded = total;
+                        mainHandler.post(() -> callback.onProgress(downloaded, expectedSize));
+                        lastProgressAt = now;
+                    }
                 }
                 output.getFD().sync();
                 if (total != expectedSize) {
@@ -391,6 +404,8 @@ public final class UpdateClient {
     }
 
     public interface DownloadCallback {
+        void onProgress(long downloadedBytes, long totalBytes);
+
         void onSuccess(File file);
 
         void onError(String message);

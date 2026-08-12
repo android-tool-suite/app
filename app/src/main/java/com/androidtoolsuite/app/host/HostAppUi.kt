@@ -5,10 +5,15 @@
 
 package com.androidtoolsuite.app.host
 
+import android.os.Build
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,13 +37,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -72,16 +81,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -91,16 +101,18 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,8 +122,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -147,8 +162,10 @@ import com.androidtoolsuite.app.update.UpdateCatalog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 private const val DASHBOARD = 0
 private const val PLUGINS = 1
@@ -159,28 +176,39 @@ private const val ABOUT = 5
 
 /** State bridge for Java-host callbacks. MutableState is observed by Compose directly. */
 class HostUiState {
-    private val liveListStates = mutableMapOf<String, LazyListState>()
+    private val downloadProgress = mutableStateMapOf<String, Float>()
     var revision: Int by mutableIntStateOf(0)
         private set
 
     fun bump() {
-        Snapshot.withMutableSnapshot { revision++ }
+        revision++
     }
 
-    fun attachListState(page: String, state: LazyListState) {
-        liveListStates[page] = state
-    }
-
-    fun captureScrollPositions(activity: MainActivity) {
-        liveListStates.forEach { (page, state) ->
-            activity.saveScrollPositionForUi(
-                page,
-                state.firstVisibleItemIndex,
-                state.firstVisibleItemScrollOffset,
-            )
+    fun updateDownloadProgress(id: String, downloadedBytes: Long, totalBytes: Long) {
+        downloadProgress[id] = if (totalBytes <= 0L) {
+            0f
+        } else {
+            (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
         }
     }
+
+    fun clearDownloadProgress(id: String) {
+        downloadProgress.remove(id)
+    }
+
+    fun downloadProgress(id: String): Float = downloadProgress[id] ?: 0f
 }
+
+/**
+ * 订阅宿主的失效计数，并把它作为值返回。
+ *
+ * 宿主状态大多是 Java 普通字段，靠 [MainActivity.invalidateComposeUi] 撞这个计数来触发重组。
+ * 关键在于**读取必须发生在需要重组的那个 composable 自己的作用域里**：把计数当参数传下去只让
+ * 调用方订阅了，被调用方仍可能被跳过——弹窗就是这么丢的。每个消费宿主状态的 composable
+ * 自己调一次这个函数。
+ */
+@Composable
+private fun hostRevision(activity: MainActivity): Int = activity.uiStateForUi().revision
 
 @Composable
 private fun rememberPageListState(activity: MainActivity, page: String): LazyListState {
@@ -188,7 +216,6 @@ private fun rememberPageListState(activity: MainActivity, page: String): LazyLis
         initialFirstVisibleItemIndex = activity.scrollIndexForUi(page),
         initialFirstVisibleItemScrollOffset = activity.scrollOffsetForUi(page),
     )
-    activity.uiStateForUi().attachListState(page, state)
     LaunchedEffect(state, page) {
         snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
             .collect { (index, offset) -> activity.saveScrollPositionForUi(page, index, offset) }
@@ -198,7 +225,7 @@ private fun rememberPageListState(activity: MainActivity, page: String): LazyLis
 
 fun createHostAppView(activity: MainActivity): View {
     activity.enableEdgeToEdge()
-    return ComposeView(activity).apply {
+    val composeView = ComposeView(activity).apply {
         setContent {
             SuiteTheme(
                 themePreference = SuiteThemePreferences.themePreference,
@@ -208,6 +235,37 @@ fun createHostAppView(activity: MainActivity): View {
                 HostApp(activity)
             }
         }
+    }
+    return object : FrameLayout(activity) {
+        private var resetFrameRate: Runnable? = null
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        resetFrameRate?.let(::removeCallbacks)
+                        resetFrameRate = null
+                        requestInteractiveFrameRate()
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        resetFrameRate?.let(::removeCallbacks)
+                        resetFrameRate = Runnable { clearRequestedFrameRate() }.also {
+                            // 手指离开后 Pager 还可能在回弹或惯性滚动，留出一小段余量。
+                            postDelayed(it, 600L)
+                        }
+                    }
+                }
+            }
+            return super.dispatchTouchEvent(event)
+        }
+    }.apply {
+        addView(
+            composeView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
     }
 }
 
@@ -231,6 +289,47 @@ private fun SyncSystemBarsWithTheme(activity: MainActivity) {
 
 private data class Destination(val section: Int, val label: String, val icon: ImageVector)
 
+private class NavigationMotionState(initialPosition: Float) {
+    var position by mutableFloatStateOf(initialPosition)
+        private set
+    var selectedPage by mutableIntStateOf(initialPosition.roundToInt())
+        private set
+    var targetPage by mutableIntStateOf(initialPosition.roundToInt())
+        private set
+
+    fun update(position: Float) {
+        val constrained = position.coerceIn(DASHBOARD.toFloat(), SETTINGS.toFloat())
+        this.position = constrained
+        selectedPage = constrained.roundToInt()
+    }
+
+    fun navigateTo(page: Int) {
+        targetPage = page.coerceIn(DASHBOARD, SETTINGS)
+    }
+
+    fun settle(page: Int) {
+        targetPage = page.coerceIn(DASHBOARD, SETTINGS)
+    }
+}
+
+private fun View.requestInteractiveFrameRate() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+    val highestRate = display?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 120f
+    updateRequestedFrameRate(highestRate)
+}
+
+private fun View.clearRequestedFrameRate() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+    updateRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT)
+}
+
+private fun View.updateRequestedFrameRate(rate: Float) {
+    requestedFrameRate = rate
+    if (this is ViewGroup) {
+        for (index in 0 until childCount) getChildAt(index).updateRequestedFrameRate(rate)
+    }
+}
+
 private val destinations = listOf(
     Destination(DASHBOARD, "主页", Icons.Rounded.Home),
     Destination(PLUGINS, "工具", Icons.Rounded.Apps),
@@ -241,10 +340,19 @@ private val destinations = listOf(
 
 @Composable
 private fun HostApp(activity: MainActivity) {
-    val refreshVersion = activity.uiStateForUi().revision
+    val refreshVersion = hostRevision(activity)
     val selectedSection = activity.currentSectionForUi()
     val selectedPlugin = activity.selectedPluginForUi()
+    val navigationMotion = remember {
+        NavigationMotionState(selectedSection.coerceIn(DASHBOARD, SETTINGS).toFloat())
+    }
     val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(selectedSection, selectedPlugin) {
+        if (selectedPlugin == null && selectedSection in DASHBOARD..SETTINGS) {
+            navigationMotion.navigateTo(selectedSection)
+            navigationMotion.update(selectedSection.toFloat())
+        }
+    }
     BackHandler(enabled = activity.canHandleBackForUi()) { activity.handleBackForUi() }
     LaunchedEffect(refreshVersion) {
         val snackbarMessage = activity.consumeSnackbarMessageForUi()
@@ -268,13 +376,33 @@ private fun HostApp(activity: MainActivity) {
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
             topBar = { AppTopBar(activity, selectedSection, selectedPlugin) },
-            bottomBar = { if (!expanded && showMainNavigation) AppNavigationBar(activity, selectedSection) },
+            bottomBar = {
+                if (!expanded && showMainNavigation) {
+                    AppNavigationBar(
+                        activity,
+                        navigationMotion,
+                        onNavigate = navigationMotion::navigateTo,
+                    )
+                }
+            },
             snackbarHost = { SnackbarHost(snackbarHostState) },
         ) { padding ->
             Row(Modifier.fillMaxSize().padding(padding)) {
-                if (expanded && showMainNavigation) AppNavigationRail(activity, selectedSection)
+                if (expanded && showMainNavigation) {
+                    AppNavigationRail(
+                        activity,
+                        navigationMotion,
+                        onNavigate = navigationMotion::navigateTo,
+                    )
+                }
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
-                    AppContent(activity, refreshVersion, Modifier.fillMaxSize().widthIn(max = 720.dp))
+                    AppContent(
+                        activity,
+                        refreshVersion,
+                        snackbarHostState,
+                        navigationMotion,
+                        modifier = Modifier.fillMaxSize().widthIn(max = 720.dp),
+                    )
                 }
             }
         }
@@ -284,7 +412,11 @@ private fun HostApp(activity: MainActivity) {
 }
 
 @Composable
-private fun AppTopBar(activity: MainActivity, section: Int, plugin: ToolPlugin?) {
+private fun AppTopBar(
+    activity: MainActivity,
+    section: Int,
+    plugin: ToolPlugin?,
+) {
     var menuExpanded by remember(plugin?.id(), section) { mutableStateOf(false) }
     when {
         plugin != null -> SuiteTopBar(
@@ -309,45 +441,68 @@ private fun AppTopBar(activity: MainActivity, section: Int, plugin: ToolPlugin?)
         )
         // 关于是设置的子页，所以有返回箭头；设置本身是底栏分区，没有。
         section == ABOUT -> SuiteTopBar("关于", onBack = activity::handleBackForUi)
-        else -> SuiteTopBar(
-            title = if (section == DASHBOARD) "安卓工具合集" else destinations.firstOrNull { it.section == section }?.label ?: "安卓工具合集",
-            actions = {
-                // 刷新是整屏级别的动作，放顶栏而不是塞进列表里的某个分段标题。
-                if (section == STORE) {
-                    IconButton(
-                        onClick = activity::refreshUpdatesForUi,
-                        enabled = !activity.isUpdateOperationRunningForUi("__check__"),
-                    ) { Icon(Icons.Rounded.Refresh, "刷新仓库") }
-                }
-            },
-        )
     }
 }
 
 @Composable
-private fun AppNavigationBar(activity: MainActivity, selectedSection: Int) {
+private fun AppNavigationBar(
+    activity: MainActivity,
+    motionState: NavigationMotionState,
+    onNavigate: (Int) -> Unit,
+) {
+    val selectedSection = motionState.selectedPage
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-        destinations.forEach { destination ->
-            NavigationBarItem(
-                selected = selectedSection == destination.section,
-                onClick = { activity.navigateForUi(destination.section) },
-                icon = {
-                    BadgedBox(
-                        badge = {
-                            if (destination.section == STORE && activity.availableUpdateCountForUi() > 0) {
-                                Badge { Text(activity.availableUpdateCountForUi().toString()) }
-                            }
-                        },
-                    ) { Icon(destination.icon, contentDescription = destination.label) }
-                },
-                label = { Text(destination.label) },
+        BoxWithConstraints(Modifier.fillMaxWidth().height(80.dp)) {
+            val itemWidth = maxWidth / destinations.size
+            val indicatorWidth = 64.dp
+            val density = LocalDensity.current
+            val itemWidthPx = with(density) { itemWidth.toPx() }
+            val indicatorInsetPx = with(density) { ((itemWidth - indicatorWidth) / 2).toPx() }
+            Box(
+                Modifier
+                    .offset(y = 12.dp)
+                    // 在 layer 阶段读取滑动位置，只更新 GPU 平移矩阵，不触发底栏重新组合或布局。
+                    .graphicsLayer {
+                        translationX = itemWidthPx * motionState.position + indicatorInsetPx
+                    }
+                    .width(indicatorWidth)
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
             )
+            Row(Modifier.fillMaxSize()) {
+                destinations.forEach { destination ->
+                    NavigationBarItem(
+                        modifier = Modifier.weight(1f),
+                        selected = selectedSection == destination.section,
+                        onClick = { onNavigate(destination.section) },
+                        colors = NavigationBarItemDefaults.colors(
+                            indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        ),
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (destination.section == STORE && activity.availableUpdateCountForUi() > 0) {
+                                        Badge { Text(activity.availableUpdateCountForUi().toString()) }
+                                    }
+                                },
+                            ) { Icon(destination.icon, contentDescription = destination.label) }
+                        },
+                        label = { Text(destination.label) },
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AppNavigationRail(activity: MainActivity, selectedSection: Int) {
+private fun AppNavigationRail(
+    activity: MainActivity,
+    motionState: NavigationMotionState,
+    onNavigate: (Int) -> Unit,
+) {
+    val selectedSection = motionState.selectedPage
     NavigationRail(
         modifier = Modifier.fillMaxHeight(),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -355,7 +510,7 @@ private fun AppNavigationRail(activity: MainActivity, selectedSection: Int) {
         destinations.forEach { destination ->
             NavigationRailItem(
                 selected = selectedSection == destination.section,
-                onClick = { activity.navigateForUi(destination.section) },
+                onClick = { onNavigate(destination.section) },
                 icon = { Icon(destination.icon, contentDescription = null) },
                 label = { Text(destination.label) },
             )
@@ -364,14 +519,27 @@ private fun AppNavigationRail(activity: MainActivity, selectedSection: Int) {
 }
 
 @Composable
-private fun AppContent(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+private fun AppContent(
+    activity: MainActivity,
+    refreshVersion: Int,
+    snackbarHostState: SnackbarHostState,
+    navigationMotion: NavigationMotionState,
+    modifier: Modifier = Modifier,
+) {
+    hostRevision(activity)  // 订阅：选中插件变化时 selected 不变但 Java 字段已变
     val selected = activity.selectedPluginForUi()
     val section = activity.currentSectionForUi()
     when {
         // 插件详情和关于都是压在分区之上的独立页面，不参与左右滑动。
         selected != null -> PluginDetailScreen(activity, selected, refreshVersion, modifier.fillMaxSize())
         section == ABOUT -> AboutScreen(activity, refreshVersion, modifier.fillMaxSize())
-        else -> SectionPager(activity, section, refreshVersion, modifier.fillMaxSize())
+        else -> SectionPager(
+            activity,
+            navigationMotion,
+            refreshVersion,
+            snackbarHostState,
+            modifier.fillMaxSize(),
+        )
     }
 }
 
@@ -382,39 +550,82 @@ private fun AppContent(activity: MainActivity, refreshVersion: Int, modifier: Mo
  * effect 把页面滑过去；手指滑动则由第二个 effect 回写分区。两边都先比对当前值再动作，避免互相触发。
  */
 @Composable
-private fun SectionPager(activity: MainActivity, section: Int, refreshVersion: Int, modifier: Modifier = Modifier) {
+private fun SectionPager(
+    activity: MainActivity,
+    navigationMotion: NavigationMotionState,
+    refreshVersion: Int,
+    snackbarHostState: SnackbarHostState,
+    modifier: Modifier = Modifier,
+) {
+    hostRevision(activity)  // 订阅：页面切换时 section 不变但内部 Java 字段已变
     val pageCount = destinations.size
-    val initialPage = section.coerceIn(0, pageCount - 1)
+    val initialPage = navigationMotion.targetPage
     val pagerState = rememberPagerState(initialPage = initialPage) { pageCount }
-    LaunchedEffect(section) {
-        val target = section.coerceIn(0, pageCount - 1)
-        if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+    val pagerFlingBehavior = PagerDefaults.flingBehavior(
+        state = pagerState,
+        // 默认需要拖过半页；降到 30% 后短一些的明确横划也会翻页。
+        snapPositionalThreshold = 0.3f,
+    )
+    val composeView = LocalView.current
+    DisposableEffect(composeView, pagerState.isScrollInProgress) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            if (pagerState.isScrollInProgress) composeView.requestInteractiveFrameRate()
+            else composeView.clearRequestedFrameRate()
+        }
+        onDispose {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) composeView.clearRequestedFrameRate()
+        }
+    }
+    LaunchedEffect(navigationMotion.targetPage) {
+        val target = navigationMotion.targetPage
+        val pageWidth = pagerState.layoutInfo.pageSize.toFloat()
+        val remainingPages = target - pagerState.currentPage - pagerState.currentPageOffsetFraction
+        if (abs(remainingPages) > 0.001f && pageWidth > 0f) {
+            // animateScrollToPage 会在长距离时预跳到目标页附近，使内容和底栏指示器瞬移。
+            // 按实际页面宽度滚动可以让两者从点按开始就走完整路径。
+            pagerState.animateScrollBy(
+                value = remainingPages * pageWidth,
+                animationSpec = tween(
+                    durationMillis = if (abs(remainingPages) <= 1f) 260 else 360,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+        }
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage to pagerState.currentPageOffsetFraction }
+            .collect { (page, offset) ->
+                navigationMotion.update(page + offset)
+            }
     }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
-            if (page != activity.currentSectionForUi()) activity.navigateForUi(page)
+            navigationMotion.settle(page)
+            if (page != activity.currentSectionForUi()) activity.setMainSectionFromPagerForUi(page)
         }
     }
     HorizontalPager(
         state = pagerState,
         modifier = modifier,
-        // 主页小部件是插件提供的 AndroidView，越界回弹时容易把它们一起拖出可视区，关掉更稳。
+        flingBehavior = pagerFlingBehavior,
+        // 运行期只保留左右相邻页，连续来回滑动不重复创建，远页也不长期参与布局。
         pageSpacing = 0.dp,
-        beyondViewportPageCount = 0,
+        beyondViewportPageCount = 1,
         key = { it },
     ) { page ->
         when (page) {
             DASHBOARD -> DashboardScreen(activity, refreshVersion, Modifier.fillMaxSize())
             PLUGINS -> PluginListScreen(activity, refreshVersion, Modifier.fillMaxSize())
             MANAGER -> ManagerScreen(activity, refreshVersion, Modifier.fillMaxSize())
-            STORE -> PluginRepositoryScreen(activity, refreshVersion, Modifier.fillMaxSize())
-            else -> SettingsScreen(activity, refreshVersion, Modifier.fillMaxSize())
+            STORE -> PluginRepositoryScreen(activity, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
+            else -> SettingsScreen(activity, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
         }
     }
 }
 
 @Composable
 private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    hostRevision(activity)
     val plugins = activity.pluginsForUi()
     val widgets = activity.widgetsForUi()
     val hidden = activity.allWidgetsForUi().filterNot(activity::isWidgetVisibleForUi)
@@ -878,6 +1089,7 @@ private fun Modifier.dropPreviewReorder(
 
 @Composable
 private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    hostRevision(activity)
     val plugins = activity.pluginsForUi()
     val hiddenCount = activity.allToolsForUi().count { !activity.isToolVisibleForUi(it) }
     val listState = rememberPageListState(activity, "tools")
@@ -1074,27 +1286,29 @@ private fun PluginListCard(
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember(plugin.id()) { mutableStateOf(false) }
-    SuiteCard(modifier = modifier.then(interaction { menuExpanded = true })) {
-        Row(horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
-            IconBox(pluginIcon(plugin), "${plugin.title()}工具")
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
-                // 版本号在标题右侧做次要标签，而不是标题下方的独立 chip：
-                // chip 的视觉重量跟「可点」暗示都太强，版本号只是参考信息。
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-                    Text(plugin.title(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+    Box(modifier = modifier) {
+        SuiteCard(modifier = interaction { menuExpanded = true }) {
+            Row(horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+                IconBox(pluginIcon(plugin), "${plugin.title()}工具")
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                    // 版本号在标题右侧做次要标签，而不是标题下方的独立 chip：
+                    // chip 的视觉重量跟「可点」暗示都太强，版本号只是参考信息。
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
+                        Text(plugin.title(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Text(
+                            "v${plugin.version()}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
-                        "v${plugin.version()}",
-                        style = MaterialTheme.typography.labelMedium,
+                        plugin.description(),
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text(
-                    plugin.description(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
         }
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -1130,6 +1344,7 @@ private fun PluginListCard(
 
 @Composable
 private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int, modifier: Modifier = Modifier) {
+    hostRevision(activity)
     PluginAndroidView(
         modifier
             .semantics { stateDescription = "plugin-$refreshVersion" }
@@ -1140,6 +1355,7 @@ private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refre
 
 @Composable
 private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    hostRevision(activity)
     val optionalBuiltIns = activity.optionalBuiltInPlugins()
     val imported = activity.importedDescriptorsForUi()
     val listState = rememberPageListState(activity, "manager")
@@ -1331,7 +1547,14 @@ private fun VisibilitySwitch(
 }
 
 @Composable
-private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+private fun PluginRepositoryScreen(
+    activity: MainActivity,
+    refreshVersion: Int,
+    snackbarHostState: SnackbarHostState,
+    modifier: Modifier = Modifier,
+) {
+    hostRevision(activity)
+    val scope = rememberCoroutineScope()
     val plugins = activity.repositoryPluginsForUi()
     val installed = activity.importedDescriptorsForUi()
     val installedIds = installed.mapTo(mutableSetOf(), ImportedPluginDescriptor::id)
@@ -1358,6 +1581,7 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
         if (appUpdate != null) {
             item {
                 SuiteCard {
+                    val appUpdateBusy = activity.isUpdateOperationRunningForUi("__app__")
                     Text("应用更新 ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
                     Text(
                         "部分新插件需要先更新应用。",
@@ -1366,9 +1590,12 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
                     )
                     Button(
                         onClick = activity::installAppUpdateForUi,
-                        enabled = !activity.isUpdateOperationRunningForUi("__app__"),
+                        enabled = !appUpdateBusy,
                     ) {
                         Text("更新应用")
+                    }
+                    if (appUpdateBusy) {
+                        RepositoryDownloadProgress(activity, "__app__")
                     }
                 }
             }
@@ -1380,6 +1607,13 @@ private fun PluginRepositoryScreen(activity: MainActivity, refreshVersion: Int, 
                 "已安装",
                 if (updatableCount > 0) "${installed.size} 个 · $updatableCount 项可更新" else "${installed.size} 个",
             ) {
+                IconButton(
+                    onClick = {
+                        scope.launch { snackbarHostState.showSnackbar("正在刷新…") }
+                        activity.refreshUpdatesForUi()
+                    },
+                    enabled = !activity.isUpdateOperationRunningForUi("__check__"),
+                ) { Icon(Icons.Rounded.Refresh, "刷新仓库") }
                 if (activity.availableUpdateCountForUi() > 0) {
                     TextButton(onClick = activity::installAllUpdatesForUi) { Text("全部更新") }
                 }
@@ -1417,11 +1651,13 @@ private fun InstalledRepositoryCard(
     descriptor: ImportedPluginDescriptor,
     latest: UpdateCatalog.PluginRelease?,
 ) {
+    hostRevision(activity)
     var menuExpanded by remember(descriptor.id) { mutableStateOf(false) }
     var versionSheetVisible by remember(descriptor.id) { mutableStateOf(false) }
     val versions = activity.repositoryPluginVersionsForUi(descriptor.id)
     val hasUpdate = latest != null && activity.isRepositoryPluginUpdateAvailableForUi(latest)
     val updateChecked = activity.isPluginUpdateCheckEnabledForUi(descriptor.id)
+    val busy = activity.isUpdateOperationRunningForUi(descriptor.id)
     if (versionSheetVisible) {
         VersionPickerSheet(activity, descriptor.title, versions) { versionSheetVisible = false }
     }
@@ -1444,40 +1680,45 @@ private fun InstalledRepositoryCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                // 已安装的插件不在「可安装」列表里出现，切版本、降级的入口只能挂在这张卡上。
-                if (versions.isNotEmpty()) {
+            Box {
+                IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    // 已安装的插件不在「可安装」列表里出现，切版本、降级的入口只能挂在这张卡上。
+                    if (versions.isNotEmpty()) {
+                        DropdownMenuItem(
+                            text = { Text("选择版本…") },
+                            leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                            onClick = { menuExpanded = false; versionSheetVisible = true },
+                        )
+                    }
                     DropdownMenuItem(
-                        text = { Text("选择版本…") },
-                        leadingIcon = { Icon(Icons.Rounded.Tune, null) },
-                        onClick = { menuExpanded = false; versionSheetVisible = true },
+                        text = { Text(if (updateChecked) "不检查此插件更新" else "检查此插件更新") },
+                        leadingIcon = { Icon(if (updateChecked) Icons.Rounded.NotificationsOff else Icons.Rounded.Notifications, null) },
+                        onClick = {
+                            menuExpanded = false
+                            activity.setPluginUpdateCheckEnabledForUi(descriptor.id, !updateChecked)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出插件包") },
+                        leadingIcon = { Icon(Icons.Rounded.FileUpload, null) },
+                        onClick = { menuExpanded = false; activity.exportPlugin(descriptor.id) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("删除") },
+                        leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                        onClick = { menuExpanded = false; activity.requestDeletePluginForUi(descriptor.id) },
                     )
                 }
-                DropdownMenuItem(
-                    text = { Text(if (updateChecked) "不检查此插件更新" else "检查此插件更新") },
-                    leadingIcon = { Icon(if (updateChecked) Icons.Rounded.NotificationsOff else Icons.Rounded.Notifications, null) },
-                    onClick = {
-                        menuExpanded = false
-                        activity.setPluginUpdateCheckEnabledForUi(descriptor.id, !updateChecked)
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("导出插件包") },
-                    leadingIcon = { Icon(Icons.Rounded.FileUpload, null) },
-                    onClick = { menuExpanded = false; activity.exportPlugin(descriptor.id) },
-                )
-                DropdownMenuItem(
-                    text = { Text("删除") },
-                    leadingIcon = { Icon(Icons.Rounded.Delete, null) },
-                    onClick = { menuExpanded = false; activity.requestDeletePluginForUi(descriptor.id) },
-                )
             }
+        }
+        if (busy) {
+            RepositoryDownloadProgress(activity, descriptor.id)
         }
         if (hasUpdate) {
             Button(
                 onClick = { activity.installRepositoryPluginVersionForUi(requireNotNull(latest)) },
-                enabled = !activity.isUpdateOperationRunningForUi(descriptor.id),
+                enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("更新到 v${latest.versionName}") }
         }
@@ -1533,16 +1774,17 @@ private fun VersionPickerSheet(
 
 @Composable
 private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.PluginRelease) {
+    hostRevision(activity)
+    var menuExpanded by remember(release.id) { mutableStateOf(false) }
+    var versionSheetVisible by remember(release.id) { mutableStateOf(false) }
     val versions = activity.repositoryPluginVersionsForUi(release.id)
-    val versionsKey = versions.joinToString("|") { it.sha256 }
-    var selectedIndex by remember(release.id, versionsKey) { mutableIntStateOf(0) }
-    var versionMenuExpanded by remember(release.id, versionsKey) { mutableStateOf(false) }
-    if (selectedIndex !in versions.indices) selectedIndex = 0
-    val selected = versions.getOrElse(selectedIndex) { release }
-    val compatible = activity.isRepositoryPluginCompatibleForUi(selected)
-    val busy = activity.isUpdateOperationRunningForUi(selected.id)
-    val selectable = activity.isRepositoryPluginVersionSelectableForUi(selected)
-    val actionText = activity.repositoryPluginActionLabelForUi(selected)
+    val compatible = activity.isRepositoryPluginCompatibleForUi(release)
+    val busy = activity.isUpdateOperationRunningForUi(release.id)
+    val selectable = activity.isRepositoryPluginVersionSelectableForUi(release)
+    val actionText = activity.repositoryPluginActionLabelForUi(release)
+    if (versionSheetVisible) {
+        VersionPickerSheet(activity, release.title, versions) { versionSheetVisible = false }
+    }
     SuiteCard {
         Row(
             Modifier.fillMaxWidth(),
@@ -1552,70 +1794,58 @@ private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.
             IconBox(Icons.Rounded.Extension, null, dense = true)
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
-                    Text(selected.title, style = MaterialTheme.typography.titleMedium)
+                    Text(release.title, style = MaterialTheme.typography.titleMedium)
                     Icon(Icons.Rounded.Verified, "已验证发布", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
                 Text(
-                    selected.versionName
-                            + if (selected.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${selected.commitSha.take(7)}" else "",
+                    release.versionName
+                            + if (release.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${release.commitSha.take(7)}" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = { versionMenuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "选择版本") }
-            DropdownMenu(
-                expanded = versionMenuExpanded,
-                onDismissRequest = { versionMenuExpanded = false },
-            ) {
-                versions.forEachIndexed { index, version ->
+            IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                if (versions.size > 1) {
                     DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("${version.versionName}" + if (version.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${version.commitSha.take(7)}" else "")
-                                if (activity.isRepositoryPluginVersionInstalledForUi(version)) {
-                                    Text("当前安装", style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        },
-                        leadingIcon = {
-                            if (index == selectedIndex) Icon(Icons.Rounded.Check, null)
-                        },
-                        onClick = {
-                            selectedIndex = index
-                            versionMenuExpanded = false
-                        },
+                        text = { Text("选择版本…") },
+                        leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                        onClick = { menuExpanded = false; versionSheetVisible = true },
                     )
                 }
             }
         }
         Text(
-            activity.repositoryPluginTransitionLabelForUi(selected),
+            activity.repositoryPluginTransitionLabelForUi(release),
             style = MaterialTheme.typography.bodySmall,
-            color = if (selectable || activity.isRepositoryPluginVersionInstalledForUi(selected)) {
+            color = if (selectable || activity.isRepositoryPluginVersionInstalledForUi(release)) {
                 MaterialTheme.colorScheme.onSurfaceVariant
             } else {
                 MaterialTheme.colorScheme.error
             },
         )
         Text(
-            selected.description,
+            release.description,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (selected.dependencies.isNotEmpty()) {
+        if (release.dependencies.isNotEmpty()) {
             Text(
-                "依赖：${selected.dependencies.joinToString()}",
+                "依赖：${release.dependencies.joinToString()}",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
         if (!compatible) {
-            Notice("需要应用 ${activity.requiredAppVersionLabelForUi(selected.minHostVersionCode)} 或更高版本", warning = true)
+            Notice("需要应用 ${activity.requiredAppVersionLabelForUi(release.minHostVersionCode)} 或更高版本", warning = true)
             Button(onClick = activity::installAppUpdateForUi, modifier = Modifier.fillMaxWidth(), enabled = activity.appUpdateForUi() != null) {
                 Text("更新应用")
             }
         } else {
+            if (busy) {
+                RepositoryDownloadProgress(activity, release.id)
+            }
             Button(
-                onClick = { activity.installRepositoryPluginVersionForUi(selected) },
+                onClick = { activity.installRepositoryPluginVersionForUi(release) },
                 enabled = !busy && selectable,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(actionText) }
@@ -1624,7 +1854,28 @@ private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.
 }
 
 @Composable
-private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+private fun RepositoryDownloadProgress(activity: MainActivity, pluginId: String) {
+    val progress = activity.downloadProgressForUi(pluginId)
+    LinearProgressIndicator(
+        progress = { progress },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        if (progress > 0f) "正在下载 ${(progress * 100).roundToInt()}%" else "正在准备下载…",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun SettingsScreen(
+    activity: MainActivity,
+    refreshVersion: Int,
+    snackbarHostState: SnackbarHostState,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    hostRevision(activity)
     val listState = rememberPageListState(activity, "settings")
     var themeMenu by remember { mutableStateOf(false) }
     var colorMenu by remember { mutableStateOf(false) }
@@ -1634,7 +1885,7 @@ private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier
         "dark" -> "深色"
         else -> "跟随系统"
     }
-    val colorLabel = if (activity.colorPreferenceForUi() == "dynamic") "跟随壁纸" else "默认配色"
+    val colorLabel = if (activity.colorPreferenceForUi() == "dynamic") "跟随壁纸" else "应用自带"
     LazyColumn(
         state = listState,
         modifier = modifier.semantics { stateDescription = "settings-$refreshVersion" },
@@ -1642,42 +1893,25 @@ private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier
     ) {
         item {
             SuiteSettingsGroup("外观") {
-                Box {
-                    // 带 ▾ 的行是「点开有得选」，跟只报状态的行区分开。
-                    SuiteSettingsRow(
-                        "主题",
-                        trailingText = themeLabel,
-                        trailing = { Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                        onClick = { themeMenu = true },
-                    )
-                    DropdownMenu(expanded = themeMenu, onDismissRequest = { themeMenu = false }) {
-                        listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (value, label) ->
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                leadingIcon = { RadioButton(selected = activity.themePreferenceForUi() == value, onClick = null) },
-                                onClick = { themeMenu = false; activity.setThemePreferenceForUi(value) },
-                            )
-                        }
-                    }
-                }
-                Box {
-                    SuiteSettingsRow(
-                        "配色",
-                        supportingText = "应用自带配色，或跟随系统壁纸取色",
-                        trailingText = colorLabel,
-                        trailing = { Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                        onClick = { colorMenu = true },
-                    )
-                    DropdownMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false }) {
-                        listOf("brand" to "默认配色", "dynamic" to "跟随壁纸").forEach { (value, label) ->
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                leadingIcon = { RadioButton(selected = activity.colorPreferenceForUi() == value, onClick = null) },
-                                onClick = { colorMenu = false; activity.setColorPreferenceForUi(value) },
-                            )
-                        }
-                    }
-                }
+                SettingsDropdownRow(
+                    title = "主题",
+                    selectedValue = activity.themePreferenceForUi(),
+                    selectedLabel = themeLabel,
+                    options = listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色"),
+                    expanded = themeMenu,
+                    onExpandedChange = { themeMenu = it },
+                    onSelected = activity::setThemePreferenceForUi,
+                )
+                SettingsDropdownRow(
+                    title = "配色",
+                    supportingText = "应用自带配色，或跟随系统壁纸取色",
+                    selectedValue = activity.colorPreferenceForUi(),
+                    selectedLabel = colorLabel,
+                    options = listOf("brand" to "应用自带", "dynamic" to "跟随壁纸"),
+                    expanded = colorMenu,
+                    onExpandedChange = { colorMenu = it },
+                    onSelected = activity::setColorPreferenceForUi,
+                )
             }
         }
         item {
@@ -1690,7 +1924,10 @@ private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier
                 )
                 SuiteSettingsRow(
                     "立即检查更新",
-                    onClick = activity::checkUpdatesManuallyForUi,
+                    onClick = {
+                        scope.launch { snackbarHostState.showSnackbar("正在检查更新…") }
+                        activity.checkUpdatesManuallyForUi()
+                    },
                     trailingText = if (activity.isUpdateOperationRunningForUi("__check__")) "正在检查…" else null,
                     emphasized = true,
                 )
@@ -1712,24 +1949,16 @@ private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier
         if (activity.isDebugBuildForUi()) {
             item {
                 SuiteSettingsGroup("开发者选项") {
-                    Box {
-                        SuiteSettingsRow(
-                            "插件仓库渠道",
-                            supportingText = if (activity.isDebugPluginRepositoryForUi()) "调试版本可能不稳定" else null,
-                            trailingText = activity.pluginRepositoryChannelLabelForUi(),
-                            trailing = { Icon(Icons.Rounded.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            onClick = { channelMenu = true },
-                        )
-                        DropdownMenu(expanded = channelMenu, onDismissRequest = { channelMenu = false }) {
-                            listOf(UpdateCatalog.CHANNEL_RELEASE to "正式仓库", UpdateCatalog.CHANNEL_DEBUG to "调试仓库").forEach { (value, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    leadingIcon = { RadioButton(selected = activity.pluginRepositoryChannelForUi() == value, onClick = null) },
-                                    onClick = { channelMenu = false; activity.selectPluginRepositoryChannelForUi(value) },
-                                )
-                            }
-                        }
-                    }
+                    SettingsDropdownRow(
+                        title = "插件仓库渠道",
+                        supportingText = if (activity.isDebugPluginRepositoryForUi()) "调试版本可能不稳定" else null,
+                        selectedValue = activity.pluginRepositoryChannelForUi(),
+                        selectedLabel = activity.pluginRepositoryChannelLabelForUi(),
+                        options = listOf(UpdateCatalog.CHANNEL_RELEASE to "正式仓库", UpdateCatalog.CHANNEL_DEBUG to "调试仓库"),
+                        expanded = channelMenu,
+                        onExpandedChange = { channelMenu = it },
+                        onSelected = activity::selectPluginRepositoryChannelForUi,
+                    )
                 }
             }
         }
@@ -1747,6 +1976,64 @@ private fun SettingsScreen(activity: MainActivity, refreshVersion: Int, modifier
     }
 }
 
+@Composable
+private fun SettingsDropdownRow(
+    title: String,
+    selectedValue: String,
+    selectedLabel: String,
+    options: List<Pair<String, String>>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onSelected: (String) -> Unit,
+    supportingText: String? = null,
+) {
+    Box {
+        SuiteSettingsRow(
+            title = title,
+            supportingText = supportingText,
+            trailingText = selectedLabel,
+            trailing = {
+                Icon(
+                    Icons.Rounded.ArrowDropDown,
+                    contentDescription = "展开$title",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            onClick = { onExpandedChange(true) },
+        )
+        Box(Modifier.fillMaxWidth().wrapContentSize(Alignment.TopEnd)) {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { onExpandedChange(false) },
+                modifier = Modifier.widthIn(min = 168.dp),
+            ) {
+                options.forEach { (value, label) ->
+                    val selected = value == selectedValue
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                label,
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                        },
+                        leadingIcon = {
+                            if (selected) {
+                                Icon(Icons.Rounded.Check, contentDescription = "已选择", tint = MaterialTheme.colorScheme.primary)
+                            } else {
+                                Spacer(Modifier.size(24.dp))
+                            }
+                        },
+                        onClick = {
+                            onExpandedChange(false)
+                            onSelected(value)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun formatLastChecked(timestamp: Long): String {
     if (timestamp <= 0L) return "尚未检查"
     val now = System.currentTimeMillis()
@@ -1759,6 +2046,7 @@ private fun formatLastChecked(timestamp: Long): String {
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun AboutScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+    hostRevision(activity)
     val clipboard = LocalClipboardManager.current
     val fullVersion = "${activity.appVersionNameForUi()} (${activity.appVersionCodeForUi()}) · SDK ${activity.pluginSdkVersionForUi()} · ${activity.buildTypeForUi()}"
     LazyColumn(
@@ -1838,6 +2126,7 @@ private fun UpdatePromptRow(icon: ImageVector, title: String, transition: String
 
 @Composable
 private fun UpdatePrompt(activity: MainActivity) {
+    hostRevision(activity)
     if (!activity.isUpdatePromptVisibleForUi()) return
     val appUpdate = activity.appUpdateForUi()
     val pluginUpdates = activity.availablePluginUpdatesForUi()
@@ -1874,6 +2163,7 @@ private fun UpdatePrompt(activity: MainActivity) {
 
 @Composable
 private fun ComposeDialog(activity: MainActivity) {
+    hostRevision(activity)
     val dialog = activity.composeDialogForUi() ?: return
     AlertDialog(
         onDismissRequest = activity::dismissComposeDialogForUi,

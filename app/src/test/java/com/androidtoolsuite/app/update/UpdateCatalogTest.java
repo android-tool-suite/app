@@ -155,6 +155,28 @@ public final class UpdateCatalogTest {
     }
 
     @Test
+    public void missingCompatibilityIsLegacyV0() throws Exception {
+        UpdateCatalog.PluginRelease release = UpdateCatalog.parse("{"
+                + "\"schemaVersion\":1,"
+                + "\"plugins\":[{"
+                + "\"id\":\"legacy\","
+                + "\"title\":\"Legacy\","
+                + "\"repositoryUrl\":\"https://example.test/repo\","
+                + "\"versionName\":\"1.0\","
+                + "\"versionCode\":1,"
+                + "\"releaseUrl\":\"https://example.test/release\","
+                + "\"downloadUrl\":\"https://example.test/plugin\","
+                + "\"size\":1,"
+                + "\"sha256\":\"" + "a".repeat(64) + "\""
+                + "}]}"
+        ).plugins.get(0);
+
+        assertFalse(release.hasDataCompatibilityDeclaration());
+        assertTrue(release.canReadDataFormat(0));
+        assertFalse(release.canReadDataFormat(1));
+    }
+
+    @Test
     public void latestIndexControlsDefaultWhileCatalogProvidesHistory() throws Exception {
         UpdateCatalog latest = UpdateCatalog.parse("{"
                 + "\"schemaVersion\":1,\"plugins\":["

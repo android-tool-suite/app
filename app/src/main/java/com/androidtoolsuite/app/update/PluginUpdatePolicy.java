@@ -10,7 +10,6 @@ public final class PluginUpdatePolicy {
         UPGRADE,
         REPLACE,
         DOWNGRADE_COMPATIBLE,
-        DOWNGRADE_UNKNOWN,
         DATA_INCOMPATIBLE
     }
 
@@ -60,10 +59,6 @@ public final class PluginUpdatePolicy {
             if (!mayHaveData) {
                 return Transition.INSTALL;
             }
-            if (installedDataFormatVersion <= 0
-                    || !target.hasDataCompatibilityDeclaration()) {
-                return Transition.DOWNGRADE_UNKNOWN;
-            }
             return target.canReadDataFormat(installedDataFormatVersion)
                     ? Transition.REINSTALL_COMPATIBLE
                     : Transition.DATA_INCOMPATIBLE;
@@ -76,18 +71,12 @@ public final class PluginUpdatePolicy {
         boolean downgrade = target.versionCode < installed.versionCode
                 || (target.versionCode == installed.versionCode && targetIsOlderBuild);
         if (downgrade) {
-            if (installedDataFormatVersion <= 0
-                    || !target.hasDataCompatibilityDeclaration()) {
-                return Transition.DOWNGRADE_UNKNOWN;
-            }
             return target.canReadDataFormat(installedDataFormatVersion)
                     ? Transition.DOWNGRADE_COMPATIBLE
                     : Transition.DATA_INCOMPATIBLE;
         }
 
-        if (installedDataFormatVersion > 0
-                && target.hasDataCompatibilityDeclaration()
-                && !target.canReadDataFormat(installedDataFormatVersion)) {
+        if (!target.canReadDataFormat(installedDataFormatVersion)) {
             return Transition.DATA_INCOMPATIBLE;
         }
         return target.versionCode > installed.versionCode

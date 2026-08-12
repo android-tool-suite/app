@@ -248,7 +248,7 @@ public final class UpdateCatalog {
                     throw new JSONException("不支持的数据兼容声明版本：" + schemaVersion);
                 }
                 dataFormatVersion = positive(compatibility, "dataFormatVersion");
-                minReadableDataFormatVersion = positive(
+                minReadableDataFormatVersion = nonNegative(
                         compatibility,
                         "minReadableDataFormatVersion"
                 );
@@ -272,8 +272,7 @@ public final class UpdateCatalog {
         }
 
         public boolean canReadDataFormat(int version) {
-            return hasDataCompatibilityDeclaration()
-                    && version >= minReadableDataFormatVersion
+            return version >= minReadableDataFormatVersion
                     && version <= maxReadableDataFormatVersion;
         }
     }
@@ -294,6 +293,17 @@ public final class UpdateCatalog {
         int value = json.optInt(name, 0);
         if (value <= 0) {
             throw new JSONException("字段 " + name + " 必须为正整数");
+        }
+        return value;
+    }
+
+    private static int nonNegative(JSONObject json, String name) throws JSONException {
+        if (!json.has(name)) {
+            throw new JSONException("缺少字段：" + name);
+        }
+        int value = json.optInt(name, -1);
+        if (value < 0) {
+            throw new JSONException("字段 " + name + " 不能为负数");
         }
         return value;
     }
