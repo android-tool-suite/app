@@ -79,6 +79,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -93,6 +94,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -134,6 +136,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -144,6 +147,7 @@ import androidx.core.view.WindowCompat
 import androidx.compose.ui.viewinterop.AndroidView
 import com.androidtoolsuite.app.plugin.api.HomeWidget
 import com.androidtoolsuite.app.plugin.api.ToolPlugin
+import com.androidtoolsuite.app.plugin.migration.DatasetCategory
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor
 import com.androidtoolsuite.app.ui.EmptyState
 import com.androidtoolsuite.app.ui.ErrorState
@@ -398,6 +402,7 @@ private fun HostApp(activity: MainActivity) {
     }
     UpdatePrompt(activity)
     ComposeDialog(activity)
+    MigrationBridgeExportDialog(activity)
 }
 
 @Composable
@@ -1929,6 +1934,19 @@ private fun SettingsScreen(
         }
         item {
             SuiteSettingsGroup("备份与迁移") {
+                if (activity.isMigrationBridgeBuildForUi()) {
+                    SuiteSettingsRow(
+                        "导出 Bridge 数据包（Debug 预览）",
+                        onClick = activity::prepareMigrationBridgeExportForUi,
+                        emphasized = true,
+                    )
+                    Text(
+                        "仅导出当前 Debug 安装可读取的插件数据，用于验证迁移格式；不能读取正式版应用的私有数据。",
+                        modifier = Modifier.padding(horizontal = SuiteSpacing.ScreenPadding, vertical = SuiteSpacing.sm),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 SuiteSettingsRow("导出迁移包", onClick = activity::exportMigration, emphasized = true)
                 SuiteSettingsRow("导入迁移包", onClick = activity::importMigration, emphasized = true)
                 Text(
@@ -2171,6 +2189,136 @@ private fun ComposeDialog(activity: MainActivity) {
             TextButton(onClick = activity::confirmComposeDialogForUi) { Text(dialog.confirmLabel) }
         },
     )
+}
+
+@Composable
+private fun MigrationBridgeExportDialog(activity: MainActivity) {
+    hostRevision(activity)
+    val options = activity.migrationBridgeExportOptionsForUi()
+    if (options.isEmpty()) return
+
+    fun defaultSelection(): Set<String> = options
+        .filter {
+            it.descriptor.category == DatasetCategory.SETTINGS ||
+                (it.descriptor.category == DatasetCategory.DATA && it.descriptor.estimatedSize <= 32L * 1024L * 1024L)
+        }
+        .mapTo(linkedSetOf()) { it.key() }
+
+    var selected by remember(options) { mutableStateOf(defaultSelection()) }
+    var password by remember(options) { mutableStateOf("") }
+    val containsSensitive = options.any {
+        it.key() in selected && (it.descriptor.sensitive || it.descriptor.category == DatasetCategory.SECRET)
+    }
+    val passwordValid = password.isEmpty() && !containsSensitive || password.length >= 8
+
+    AlertDialog(
+        onDismissRequest = activity::dismissMigrationBridgeExportForUi,
+        title = { Text("导出 Bridge 数据包") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+                Text(
+                    "选择要从现有插件数据中只读导出的 Dataset。缓存默认不选；敏感数据必须使用至少 8 位密码加密。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs),
+                ) {
+                    items(options, key = { it.key() }) { option ->
+                        val checked = option.key() in selected
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(SuiteShapes.Inner)
+                                .clickable {
+                                    val updated = selected.toMutableSet()
+                                    if (checked) {
+                                        updated.remove(option.key())
+                                        var changed: Boolean
+                                        do {
+                                            changed = false
+                                            options.filter { it.key() in updated }.forEach { candidate ->
+                                                if (candidate.descriptor.dependencies.any { dependency ->
+                                                        "${candidate.pluginId}/$dependency" !in updated
+                                                    }) {
+                                                    updated.remove(candidate.key())
+                                                    changed = true
+                                                }
+                                            }
+                                        } while (changed)
+                                    } else {
+                                        updated.add(option.key())
+                                        var changed: Boolean
+                                        do {
+                                            changed = false
+                                            options.filter { it.key() in updated }.forEach { candidate ->
+                                                candidate.descriptor.dependencies.forEach { dependency ->
+                                                    if (updated.add("${candidate.pluginId}/$dependency")) changed = true
+                                                }
+                                            }
+                                        } while (changed)
+                                    }
+                                    selected = updated
+                                }
+                                .padding(vertical = SuiteSpacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${option.pluginTitle} · ${option.descriptor.name}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    "${bridgeCategoryLabel(option.descriptor.category)} · " +
+                                        bridgeDatasetSize(option.descriptor.estimatedSize) +
+                                        if (option.descriptor.sensitive) " · 敏感" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(if (containsSensitive) "迁移密码（必填）" else "迁移密码（可选）") },
+                    supportingText = {
+                        if (password.isNotEmpty() && password.length < 8) Text("至少 8 位")
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    isError = password.isNotEmpty() && password.length < 8,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = activity::dismissMigrationBridgeExportForUi) { Text("取消") }
+        },
+        confirmButton = {
+            Button(
+                onClick = { activity.confirmMigrationBridgeExportForUi(selected.toList(), password) },
+                enabled = selected.isNotEmpty() && passwordValid,
+            ) { Text("选择保存位置") }
+        },
+    )
+}
+
+private fun bridgeCategoryLabel(category: DatasetCategory): String = when (category) {
+    DatasetCategory.SETTINGS -> "设置"
+    DatasetCategory.DATA -> "业务数据"
+    DatasetCategory.SECRET -> "凭据"
+    DatasetCategory.CACHE -> "缓存"
+}
+
+private fun bridgeDatasetSize(bytes: Long): String = when {
+    bytes <= 0L -> "大小未知"
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> String.format(Locale.ROOT, "%.1f KiB", bytes / 1024.0)
+    else -> String.format(Locale.ROOT, "%.1f MiB", bytes / (1024.0 * 1024.0))
 }
 
 @Composable
