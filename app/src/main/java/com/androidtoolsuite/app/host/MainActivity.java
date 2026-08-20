@@ -26,6 +26,7 @@ import androidx.core.splashscreen.SplashScreen;
 
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
+import com.androidtoolsuite.app.migration.BackupArchiveV2;
 import com.androidtoolsuite.app.migration.MigrationBridgeManager;
 import com.androidtoolsuite.app.migration.HostMigrationArchive;
 import com.androidtoolsuite.app.migration.MigrationTransaction;
@@ -88,6 +89,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final int REQUEST_IMPORT_MIGRATION = 4003;
     private static final int REQUEST_EXPORT_MIGRATION = 4004;
     private static final int REQUEST_EXPORT_MIGRATION_BRIDGE = 4005;
+    private static final int REQUEST_IMPORT_MIGRATION_BRIDGE = 4006;
 
     private static final int SECTION_DASHBOARD = 0;
     private static final int SECTION_PLUGINS = 1;
@@ -136,6 +138,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private List<MigrationBridgeManager.DatasetOption> pendingMigrationBridgeExport = Collections.emptyList();
     private List<ToolPlugin> pendingMigrationBridgeOwnedPlugins = Collections.emptyList();
     private char[] pendingMigrationBridgePassword;
+    private List<MigrationBridgeManager.DatasetOption> migrationBridgeImportOptions = Collections.emptyList();
+    private List<ToolPlugin> migrationBridgeImportOwnedPlugins = Collections.emptyList();
+    private Uri pendingMigrationBridgeImportUri;
+    private BackupArchiveV2.ReadResult pendingMigrationBridgeInspection;
+    private char[] pendingMigrationBridgeImportPassword;
     private int currentSection = SECTION_DASHBOARD;
     private int pluginReturnSection = SECTION_PLUGINS;
     private final HostUiState composeState = new HostUiState();
@@ -283,8 +290,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     @Override
     protected void onDestroy() {
         clearPendingMigrationBridgePassword();
+        clearPendingMigrationBridgeImportPassword();
         destroyMigrationBridgePlugins(migrationBridgeOwnedPlugins);
         destroyMigrationBridgePlugins(pendingMigrationBridgeOwnedPlugins);
+        destroyMigrationBridgePlugins(migrationBridgeImportOwnedPlugins);
         migrationBridgeExecutor.shutdownNow();
         for (ToolPlugin plugin : plugins) {
             plugin.onDestroy();
@@ -1893,6 +1902,17 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return BuildConfig.DEBUG;
     }
 
+    public void importMigrationBridgeForUi() {
+        if (!BuildConfig.DEBUG) {
+            showToast("Migration Bridge 仅在 Debug 预览版中提供");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        startActivityForResult(intent, REQUEST_IMPORT_MIGRATION_BRIDGE);
+    }
+
     public void prepareMigrationBridgeExportForUi() {
         if (!BuildConfig.DEBUG) {
             showToast("Migration Bridge 仅在 Debug 预览版中提供");
@@ -1994,6 +2014,89 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         startActivityForResult(intent, REQUEST_EXPORT_MIGRATION_BRIDGE);
     }
 
+    public List<MigrationBridgeManager.DatasetOption> migrationBridgeImportOptionsForUi() {
+        return migrationBridgeImportOptions;
+    }
+
+    public boolean migrationBridgeImportEncryptedForUi() {
+        return pendingMigrationBridgeInspection != null && pendingMigrationBridgeInspection.encrypted;
+    }
+
+    public String migrationBridgeImportSourceForUi() {
+        if (pendingMigrationBridgeInspection == null) return "";
+        return pendingMigrationBridgeInspection.sourcePackage + " "
+                + pendingMigrationBridgeInspection.sourceVersionName;
+    }
+
+    public void dismissMigrationBridgeImportForUi() {
+        migrationBridgeImportOptions = Collections.emptyList();
+        pendingMigrationBridgeImportUri = null;
+        pendingMigrationBridgeInspection = null;
+        clearPendingMigrationBridgeImportPassword();
+        destroyMigrationBridgePlugins(migrationBridgeImportOwnedPlugins);
+        migrationBridgeImportOwnedPlugins = Collections.emptyList();
+        invalidateComposeUi();
+    }
+
+    public void confirmMigrationBridgeImportForUi(List<String> selectedKeys, String rawPassword) {
+        if (pendingMigrationBridgeImportUri == null || migrationBridgeImportOptions.isEmpty()) return;
+        Set<String> selected = new LinkedHashSet<>(selectedKeys);
+        if (selected.isEmpty()) {
+            showToast("请至少选择一个 Dataset");
+            return;
+        }
+        List<MigrationBridgeManager.DatasetOption> options = new ArrayList<>();
+        for (MigrationBridgeManager.DatasetOption option : migrationBridgeImportOptions) {
+            if (!selected.contains(option.key())) continue;
+            for (String dependency : option.descriptor.dependencies) {
+                if (!selected.contains(option.pluginId + "/" + dependency)) {
+                    showToast(option.descriptor.name + " 需要同时恢复 " + dependency);
+                    return;
+                }
+            }
+            options.add(option);
+        }
+        if (options.size() != selected.size()) {
+            showToast("选择中包含不可恢复的 Dataset");
+            return;
+        }
+        String password = rawPassword == null ? "" : rawPassword;
+        if (migrationBridgeImportEncryptedForUi() && password.length() < 8) {
+            showToast("加密迁移包需要至少 8 位密码");
+            return;
+        }
+
+        Uri source = pendingMigrationBridgeImportUri;
+        List<ToolPlugin> ownedPlugins = migrationBridgeImportOwnedPlugins;
+        pendingMigrationBridgeImportUri = null;
+        pendingMigrationBridgeInspection = null;
+        migrationBridgeImportOptions = Collections.emptyList();
+        migrationBridgeImportOwnedPlugins = Collections.emptyList();
+        clearPendingMigrationBridgeImportPassword();
+        pendingMigrationBridgeImportPassword = password.toCharArray();
+        invalidateComposeUi();
+
+        char[] restorePassword = pendingMigrationBridgeImportPassword.clone();
+        clearPendingMigrationBridgeImportPassword();
+        migrationBridgeExecutor.execute(() -> {
+            File staging = new File(
+                    getCacheDir(),
+                    "bridge-import-" + Long.toHexString(System.nanoTime())
+            );
+            try (InputStream input = getContentResolver().openInputStream(source)) {
+                if (input == null) throw new IOException("无法读取 Bridge 数据包");
+                MigrationBridgeManager.restore(this, input, restorePassword, options, staging);
+                showToast("Bridge 数据恢复完成，共 " + options.size() + " 个 Dataset");
+                runOnUiThread(this::reloadPluginsKeepingCurrentPage);
+            } catch (IOException | RuntimeException error) {
+                showToast("恢复 Bridge 数据失败：" + safeMessage(error));
+            } finally {
+                Arrays.fill(restorePassword, '\0');
+                runOnUiThread(() -> destroyMigrationBridgePlugins(ownedPlugins));
+            }
+        });
+    }
+
     @Override
     public void deleteImportedPlugin(String pluginId) {
         List<String> dependents = findDependentPluginTitles(pluginId);
@@ -2031,7 +2134,53 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             handleMigrationExportResult(resultCode, data);
         } else if (requestCode == REQUEST_EXPORT_MIGRATION_BRIDGE) {
             handleMigrationBridgeExportResult(resultCode, data);
+        } else if (requestCode == REQUEST_IMPORT_MIGRATION_BRIDGE) {
+            handleMigrationBridgeImportSelection(resultCode, data);
         }
+    }
+
+    private void handleMigrationBridgeImportSelection(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri source = data.getData();
+        dismissMigrationBridgeImportForUi();
+        List<ToolPlugin> activePlugins = new ArrayList<>(plugins);
+        List<ImportedPluginDescriptor> installedPlugins = new ArrayList<>(externalPluginStore.load());
+        showToast("正在检查 Bridge 数据包…");
+        migrationBridgeExecutor.execute(() -> {
+            List<ToolPlugin> candidates = new ArrayList<>(activePlugins);
+            List<ToolPlugin> ownedPlugins = new ArrayList<>();
+            try (InputStream input = getContentResolver().openInputStream(source)) {
+                if (input == null) throw new IOException("无法读取 Bridge 数据包");
+                BackupArchiveV2.ReadResult inspection = BackupArchiveV2.inspect(input);
+                Set<String> activeIds = new HashSet<>();
+                for (ToolPlugin plugin : activePlugins) activeIds.add(plugin.id());
+                for (ImportedPluginDescriptor descriptor : installedPlugins) {
+                    if (activeIds.contains(descriptor.id)) continue;
+                    ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
+                    if (plugin != null) {
+                        candidates.add(plugin);
+                        ownedPlugins.add(plugin);
+                    }
+                }
+                List<MigrationBridgeManager.DatasetOption> options =
+                        MigrationBridgeManager.matchForImport(candidates, inspection.datasets);
+                if (options.isEmpty()) {
+                    throw new IOException("数据包中没有当前插件可恢复的 Dataset");
+                }
+                runOnUiThread(() -> {
+                    pendingMigrationBridgeImportUri = source;
+                    pendingMigrationBridgeInspection = inspection;
+                    migrationBridgeImportOptions = options;
+                    migrationBridgeImportOwnedPlugins = Collections.unmodifiableList(ownedPlugins);
+                    invalidateComposeUi();
+                });
+            } catch (IOException | RuntimeException error) {
+                runOnUiThread(() -> {
+                    destroyMigrationBridgePlugins(ownedPlugins);
+                    showToast("读取 Bridge 数据包失败：" + safeMessage(error));
+                });
+            }
+        });
     }
 
     private void handleMigrationBridgeExportResult(int resultCode, Intent data) {
@@ -2078,6 +2227,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             Arrays.fill(pendingMigrationBridgePassword, '\0');
         }
         pendingMigrationBridgePassword = null;
+    }
+
+    private void clearPendingMigrationBridgeImportPassword() {
+        if (pendingMigrationBridgeImportPassword != null) {
+            Arrays.fill(pendingMigrationBridgeImportPassword, '\0');
+        }
+        pendingMigrationBridgeImportPassword = null;
     }
 
     private static String safeMessage(Throwable error) {

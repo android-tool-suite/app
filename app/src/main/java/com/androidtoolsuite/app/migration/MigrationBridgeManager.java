@@ -6,15 +6,22 @@ import com.androidtoolsuite.app.plugin.api.ToolPlugin;
 import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
 import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
-/** Coordinates the temporary, read-only v1-to-v2 Migration Bridge export. */
+/** Coordinates the temporary v1-to-v2 Migration Bridge export and staged restore. */
 public final class MigrationBridgeManager {
     private MigrationBridgeManager() {
     }
@@ -78,6 +85,55 @@ public final class MigrationBridgeManager {
         return Collections.unmodifiableList(new ArrayList<>(options.values()));
     }
 
+    /** Matches archive records to installed legacy bridges without requiring data to exist yet. */
+    public static List<DatasetOption> matchForImport(
+            List<ToolPlugin> plugins,
+            List<BackupArchiveV2.DatasetRecord> datasets
+    ) throws IOException {
+        Map<String, PluginBridge> bridges = new LinkedHashMap<>();
+        for (ToolPlugin plugin : plugins) {
+            LegacyDataBridge bridge;
+            try {
+                bridge = plugin.legacyDataBridge();
+            } catch (RuntimeException error) {
+                throw new IOException("无法读取 " + plugin.title() + " 的迁移接口", error);
+            }
+            if (bridge != null) bridges.putIfAbsent(plugin.id(), new PluginBridge(plugin.title(), bridge));
+        }
+
+        Map<String, DatasetOption> options = new LinkedHashMap<>();
+        for (BackupArchiveV2.DatasetRecord dataset : datasets) {
+            PluginBridge target = bridges.get(dataset.pluginId);
+            if (target == null) continue;
+            boolean supported;
+            try {
+                supported = target.bridge.supportsImport(
+                        dataset.descriptor.id,
+                        dataset.descriptor.dataFormatVersion
+                );
+            } catch (RuntimeException error) {
+                throw new IOException("无法检查 " + target.title + " 的 Dataset 兼容性", error);
+            }
+            if (!supported) continue;
+            DatasetOption option = new DatasetOption(
+                    dataset.pluginId,
+                    target.title,
+                    dataset.descriptor,
+                    target.bridge
+            );
+            if (options.putIfAbsent(option.key(), option) != null) {
+                throw new IOException("迁移包包含重复 Dataset：" + option.key());
+            }
+        }
+
+        boolean changed;
+        do {
+            changed = options.values().removeIf(option -> option.descriptor.dependencies.stream()
+                    .anyMatch(dependency -> !options.containsKey(option.pluginId + "/" + dependency)));
+        } while (changed);
+        return Collections.unmodifiableList(new ArrayList<>(options.values()));
+    }
+
     public static void write(
             Activity activity,
             OutputStream target,
@@ -102,5 +158,119 @@ public final class MigrationBridgeManager {
                 sources,
                 password
         ));
+    }
+
+    /**
+     * Authenticates and stages every selected Dataset before mutating legacy storage, then restores
+     * them in dependency order. Staged plaintext remains inside the app-private cache directory and
+     * is deleted on both success and failure.
+     */
+    public static void restore(
+            Activity activity,
+            InputStream source,
+            char[] password,
+            List<DatasetOption> selected,
+            File stagingDirectory
+    ) throws IOException {
+        if (selected.isEmpty()) throw new IOException("没有选择要恢复的 Dataset");
+        validateSelection(selected);
+        if (stagingDirectory.exists() || !stagingDirectory.mkdirs()) {
+            throw new IOException("无法创建 Bridge 恢复暂存目录");
+        }
+
+        Map<String, File> staged = new LinkedHashMap<>();
+        for (int index = 0; index < selected.size(); index++) {
+            DatasetOption option = selected.get(index);
+            staged.put(option.key(), new File(stagingDirectory, "dataset-" + index + ".payload"));
+        }
+
+        try {
+            BackupArchiveV2.read(source, password, (dataset, input) -> {
+                File destination = staged.get(dataset.key());
+                if (destination == null) return;
+                try (FileOutputStream output = new FileOutputStream(destination)) {
+                    copy(input, output);
+                    output.getFD().sync();
+                }
+            });
+            for (Map.Entry<String, File> entry : staged.entrySet()) {
+                if (!entry.getValue().isFile()) {
+                    throw new IOException("迁移包缺少已选择的 Dataset：" + entry.getKey());
+                }
+            }
+
+            Set<String> restored = new LinkedHashSet<>();
+            List<DatasetOption> remaining = new ArrayList<>(selected);
+            while (!remaining.isEmpty()) {
+                boolean progressed = false;
+                for (int index = 0; index < remaining.size(); ) {
+                    DatasetOption option = remaining.get(index);
+                    boolean ready = option.descriptor.dependencies.stream().allMatch(
+                            dependency -> restored.contains(option.pluginId + "/" + dependency)
+                    );
+                    if (!ready) {
+                        index++;
+                        continue;
+                    }
+                    try (FileInputStream input = new FileInputStream(staged.get(option.key()))) {
+                        option.bridge.importDataset(
+                                activity,
+                                option.descriptor.id,
+                                option.descriptor.dataFormatVersion,
+                                input
+                        );
+                    } catch (IOException | RuntimeException error) {
+                        throw new IOException(
+                                "恢复 " + option.pluginTitle + " · " + option.descriptor.name + " 失败",
+                                error
+                        );
+                    }
+                    restored.add(option.key());
+                    remaining.remove(index);
+                    progressed = true;
+                }
+                if (!progressed) throw new IOException("Dataset 依赖形成循环");
+            }
+        } finally {
+            deleteRecursively(stagingDirectory);
+        }
+    }
+
+    private static void validateSelection(List<DatasetOption> selected) throws IOException {
+        Set<String> keys = new HashSet<>();
+        for (DatasetOption option : selected) {
+            if (!keys.add(option.key())) throw new IOException("重复选择 Dataset：" + option.key());
+        }
+        for (DatasetOption option : selected) {
+            for (String dependency : option.descriptor.dependencies) {
+                if (!keys.contains(option.pluginId + "/" + dependency)) {
+                    throw new IOException("Dataset 缺少依赖：" + option.pluginId + "/" + dependency);
+                }
+            }
+        }
+    }
+
+    private static void copy(InputStream input, OutputStream output) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        int read;
+        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+    }
+
+    private static void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        File[] children = file.listFiles();
+        if (children != null) for (File child : children) deleteRecursively(child);
+        // Best effort: the private cache will also be removed with app data.
+        file.delete();
+    }
+
+    private static final class PluginBridge {
+        final String title;
+        final LegacyDataBridge bridge;
+
+        PluginBridge(String title, LegacyDataBridge bridge) {
+            this.title = title;
+            this.bridge = bridge;
+        }
     }
 }

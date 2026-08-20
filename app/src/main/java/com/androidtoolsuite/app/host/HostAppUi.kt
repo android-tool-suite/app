@@ -403,6 +403,7 @@ private fun HostApp(activity: MainActivity) {
     UpdatePrompt(activity)
     ComposeDialog(activity)
     MigrationBridgeExportDialog(activity)
+    MigrationBridgeImportDialog(activity)
 }
 
 @Composable
@@ -1936,12 +1937,17 @@ private fun SettingsScreen(
             SuiteSettingsGroup("备份与迁移") {
                 if (activity.isMigrationBridgeBuildForUi()) {
                     SuiteSettingsRow(
+                        "导入 Bridge 数据包（Debug 预览）",
+                        onClick = activity::importMigrationBridgeForUi,
+                        emphasized = true,
+                    )
+                    SuiteSettingsRow(
                         "导出 Bridge 数据包（Debug 预览）",
                         onClick = activity::prepareMigrationBridgeExportForUi,
                         emphasized = true,
                     )
                     Text(
-                        "仅导出当前 Debug 安装可读取的插件数据，用于验证迁移格式；不能读取正式版应用的私有数据。",
+                        "导入会先完成密码、完整性和 Dataset 兼容性检查，再写入当前 Debug 安装；Bridge 不能直接读取正式版应用的私有数据。",
                         modifier = Modifier.padding(horizontal = SuiteSpacing.ScreenPadding, vertical = SuiteSpacing.sm),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2303,6 +2309,118 @@ private fun MigrationBridgeExportDialog(activity: MainActivity) {
                 onClick = { activity.confirmMigrationBridgeExportForUi(selected.toList(), password) },
                 enabled = selected.isNotEmpty() && passwordValid,
             ) { Text("选择保存位置") }
+        },
+    )
+}
+
+@Composable
+private fun MigrationBridgeImportDialog(activity: MainActivity) {
+    hostRevision(activity)
+    val options = activity.migrationBridgeImportOptionsForUi()
+    if (options.isEmpty()) return
+
+    var selected by remember(options) {
+        mutableStateOf<Set<String>>(options.mapTo(linkedSetOf()) { it.key() })
+    }
+    var password by remember(options) { mutableStateOf("") }
+    val encrypted = activity.migrationBridgeImportEncryptedForUi()
+    val passwordValid = !encrypted || password.length >= 8
+
+    AlertDialog(
+        onDismissRequest = activity::dismissMigrationBridgeImportForUi,
+        title = { Text("导入 Bridge 数据包") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
+                Text(
+                    "来源：${activity.migrationBridgeImportSourceForUi()}。数据包会先在应用私有缓存中完整解密并校验，然后按依赖顺序恢复所选 Dataset。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs),
+                ) {
+                    items(options, key = { it.key() }) { option ->
+                        val checked = option.key() in selected
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(SuiteShapes.Inner)
+                                .clickable {
+                                    val updated = selected.toMutableSet()
+                                    if (checked) {
+                                        updated.remove(option.key())
+                                        var changed: Boolean
+                                        do {
+                                            changed = false
+                                            options.filter { it.key() in updated }.forEach { candidate ->
+                                                if (candidate.descriptor.dependencies.any { dependency ->
+                                                        "${candidate.pluginId}/$dependency" !in updated
+                                                    }) {
+                                                    updated.remove(candidate.key())
+                                                    changed = true
+                                                }
+                                            }
+                                        } while (changed)
+                                    } else {
+                                        updated.add(option.key())
+                                        var changed: Boolean
+                                        do {
+                                            changed = false
+                                            options.filter { it.key() in updated }.forEach { candidate ->
+                                                candidate.descriptor.dependencies.forEach { dependency ->
+                                                    if (updated.add("${candidate.pluginId}/$dependency")) changed = true
+                                                }
+                                            }
+                                        } while (changed)
+                                    }
+                                    selected = updated
+                                }
+                                .padding(vertical = SuiteSpacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${option.pluginTitle} · ${option.descriptor.name}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    "${bridgeCategoryLabel(option.descriptor.category)} · " +
+                                        bridgeDatasetSize(option.descriptor.estimatedSize) +
+                                        " · 格式 v${option.descriptor.dataFormatVersion}" +
+                                        if (option.descriptor.sensitive) " · 敏感" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (encrypted) {
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("迁移密码") },
+                        supportingText = {
+                            if (password.isNotEmpty() && password.length < 8) Text("至少 8 位")
+                        },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        isError = password.isNotEmpty() && password.length < 8,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = activity::dismissMigrationBridgeImportForUi) { Text("取消") }
+        },
+        confirmButton = {
+            Button(
+                onClick = { activity.confirmMigrationBridgeImportForUi(selected.toList(), password) },
+                enabled = selected.isNotEmpty() && passwordValid,
+            ) { Text("开始恢复") }
         },
     )
 }

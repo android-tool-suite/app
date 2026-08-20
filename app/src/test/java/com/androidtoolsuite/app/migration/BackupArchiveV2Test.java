@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 
 import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
 import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
 import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
 
 import org.junit.Test;
@@ -105,6 +106,32 @@ public class BackupArchiveV2Test {
                 new ByteArrayInputStream(truncated),
                 new char[0],
                 (dataset, input) -> readAll(input)
+        ));
+    }
+
+    @Test
+    public void legacyBridgeImportDefaultsRemainDisabled() {
+        LegacyDataBridge bridge = new LegacyDataBridge() {
+            @Override
+            public List<LegacyDatasetDescriptor> datasets(android.app.Activity activity) {
+                return List.of();
+            }
+
+            @Override
+            public void exportDataset(
+                    android.app.Activity activity,
+                    String datasetId,
+                    java.io.OutputStream output
+            ) {
+            }
+        };
+
+        assertFalse(bridge.supportsImport("settings", 1));
+        assertThrows(IOException.class, () -> bridge.importDataset(
+                null,
+                "settings",
+                1,
+                new ByteArrayInputStream(new byte[0])
         ));
     }
 
