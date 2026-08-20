@@ -17,7 +17,10 @@ public final class LegacyDatasetDescriptor {
     public final long estimatedSize;
     public final int dataFormatVersion;
     public final boolean sensitive;
+    /** Preferred restore mode, kept for Bridge v2 packages. */
     public final DatasetRestoreMode restoreMode;
+    /** Restore modes that the exporting plugin declares for this Dataset format. */
+    public final List<DatasetRestoreMode> restoreModes;
     public final List<String> dependencies;
 
     public LegacyDatasetDescriptor(
@@ -30,6 +33,20 @@ public final class LegacyDatasetDescriptor {
             DatasetRestoreMode restoreMode,
             List<String> dependencies
     ) {
+        this(id, name, category, estimatedSize, dataFormatVersion, sensitive,
+                Collections.singletonList(restoreMode), dependencies);
+    }
+
+    public LegacyDatasetDescriptor(
+            String id,
+            String name,
+            DatasetCategory category,
+            long estimatedSize,
+            int dataFormatVersion,
+            boolean sensitive,
+            List<DatasetRestoreMode> restoreModes,
+            List<String> dependencies
+    ) {
         this.id = requireId(id, "dataset id");
         this.name = requireText(name, "dataset name");
         this.category = Objects.requireNonNull(category, "category");
@@ -39,7 +56,18 @@ public final class LegacyDatasetDescriptor {
         }
         this.dataFormatVersion = dataFormatVersion;
         this.sensitive = sensitive || category == DatasetCategory.SECRET;
-        this.restoreMode = Objects.requireNonNull(restoreMode, "restoreMode");
+        ArrayList<DatasetRestoreMode> copiedModes = new ArrayList<>();
+        if (restoreModes != null) {
+            for (DatasetRestoreMode mode : restoreModes) {
+                DatasetRestoreMode checked = Objects.requireNonNull(mode, "restoreMode");
+                if (!copiedModes.contains(checked)) copiedModes.add(checked);
+            }
+        }
+        if (copiedModes.isEmpty()) {
+            throw new IllegalArgumentException("restoreModes must not be empty");
+        }
+        this.restoreModes = Collections.unmodifiableList(copiedModes);
+        this.restoreMode = copiedModes.get(0);
         ArrayList<String> copied = new ArrayList<>();
         if (dependencies != null) {
             for (String dependency : dependencies) {
@@ -56,10 +84,27 @@ public final class LegacyDatasetDescriptor {
             long estimatedSize,
             int dataFormatVersion,
             boolean sensitive,
+            List<DatasetRestoreMode> restoreModes
+    ) {
+        this(id, name, category, estimatedSize, dataFormatVersion, sensitive, restoreModes,
+                Collections.emptyList());
+    }
+
+    public LegacyDatasetDescriptor(
+            String id,
+            String name,
+            DatasetCategory category,
+            long estimatedSize,
+            int dataFormatVersion,
+            boolean sensitive,
             DatasetRestoreMode restoreMode
     ) {
         this(id, name, category, estimatedSize, dataFormatVersion, sensitive, restoreMode,
                 Collections.emptyList());
+    }
+
+    public boolean supportsRestoreMode(DatasetRestoreMode mode) {
+        return restoreModes.contains(mode);
     }
 
     private static String requireId(String value, String label) {

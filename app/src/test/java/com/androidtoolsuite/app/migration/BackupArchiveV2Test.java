@@ -133,6 +133,8 @@ public class BackupArchiveV2Test {
                 1,
                 new ByteArrayInputStream(new byte[0])
         ));
+        assertFalse(bridge.supportsDelete("settings"));
+        assertThrows(IOException.class, () -> bridge.deleteDataset(null, "settings"));
     }
 
     private static byte[] write(List<BackupArchiveV2.DatasetSource> datasets, char[] password)

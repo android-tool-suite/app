@@ -27,10 +27,12 @@ import androidx.core.splashscreen.SplashScreen;
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
 import com.androidtoolsuite.app.migration.BackupArchiveV2;
+import com.androidtoolsuite.app.migration.BackupPackageProbe;
+import com.androidtoolsuite.app.migration.DataPackageArchive;
 import com.androidtoolsuite.app.migration.MigrationBridgeManager;
 import com.androidtoolsuite.app.migration.HostMigrationArchive;
 import com.androidtoolsuite.app.migration.MigrationTransaction;
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
+import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
 import com.androidtoolsuite.app.plugin.runtime.ExternalToolFactory;
 import com.androidtoolsuite.app.plugin.api.HomeWidget;
 import com.androidtoolsuite.app.plugin.api.HomeWidgetSize;
@@ -135,14 +137,20 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private final ExecutorService migrationBridgeExecutor = Executors.newSingleThreadExecutor();
     private List<MigrationBridgeManager.DatasetOption> migrationBridgeExportOptions = Collections.emptyList();
     private List<ToolPlugin> migrationBridgeOwnedPlugins = Collections.emptyList();
-    private List<MigrationBridgeManager.DatasetOption> pendingMigrationBridgeExport = Collections.emptyList();
+    private List<MigrationBridgeManager.ExportSelection> pendingMigrationBridgeExport = Collections.emptyList();
     private List<ToolPlugin> pendingMigrationBridgeOwnedPlugins = Collections.emptyList();
     private char[] pendingMigrationBridgePassword;
     private List<MigrationBridgeManager.DatasetOption> migrationBridgeImportOptions = Collections.emptyList();
     private List<ToolPlugin> migrationBridgeImportOwnedPlugins = Collections.emptyList();
     private Uri pendingMigrationBridgeImportUri;
+    private DataPackageArchive.ReadResult pendingDataPackageInspection;
     private BackupArchiveV2.ReadResult pendingMigrationBridgeInspection;
+    private BackupPackageProbe.Format pendingBackupPackageFormat;
     private char[] pendingMigrationBridgeImportPassword;
+    private String pendingDataOwnerFilter;
+    private List<MigrationBridgeManager.DatasetOption> migrationBridgeDeleteOptions = Collections.emptyList();
+    private List<MigrationBridgeManager.DatasetOption> migrationBridgeDeleteDependencyOptions = Collections.emptyList();
+    private List<ToolPlugin> migrationBridgeDeleteOwnedPlugins = Collections.emptyList();
     private int currentSection = SECTION_DASHBOARD;
     private int pluginReturnSection = SECTION_PLUGINS;
     private final HostUiState composeState = new HostUiState();
@@ -294,6 +302,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         destroyMigrationBridgePlugins(migrationBridgeOwnedPlugins);
         destroyMigrationBridgePlugins(pendingMigrationBridgeOwnedPlugins);
         destroyMigrationBridgePlugins(migrationBridgeImportOwnedPlugins);
+        destroyMigrationBridgePlugins(migrationBridgeDeleteOwnedPlugins);
         migrationBridgeExecutor.shutdownNow();
         for (ToolPlugin plugin : plugins) {
             plugin.onDestroy();
@@ -1898,15 +1907,16 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         startActivityForResult(intent, REQUEST_EXPORT_MIGRATION);
     }
 
-    public boolean isMigrationBridgeBuildForUi() {
-        return BuildConfig.DEBUG;
+    public void importMigrationBridgeForUi() {
+        importMigrationBridgeForOwner(null);
     }
 
-    public void importMigrationBridgeForUi() {
-        if (!BuildConfig.DEBUG) {
-            showToast("Migration Bridge 仅在 Debug 预览版中提供");
-            return;
-        }
+    public void importMigrationBridgeForPluginUi(String pluginId) {
+        importMigrationBridgeForOwner(pluginId);
+    }
+
+    private void importMigrationBridgeForOwner(String ownerId) {
+        pendingDataOwnerFilter = ownerId;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("application/octet-stream");
@@ -1914,10 +1924,14 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public void prepareMigrationBridgeExportForUi() {
-        if (!BuildConfig.DEBUG) {
-            showToast("Migration Bridge 仅在 Debug 预览版中提供");
-            return;
-        }
+        prepareMigrationBridgeExportForOwner(null);
+    }
+
+    public void prepareMigrationBridgeExportForPluginUi(String pluginId) {
+        prepareMigrationBridgeExportForOwner(pluginId);
+    }
+
+    private void prepareMigrationBridgeExportForOwner(String ownerId) {
         destroyMigrationBridgePlugins(migrationBridgeOwnedPlugins);
         migrationBridgeOwnedPlugins = Collections.emptyList();
         migrationBridgeExportOptions = Collections.emptyList();
@@ -1940,17 +1954,30 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 }
                 List<MigrationBridgeManager.DatasetOption> options =
                         MigrationBridgeManager.discover(this, candidates);
+                if (ownerId == null) {
+                    List<MigrationBridgeManager.DatasetOption> withHost = new ArrayList<>();
+                    withHost.addAll(createHostDataExportOptions(installedPlugins));
+                    withHost.addAll(options);
+                    options = withHost;
+                } else {
+                    List<MigrationBridgeManager.DatasetOption> filtered = new ArrayList<>();
+                    for (MigrationBridgeManager.DatasetOption option : options) {
+                        if (ownerId.equals(option.pluginId)) filtered.add(option);
+                    }
+                    options = filtered;
+                }
+                List<MigrationBridgeManager.DatasetOption> discovered = options;
                 runOnUiThread(() -> {
-                    if (options.isEmpty()) {
+                    if (discovered.isEmpty()) {
                         destroyMigrationBridgePlugins(ownedPlugins);
-                        showToast("当前已安装插件没有可导出的 Bridge 数据");
+                        showToast("没有可导出的数据项目");
                         return;
                     }
                     migrationBridgeOwnedPlugins = Collections.unmodifiableList(ownedPlugins);
-                    migrationBridgeExportOptions = options;
+                    migrationBridgeExportOptions = Collections.unmodifiableList(discovered);
                     invalidateComposeUi();
                 });
-            } catch (IOException | RuntimeException error) {
+            } catch (IOException | JSONException | RuntimeException error) {
                 runOnUiThread(() -> {
                     destroyMigrationBridgePlugins(ownedPlugins);
                     showToast("扫描 Bridge 数据失败：" + safeMessage(error));
@@ -1970,14 +1997,123 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
     }
 
-    public void confirmMigrationBridgeExportForUi(List<String> selectedKeys, String rawPassword) {
+    public List<MigrationBridgeManager.DatasetOption> migrationBridgeDeleteOptionsForUi() {
+        return migrationBridgeDeleteOptions;
+    }
+
+    public void prepareMigrationBridgeDeleteForUi() {
+        prepareMigrationBridgeDeleteForOwner(null);
+    }
+
+    public void prepareMigrationBridgeDeleteForPluginUi(String pluginId) {
+        prepareMigrationBridgeDeleteForOwner(pluginId);
+    }
+
+    private void prepareMigrationBridgeDeleteForOwner(String ownerId) {
+        dismissMigrationBridgeDeleteForUi();
+        List<ToolPlugin> activePlugins = new ArrayList<>(plugins);
+        List<ImportedPluginDescriptor> installedPlugins = new ArrayList<>(externalPluginStore.load());
+        showToast("正在扫描可删除的数据…");
+        migrationBridgeExecutor.execute(() -> {
+            List<ToolPlugin> candidates = new ArrayList<>(activePlugins);
+            List<ToolPlugin> ownedPlugins = new ArrayList<>();
+            try {
+                Set<String> activeIds = new HashSet<>();
+                for (ToolPlugin plugin : activePlugins) activeIds.add(plugin.id());
+                for (ImportedPluginDescriptor descriptor : installedPlugins) {
+                    if (activeIds.contains(descriptor.id)) continue;
+                    ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
+                    if (plugin != null) {
+                        candidates.add(plugin);
+                        ownedPlugins.add(plugin);
+                    }
+                }
+                List<MigrationBridgeManager.DatasetOption> discovered =
+                        MigrationBridgeManager.discover(this, candidates);
+                List<MigrationBridgeManager.DatasetOption> scoped = new ArrayList<>();
+                List<MigrationBridgeManager.DatasetOption> deletable = new ArrayList<>();
+                for (MigrationBridgeManager.DatasetOption option : discovered) {
+                    if (ownerId != null && !ownerId.equals(option.pluginId)) continue;
+                    scoped.add(option);
+                    if (option.supportsDelete()) deletable.add(option);
+                }
+                runOnUiThread(() -> {
+                    if (deletable.isEmpty()) {
+                        destroyMigrationBridgePlugins(ownedPlugins);
+                        showToast("当前范围没有可删除的数据");
+                        return;
+                    }
+                    migrationBridgeDeleteOwnedPlugins = Collections.unmodifiableList(ownedPlugins);
+                    migrationBridgeDeleteDependencyOptions = Collections.unmodifiableList(scoped);
+                    migrationBridgeDeleteOptions = Collections.unmodifiableList(deletable);
+                    invalidateComposeUi();
+                });
+            } catch (IOException | RuntimeException error) {
+                runOnUiThread(() -> {
+                    destroyMigrationBridgePlugins(ownedPlugins);
+                    showToast("扫描可删除数据失败：" + safeMessage(error));
+                });
+            }
+        });
+    }
+
+    public void dismissMigrationBridgeDeleteForUi() {
+        migrationBridgeDeleteOptions = Collections.emptyList();
+        migrationBridgeDeleteDependencyOptions = Collections.emptyList();
+        destroyMigrationBridgePlugins(migrationBridgeDeleteOwnedPlugins);
+        migrationBridgeDeleteOwnedPlugins = Collections.emptyList();
+        invalidateComposeUi();
+    }
+
+    public void confirmMigrationBridgeDeleteForUi(List<String> selectedKeys) {
         Set<String> selected = new LinkedHashSet<>(selectedKeys);
         if (selected.isEmpty()) {
-            showToast("请至少选择一个 Dataset");
+            showToast("请至少选择一个数据项目");
             return;
         }
         List<MigrationBridgeManager.DatasetOption> options = new ArrayList<>();
-        boolean containsSensitive = false;
+        for (MigrationBridgeManager.DatasetOption option : migrationBridgeDeleteOptions) {
+            if (selected.contains(option.key())) options.add(option);
+        }
+        if (options.size() != selected.size()) {
+            showToast("选择中包含不可删除的数据项目");
+            return;
+        }
+        List<MigrationBridgeManager.DatasetOption> available = migrationBridgeDeleteDependencyOptions;
+        List<ToolPlugin> ownedPlugins = migrationBridgeDeleteOwnedPlugins;
+        migrationBridgeDeleteOptions = Collections.emptyList();
+        migrationBridgeDeleteDependencyOptions = Collections.emptyList();
+        migrationBridgeDeleteOwnedPlugins = Collections.emptyList();
+        invalidateComposeUi();
+        migrationBridgeExecutor.execute(() -> {
+            try {
+                MigrationBridgeManager.delete(this, available, options);
+                showToast("已删除 " + options.size() + " 个数据项目");
+                runOnUiThread(this::reloadPluginsKeepingCurrentPage);
+            } catch (IOException | RuntimeException error) {
+                showToast("删除数据失败：" + safeMessage(error));
+            } finally {
+                runOnUiThread(() -> destroyMigrationBridgePlugins(ownedPlugins));
+            }
+        });
+    }
+
+    public void confirmMigrationBridgeExportForUi(
+            List<String> selectedKeys,
+            List<String> passwordProtectedKeys,
+            String rawPassword
+    ) {
+        Set<String> selected = new LinkedHashSet<>(selectedKeys);
+        if (selected.isEmpty()) {
+            showToast("请至少选择一个数据项目");
+            return;
+        }
+        Set<String> passwordProtected = new LinkedHashSet<>(passwordProtectedKeys);
+        if (!selected.containsAll(passwordProtected)) {
+            showToast("保护方式中包含未选择的数据项目");
+            return;
+        }
+        List<MigrationBridgeManager.ExportSelection> options = new ArrayList<>();
         for (MigrationBridgeManager.DatasetOption option : migrationBridgeExportOptions) {
             if (!selected.contains(option.key())) continue;
             for (String dependency : option.descriptor.dependencies) {
@@ -1986,17 +2122,18 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     return;
                 }
             }
-            containsSensitive |= option.descriptor.sensitive
-                    || option.descriptor.category == DatasetCategory.SECRET;
-            options.add(option);
+            DataPackageArchive.Protection protection = passwordProtected.contains(option.key())
+                    ? DataPackageArchive.Protection.PASSWORD
+                    : DataPackageArchive.Protection.NONE;
+            options.add(new MigrationBridgeManager.ExportSelection(option, protection));
         }
         if (options.size() != selected.size()) {
-            showToast("选择中包含未知 Dataset");
+            showToast("选择中包含未知数据项目");
             return;
         }
         String password = rawPassword == null ? "" : rawPassword;
-        if ((containsSensitive || !password.isEmpty()) && password.length() < 8) {
-            showToast("迁移密码至少需要 8 位");
+        if (!passwordProtected.isEmpty() && password.length() < 8) {
+            showToast("密码保护区的密码至少需要 8 位");
             return;
         }
         clearPendingMigrationBridgePassword();
@@ -2010,7 +2147,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("application/octet-stream");
-        intent.putExtra(Intent.EXTRA_TITLE, "android-tool-suite-bridge-debug.atsbackup");
+        String owner = selected.stream()
+                .map(key -> key.substring(0, key.indexOf('/')))
+                .distinct()
+                .count() == 1
+                ? selected.iterator().next().substring(0, selected.iterator().next().indexOf('/'))
+                : "android-tool-suite";
+        intent.putExtra(Intent.EXTRA_TITLE, owner + "-data.atsbackup");
         startActivityForResult(intent, REQUEST_EXPORT_MIGRATION_BRIDGE);
     }
 
@@ -2019,33 +2162,67 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public boolean migrationBridgeImportEncryptedForUi() {
+        if (pendingDataPackageInspection != null) {
+            return pendingDataPackageInspection.hasProtection(DataPackageArchive.Protection.PASSWORD);
+        }
         return pendingMigrationBridgeInspection != null && pendingMigrationBridgeInspection.encrypted;
     }
 
+    public String migrationBridgeImportProtectionForUi(String key) {
+        if (pendingBackupPackageFormat == BackupPackageProbe.Format.BRIDGE_V2
+                && pendingMigrationBridgeInspection != null
+                && pendingMigrationBridgeInspection.encrypted) {
+            return DataPackageArchive.Protection.PASSWORD.name();
+        }
+        for (MigrationBridgeManager.DatasetOption option : migrationBridgeImportOptions) {
+            if (option.key().equals(key)) return option.archiveProtection.name();
+        }
+        return DataPackageArchive.Protection.NONE.name();
+    }
+
     public String migrationBridgeImportSourceForUi() {
-        if (pendingMigrationBridgeInspection == null) return "";
-        return pendingMigrationBridgeInspection.sourcePackage + " "
-                + pendingMigrationBridgeInspection.sourceVersionName;
+        if (pendingDataPackageInspection != null) {
+            return pendingDataPackageInspection.sourcePackage + " "
+                    + pendingDataPackageInspection.sourceVersionName + " · 数据包 v3";
+        }
+        if (pendingMigrationBridgeInspection != null) {
+            return pendingMigrationBridgeInspection.sourcePackage + " "
+                    + pendingMigrationBridgeInspection.sourceVersionName + " · Bridge v2";
+        }
+        return "";
     }
 
     public void dismissMigrationBridgeImportForUi() {
         migrationBridgeImportOptions = Collections.emptyList();
         pendingMigrationBridgeImportUri = null;
+        pendingDataPackageInspection = null;
         pendingMigrationBridgeInspection = null;
+        pendingBackupPackageFormat = null;
         clearPendingMigrationBridgeImportPassword();
         destroyMigrationBridgePlugins(migrationBridgeImportOwnedPlugins);
         migrationBridgeImportOwnedPlugins = Collections.emptyList();
         invalidateComposeUi();
     }
 
-    public void confirmMigrationBridgeImportForUi(List<String> selectedKeys, String rawPassword) {
+    public void confirmMigrationBridgeImportForUi(
+            List<String> replaceKeys,
+            List<String> mergeKeys,
+            String rawPassword
+    ) {
         if (pendingMigrationBridgeImportUri == null || migrationBridgeImportOptions.isEmpty()) return;
-        Set<String> selected = new LinkedHashSet<>(selectedKeys);
-        if (selected.isEmpty()) {
-            showToast("请至少选择一个 Dataset");
+        Set<String> replace = new LinkedHashSet<>(replaceKeys);
+        Set<String> merge = new LinkedHashSet<>(mergeKeys);
+        Set<String> selected = new LinkedHashSet<>(replace);
+        if (!Collections.disjoint(replace, merge)) {
+            showToast("同一数据项目不能同时选择替换和合并");
             return;
         }
-        List<MigrationBridgeManager.DatasetOption> options = new ArrayList<>();
+        selected.addAll(merge);
+        if (selected.isEmpty()) {
+            showToast("请至少选择一个数据项目");
+            return;
+        }
+        List<MigrationBridgeManager.ImportSelection> selections = new ArrayList<>();
         for (MigrationBridgeManager.DatasetOption option : migrationBridgeImportOptions) {
             if (!selected.contains(option.key())) continue;
             for (String dependency : option.descriptor.dependencies) {
@@ -2054,22 +2231,48 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     return;
                 }
             }
-            options.add(option);
+            DatasetRestoreMode mode = merge.contains(option.key())
+                    ? DatasetRestoreMode.MERGE
+                    : DatasetRestoreMode.REPLACE;
+            if (!option.descriptor.supportsRestoreMode(mode)) {
+                showToast(option.descriptor.name + " 不支持" + (mode == DatasetRestoreMode.MERGE ? "合并" : "替换"));
+                return;
+            }
+            selections.add(new MigrationBridgeManager.ImportSelection(option, mode));
         }
-        if (options.size() != selected.size()) {
-            showToast("选择中包含不可恢复的 Dataset");
+        if (selections.size() != selected.size()) {
+            showToast("选择中包含不可恢复的数据项目");
             return;
         }
+        for (MigrationBridgeManager.ImportSelection selection : selections) {
+            MigrationBridgeManager.DatasetOption option = selection.option;
+            if (!option.requiresBridgeResolution()) continue;
+            String packageKey = MigrationBridgeManager.HOST_OWNER_ID + "/"
+                    + MigrationBridgeManager.HOST_PLUGIN_PACKAGE_PREFIX + option.pluginId;
+            if (!selected.contains(packageKey)) {
+                showToast("导入 " + option.pluginTitle + " 的数据时，需要同时导入对应插件包");
+                return;
+            }
+        }
         String password = rawPassword == null ? "" : rawPassword;
-        if (migrationBridgeImportEncryptedForUi() && password.length() < 8) {
-            showToast("加密迁移包需要至少 8 位密码");
+        boolean selectedPasswordSection = pendingBackupPackageFormat == BackupPackageProbe.Format.BRIDGE_V2
+                ? pendingMigrationBridgeInspection != null && pendingMigrationBridgeInspection.encrypted
+                : selections.stream().anyMatch(selection ->
+                selection.option.archiveProtection == DataPackageArchive.Protection.PASSWORD);
+        if (selectedPasswordSection && password.length() < 8) {
+            showToast("所选密码保护区需要至少 8 位密码");
             return;
         }
 
         Uri source = pendingMigrationBridgeImportUri;
-        List<ToolPlugin> ownedPlugins = migrationBridgeImportOwnedPlugins;
+        List<ToolPlugin> ownedPlugins = new ArrayList<>(migrationBridgeImportOwnedPlugins);
+        BackupPackageProbe.Format format = pendingBackupPackageFormat;
+        boolean restoresHost = selections.stream().anyMatch(
+                selection -> selection.option.isHostItem());
         pendingMigrationBridgeImportUri = null;
+        pendingDataPackageInspection = null;
         pendingMigrationBridgeInspection = null;
+        pendingBackupPackageFormat = null;
         migrationBridgeImportOptions = Collections.emptyList();
         migrationBridgeImportOwnedPlugins = Collections.emptyList();
         clearPendingMigrationBridgeImportPassword();
@@ -2084,12 +2287,35 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     "bridge-import-" + Long.toHexString(System.nanoTime())
             );
             try (InputStream input = getContentResolver().openInputStream(source)) {
-                if (input == null) throw new IOException("无法读取 Bridge 数据包");
-                MigrationBridgeManager.restore(this, input, restorePassword, options, staging);
-                showToast("Bridge 数据恢复完成，共 " + options.size() + " 个 Dataset");
-                runOnUiThread(this::reloadPluginsKeepingCurrentPage);
+                if (input == null) throw new IOException("无法读取数据包");
+                if (format == BackupPackageProbe.Format.DATA_PACKAGE_V3) {
+                    MigrationBridgeManager.restoreDataPackage(
+                            this,
+                            input,
+                            restorePassword,
+                            selections,
+                            staging,
+                            this::restoreHostDataItems,
+                            selectedOptions -> resolveDataPackageOptionsAfterHost(
+                                    selectedOptions,
+                                    ownedPlugins
+                            )
+                    );
+                } else if (format == BackupPackageProbe.Format.BRIDGE_V2) {
+                    MigrationBridgeManager.restore(this, input, restorePassword, selections, staging);
+                } else {
+                    throw new IOException("不支持的数据包格式");
+                }
+                showToast("数据恢复完成，共 " + selections.size() + " 个项目");
+                runOnUiThread(() -> {
+                    reloadPluginsKeepingCurrentPage();
+                    if (restoresHost) {
+                        updateCatalog = null;
+                        checkForUpdates(true, false, false);
+                    }
+                });
             } catch (IOException | RuntimeException error) {
-                showToast("恢复 Bridge 数据失败：" + safeMessage(error));
+                showToast("恢复数据失败：" + safeMessage(error));
             } finally {
                 Arrays.fill(restorePassword, '\0');
                 runOnUiThread(() -> destroyMigrationBridgePlugins(ownedPlugins));
@@ -2140,18 +2366,30 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private void handleMigrationBridgeImportSelection(int resultCode, Intent data) {
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            pendingDataOwnerFilter = null;
+            return;
+        }
         Uri source = data.getData();
+        String ownerFilter = pendingDataOwnerFilter;
+        pendingDataOwnerFilter = null;
         dismissMigrationBridgeImportForUi();
         List<ToolPlugin> activePlugins = new ArrayList<>(plugins);
         List<ImportedPluginDescriptor> installedPlugins = new ArrayList<>(externalPluginStore.load());
-        showToast("正在检查 Bridge 数据包…");
+        showToast("正在检查数据包…");
         migrationBridgeExecutor.execute(() -> {
             List<ToolPlugin> candidates = new ArrayList<>(activePlugins);
             List<ToolPlugin> ownedPlugins = new ArrayList<>();
-            try (InputStream input = getContentResolver().openInputStream(source)) {
-                if (input == null) throw new IOException("无法读取 Bridge 数据包");
-                BackupArchiveV2.ReadResult inspection = BackupArchiveV2.inspect(input);
+            try {
+                BackupPackageProbe.Format format;
+                try (InputStream input = getContentResolver().openInputStream(source)) {
+                    if (input == null) throw new IOException("无法读取数据包");
+                    format = BackupPackageProbe.detect(input);
+                }
+                if (format == BackupPackageProbe.Format.HOST_MIGRATION_V1) {
+                    handleLegacyMigrationPackageFromDataPicker(source);
+                    return;
+                }
                 Set<String> activeIds = new HashSet<>();
                 for (ToolPlugin plugin : activePlugins) activeIds.add(plugin.id());
                 for (ImportedPluginDescriptor descriptor : installedPlugins) {
@@ -2162,22 +2400,68 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                         ownedPlugins.add(plugin);
                     }
                 }
-                List<MigrationBridgeManager.DatasetOption> options =
-                        MigrationBridgeManager.matchForImport(candidates, inspection.datasets);
-                if (options.isEmpty()) {
-                    throw new IOException("数据包中没有当前插件可恢复的 Dataset");
+                List<MigrationBridgeManager.DatasetOption> options;
+                DataPackageArchive.ReadResult dataInspection = null;
+                BackupArchiveV2.ReadResult bridgeInspection = null;
+                if (format == BackupPackageProbe.Format.DATA_PACKAGE_V3) {
+                    try (InputStream input = getContentResolver().openInputStream(source)) {
+                        if (input == null) throw new IOException("无法读取数据包");
+                        dataInspection = DataPackageArchive.inspect(input);
+                    }
+                    boolean canInstallMissingPlugins = ownerFilter == null
+                            && dataInspection.items.stream().anyMatch(item ->
+                            item.kind == DataPackageArchive.ItemKind.HOST_PLUGIN_PACKAGE);
+                    Set<String> installedIds = new LinkedHashSet<>();
+                    for (ImportedPluginDescriptor descriptor : installedPlugins) {
+                        installedIds.add(descriptor.id);
+                    }
+                    options = MigrationBridgeManager.matchDataPackageForImport(
+                            this,
+                            candidates,
+                            dataInspection.items,
+                            canInstallMissingPlugins,
+                            installedIds
+                    );
+                    List<MigrationBridgeManager.DatasetOption> supportedProtection = new ArrayList<>();
+                    for (MigrationBridgeManager.DatasetOption option : options) {
+                        if (option.archiveProtection != DataPackageArchive.Protection.ACCOUNT) {
+                            supportedProtection.add(option);
+                        }
+                    }
+                    options = supportedProtection;
+                } else {
+                    try (InputStream input = getContentResolver().openInputStream(source)) {
+                        if (input == null) throw new IOException("无法读取 Bridge 数据包");
+                        bridgeInspection = BackupArchiveV2.inspect(input);
+                    }
+                    options = MigrationBridgeManager.matchForImport(this, candidates, bridgeInspection.datasets);
                 }
+                if (ownerFilter != null) {
+                    List<MigrationBridgeManager.DatasetOption> filtered = new ArrayList<>();
+                    for (MigrationBridgeManager.DatasetOption option : options) {
+                        if (ownerFilter.equals(option.pluginId)) filtered.add(option);
+                    }
+                    options = filtered;
+                }
+                if (options.isEmpty()) {
+                    throw new IOException("数据包中没有当前范围可恢复的数据项目");
+                }
+                DataPackageArchive.ReadResult finalDataInspection = dataInspection;
+                BackupArchiveV2.ReadResult finalBridgeInspection = bridgeInspection;
+                List<MigrationBridgeManager.DatasetOption> finalOptions = options;
                 runOnUiThread(() -> {
                     pendingMigrationBridgeImportUri = source;
-                    pendingMigrationBridgeInspection = inspection;
-                    migrationBridgeImportOptions = options;
+                    pendingDataPackageInspection = finalDataInspection;
+                    pendingMigrationBridgeInspection = finalBridgeInspection;
+                    pendingBackupPackageFormat = format;
+                    migrationBridgeImportOptions = Collections.unmodifiableList(finalOptions);
                     migrationBridgeImportOwnedPlugins = Collections.unmodifiableList(ownedPlugins);
                     invalidateComposeUi();
                 });
             } catch (IOException | RuntimeException error) {
                 runOnUiThread(() -> {
                     destroyMigrationBridgePlugins(ownedPlugins);
-                    showToast("读取 Bridge 数据包失败：" + safeMessage(error));
+                    showToast("读取数据包失败：" + safeMessage(error));
                 });
             }
         });
@@ -2192,7 +2476,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return;
         }
         Uri destination = data.getData();
-        List<MigrationBridgeManager.DatasetOption> selected = pendingMigrationBridgeExport;
+        List<MigrationBridgeManager.ExportSelection> selected = pendingMigrationBridgeExport;
         List<ToolPlugin> ownedPlugins = pendingMigrationBridgeOwnedPlugins;
         char[] password = pendingMigrationBridgePassword == null
                 ? new char[0]
@@ -2203,18 +2487,19 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         migrationBridgeExecutor.execute(() -> {
             try (OutputStream output = getContentResolver().openOutputStream(destination, "wt")) {
                 if (output == null) throw new IOException("无法写入目标文件");
-                MigrationBridgeManager.write(
+                MigrationBridgeManager.writeDataPackage(
                         this,
                         output,
                         getPackageName(),
                         BuildConfig.VERSION_NAME,
                         BuildConfig.VERSION_CODE,
                         selected,
+                        this::writeHostDataItem,
                         password
                 );
-                showToast("Bridge 数据迁移包已导出，共 " + selected.size() + " 个 Dataset");
+                showToast("数据包已导出，共 " + selected.size() + " 个项目");
             } catch (IOException | RuntimeException error) {
-                showToast("导出 Bridge 数据失败：" + safeMessage(error));
+                showToast("导出数据失败：" + safeMessage(error));
             } finally {
                 Arrays.fill(password, '\0');
                 runOnUiThread(() -> destroyMigrationBridgePlugins(ownedPlugins));
@@ -2353,6 +2638,333 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         } catch (IOException | JSONException error) {
             showToast("读取迁移包失败：" + error.getMessage());
         }
+    }
+
+    private void handleLegacyMigrationPackageFromDataPicker(Uri source) {
+        try {
+            HostMigrationArchive.Snapshot snapshot = HostMigrationArchive.read(
+                    readBytes(source, HostMigrationArchive.MAX_ARCHIVE_BYTES)
+            );
+            List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
+            runOnUiThread(() -> showComposeDialog(
+                    "导入旧版 Android Tool Suite 迁移包？",
+                    "来源：" + snapshot.sourcePackage + " " + snapshot.sourceVersionName
+                            + "\n插件：" + prepared.size() + " 个"
+                            + "\n\n这是旧版仅宿主迁移包；导入后可再选择 v2/v3 数据包恢复插件数据。",
+                    "取消",
+                    "导入",
+                    () -> applyMigration(snapshot, prepared)
+            ));
+        } catch (IOException | JSONException error) {
+            showToast("读取旧版迁移包失败：" + safeMessage(error));
+        }
+    }
+
+    private void restoreHostMigrationItem(InputStream input) throws IOException {
+        try {
+            HostMigrationArchive.Snapshot snapshot = HostMigrationArchive.read(
+                    readBytes(input, HostMigrationArchive.MAX_ARCHIVE_BYTES)
+            );
+            List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
+            applyMigrationOrThrow(snapshot, prepared);
+        } catch (JSONException error) {
+            throw new IOException("应用迁移快照无效", error);
+        }
+    }
+
+    private void restoreHostDataItems(
+            List<MigrationBridgeManager.ImportSelection> selected,
+            Map<String, File> staged
+    ) throws IOException {
+        JSONObject incomingSettings = null;
+        DatasetRestoreMode settingsMode = null;
+        JSONObject incomingPluginState = null;
+        DatasetRestoreMode pluginStateMode = null;
+        Map<String, PluginImport> packageImports = new LinkedHashMap<>();
+        try {
+            for (MigrationBridgeManager.ImportSelection selection : selected) {
+                MigrationBridgeManager.DatasetOption option = selection.option;
+                File payload = staged.get(option.key());
+                if (payload == null || !payload.isFile()) {
+                    throw new IOException("应用数据项目未完成暂存：" + option.descriptor.name);
+                }
+                if (option.kind == DataPackageArchive.ItemKind.HOST_SETTINGS) {
+                    JSONObject root = new JSONObject(new String(
+                            readFileBytes(payload, 2 * 1024 * 1024),
+                            StandardCharsets.UTF_8
+                    ));
+                    if (root.optInt("formatVersion", 0) != 1 || root.optJSONObject("settings") == null) {
+                        throw new IOException("应用设置项目格式无效");
+                    }
+                    incomingSettings = new JSONObject(root.getJSONObject("settings").toString());
+                    settingsMode = selection.restoreMode;
+                } else if (option.kind == DataPackageArchive.ItemKind.HOST_PLUGIN_STATE) {
+                    JSONObject root = new JSONObject(new String(
+                            readFileBytes(payload, 2 * 1024 * 1024),
+                            StandardCharsets.UTF_8
+                    ));
+                    if (root.optInt("formatVersion", 0) != 1) {
+                        throw new IOException("插件启用状态项目格式无效");
+                    }
+                    readPluginState(root, "builtIn");
+                    readPluginState(root, "external");
+                    incomingPluginState = root;
+                    pluginStateMode = selection.restoreMode;
+                } else if (option.kind == DataPackageArchive.ItemKind.HOST_PLUGIN_PACKAGE) {
+                    String expectedId = option.packagedPluginId();
+                    PluginImport pluginImport = readPluginPackage(readFileBytes(
+                            payload,
+                            HostMigrationArchive.MAX_PLUGIN_BYTES
+                    ));
+                    if (!expectedId.equals(pluginImport.descriptor.id)) {
+                        throw new IOException("插件包项目与插件 ID 不一致：" + expectedId);
+                    }
+                    if (isBuiltInPluginId(expectedId)) {
+                        throw new IOException("插件包 ID 与内置插件冲突：" + expectedId);
+                    }
+                    if (pluginImport.descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
+                        throw new IOException("插件要求更高版本应用：" + pluginImport.descriptor.title);
+                    }
+                    preflightPlugin(pluginImport);
+                    if (packageImports.put(expectedId, pluginImport) != null) {
+                        throw new IOException("重复选择插件包：" + expectedId);
+                    }
+                }
+            }
+
+            JSONObject previousHost = captureHostSettings();
+            Set<String> previousBuiltIns = builtInPluginStateStore.enabledIds();
+            Set<String> previousExternalEnabled = externalPluginStore.enabledIds();
+            Map<String, ExternalPluginStore.PluginState> previousPackages = new LinkedHashMap<>();
+            for (String pluginId : packageImports.keySet()) {
+                previousPackages.put(pluginId, externalPluginStore.snapshot(pluginId));
+            }
+            validateHostDataDependencies(incomingPluginState, pluginStateMode, packageImports);
+
+            JSONObject finalIncomingSettings = incomingSettings;
+            DatasetRestoreMode finalSettingsMode = settingsMode;
+            JSONObject finalPluginState = incomingPluginState;
+            DatasetRestoreMode finalPluginStateMode = pluginStateMode;
+            List<MigrationTransaction.Operation> operations = new ArrayList<>();
+            for (Map.Entry<String, PluginImport> entry : packageImports.entrySet()) {
+                String pluginId = entry.getKey();
+                PluginImport pluginImport = entry.getValue();
+                ExternalPluginStore.PluginState previous = previousPackages.get(pluginId);
+                boolean preserveEnabled = previous != null && previous.descriptor != null && previous.enabled;
+                operations.add(new MigrationTransaction.Operation() {
+                    @Override
+                    public void apply() throws IOException, JSONException {
+                        externalPluginStore.installPlugin(
+                                pluginImport.descriptor,
+                                pluginImport.codeBytes,
+                                "",
+                                "",
+                                "",
+                                false,
+                                0
+                        );
+                        externalPluginStore.confirmInstall(pluginId);
+                        externalPluginStore.setEnabled(pluginId, preserveEnabled);
+                    }
+
+                    @Override
+                    public void rollback() throws IOException, JSONException {
+                        externalPluginStore.restore(previous);
+                    }
+                });
+            }
+            if (finalPluginState != null) {
+                operations.add(new MigrationTransaction.Operation() {
+                    @Override
+                    public void apply() throws IOException {
+                        applyPluginState(finalPluginState, finalPluginStateMode);
+                    }
+
+                    @Override
+                    public void rollback() throws IOException {
+                        if (!builtInPluginStateStore.replaceEnabledIds(previousBuiltIns)) {
+                            throw new IOException("无法恢复内置插件状态");
+                        }
+                        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+                            externalPluginStore.setEnabled(
+                                    descriptor.id,
+                                    previousExternalEnabled.contains(descriptor.id)
+                            );
+                        }
+                    }
+                });
+            }
+            if (finalIncomingSettings != null) {
+                JSONObject target = finalSettingsMode == DatasetRestoreMode.MERGE
+                        ? mergeHostSettings(previousHost, finalIncomingSettings,
+                        referencedPluginIds(finalIncomingSettings))
+                        : finalIncomingSettings;
+                operations.add(new MigrationTransaction.Operation() {
+                    @Override
+                    public void apply() throws IOException {
+                        if (!applyHostSettings(target)) throw new IOException("无法保存应用设置");
+                    }
+
+                    @Override
+                    public void rollback() throws IOException {
+                        if (!applyHostSettings(previousHost)) throw new IOException("无法恢复应用设置");
+                    }
+                });
+            }
+            MigrationTransaction.execute(operations);
+        } catch (JSONException error) {
+            throw new IOException("应用数据项目无效", error);
+        }
+    }
+
+    private Map<String, Boolean> readPluginState(JSONObject root, String name) throws IOException {
+        JSONArray array = root.optJSONArray(name);
+        if (array == null) throw new IOException("插件启用状态缺少 " + name);
+        Map<String, Boolean> result = new LinkedHashMap<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = array.optJSONObject(index);
+            if (item == null) throw new IOException("插件启用状态记录无效");
+            String id = item.optString("id", "").trim();
+            if (!id.matches("[A-Za-z0-9._-]+") || result.put(id, item.optBoolean("enabled")) != null) {
+                throw new IOException("插件启用状态包含无效或重复 ID");
+            }
+        }
+        return result;
+    }
+
+    private void applyPluginState(JSONObject root, DatasetRestoreMode mode) throws IOException {
+        Map<String, Boolean> incomingBuiltIns = readPluginState(root, "builtIn");
+        Map<String, Boolean> incomingExternal = readPluginState(root, "external");
+        Set<String> knownBuiltIns = builtInPluginIds();
+        if (!knownBuiltIns.containsAll(incomingBuiltIns.keySet())) {
+            throw new IOException("插件启用状态包含未知内置插件");
+        }
+        Set<String> resultingBuiltIns = mode == DatasetRestoreMode.MERGE
+                ? new LinkedHashSet<>(builtInPluginStateStore.enabledIds())
+                : new LinkedHashSet<>();
+        for (Map.Entry<String, Boolean> entry : incomingBuiltIns.entrySet()) {
+            if (entry.getValue()) resultingBuiltIns.add(entry.getKey());
+            else resultingBuiltIns.remove(entry.getKey());
+        }
+        if (!builtInPluginStateStore.replaceEnabledIds(resultingBuiltIns)) {
+            throw new IOException("无法保存内置插件状态");
+        }
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            if (mode == DatasetRestoreMode.REPLACE || incomingExternal.containsKey(descriptor.id)) {
+                externalPluginStore.setEnabled(
+                        descriptor.id,
+                        incomingExternal.getOrDefault(descriptor.id, false)
+                );
+            }
+        }
+    }
+
+    private void validateHostDataDependencies(
+            JSONObject pluginState,
+            DatasetRestoreMode mode,
+            Map<String, PluginImport> packageImports
+    ) throws IOException {
+        Set<String> enabledBuiltIns = new LinkedHashSet<>(builtInPluginStateStore.enabledIds());
+        Set<String> enabledExternal = new LinkedHashSet<>(externalPluginStore.enabledIds());
+        if (pluginState != null) {
+            Map<String, Boolean> incomingBuiltIns = readPluginState(pluginState, "builtIn");
+            Map<String, Boolean> incomingExternal = readPluginState(pluginState, "external");
+            Set<String> knownBuiltIns = builtInPluginIds();
+            if (!knownBuiltIns.containsAll(incomingBuiltIns.keySet())) {
+                throw new IOException("插件启用状态包含未知内置插件");
+            }
+            if (mode == DatasetRestoreMode.REPLACE) {
+                enabledBuiltIns.clear();
+                enabledExternal.clear();
+            }
+            applyEnabledState(enabledBuiltIns, incomingBuiltIns);
+            applyEnabledState(enabledExternal, incomingExternal);
+        }
+
+        Map<String, ImportedPluginDescriptor> resultingExternal = new LinkedHashMap<>();
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            resultingExternal.put(descriptor.id, descriptor);
+        }
+        for (PluginImport pluginImport : packageImports.values()) {
+            resultingExternal.put(pluginImport.descriptor.id, pluginImport.descriptor);
+        }
+        enabledExternal.retainAll(resultingExternal.keySet());
+
+        Map<String, String> activeVersions = new LinkedHashMap<>();
+        List<ToolPlugin> builtIns = ToolRegistry.createBuiltInPlugins();
+        try {
+            for (ToolPlugin plugin : builtIns) {
+                if (enabledBuiltIns.contains(plugin.id())) {
+                    activeVersions.put(plugin.id(), plugin.version());
+                }
+            }
+            for (String pluginId : enabledExternal) {
+                ImportedPluginDescriptor descriptor = resultingExternal.get(pluginId);
+                if (descriptor != null) activeVersions.put(pluginId, descriptor.version);
+            }
+            for (ToolPlugin plugin : builtIns) {
+                if (enabledBuiltIns.contains(plugin.id())
+                        && !areDependenciesSatisfied(plugin.dependencies(), activeVersions)) {
+                    throw new IOException(plugin.title() + " 的依赖未满足");
+                }
+            }
+            for (String pluginId : enabledExternal) {
+                ImportedPluginDescriptor descriptor = resultingExternal.get(pluginId);
+                if (descriptor == null) continue;
+                for (String rawDependency : descriptor.dependencies) {
+                    PluginDependency dependency = PluginDependency.parse(rawDependency);
+                    if (!dependency.isSatisfied(activeVersions)) {
+                        throw new IOException(
+                                descriptor.title + " 缺少依赖 " + dependency.label()
+                        );
+                    }
+                }
+            }
+        } finally {
+            for (ToolPlugin plugin : builtIns) plugin.onDestroy();
+        }
+    }
+
+    private static void applyEnabledState(
+            Set<String> target,
+            Map<String, Boolean> incoming
+    ) {
+        for (Map.Entry<String, Boolean> entry : incoming.entrySet()) {
+            if (entry.getValue()) target.add(entry.getKey());
+            else target.remove(entry.getKey());
+        }
+    }
+
+    private Set<String> referencedPluginIds(JSONObject host) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (String key : Arrays.asList("hiddenTools", "toolOrder")) {
+            ids.addAll(jsonStrings(host.optJSONArray(key)));
+        }
+        for (String key : Arrays.asList("hiddenWidgets", "widgetOrder", "fullWidthWidgets", "widgetSizes")) {
+            for (String value : jsonStrings(host.optJSONArray(key))) {
+                int separator = value.indexOf(':');
+                if (separator > 0) ids.add(value.substring(0, separator));
+            }
+        }
+        return ids;
+    }
+
+    private List<MigrationBridgeManager.ImportSelection> resolveDataPackageOptionsAfterHost(
+            List<MigrationBridgeManager.ImportSelection> selected,
+            List<ToolPlugin> ownedPlugins
+    ) throws IOException {
+        List<ToolPlugin> candidates = new ArrayList<>();
+        for (ToolPlugin plugin : plugins) {
+            if (isBuiltInPluginId(plugin.id())) candidates.add(plugin);
+        }
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            ToolPlugin plugin = ExternalToolFactory.create(this, descriptor);
+            if (plugin != null) {
+                candidates.add(plugin);
+                ownedPlugins.add(plugin);
+            }
+        }
+        return MigrationBridgeManager.resolveDataPackageImportBridges(this, candidates, selected);
     }
 
     @Override
@@ -2516,6 +3128,81 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return pluginId == null ? null : importedDescriptorCache.get(pluginId);
     }
 
+    private List<MigrationBridgeManager.DatasetOption> createHostDataExportOptions(
+            List<ImportedPluginDescriptor> installedPlugins
+    ) throws JSONException {
+        List<MigrationBridgeManager.DatasetOption> result = new ArrayList<>();
+        result.add(MigrationBridgeManager.hostSettingsExportOption(
+                captureHostSettings().toString().getBytes(StandardCharsets.UTF_8).length
+        ));
+        result.add(MigrationBridgeManager.hostPluginStateExportOption(
+                capturePluginState().toString().getBytes(StandardCharsets.UTF_8).length
+        ));
+        for (ImportedPluginDescriptor descriptor : installedPlugins) {
+            long size = new File(descriptor.codePath).length() + 32L * 1024L;
+            result.add(MigrationBridgeManager.hostPluginPackageExportOption(
+                    descriptor.id,
+                    descriptor.title,
+                    size
+            ));
+        }
+        return result;
+    }
+
+    private JSONObject capturePluginState() throws JSONException {
+        JSONObject root = new JSONObject().put("formatVersion", 1);
+        JSONArray builtIns = new JSONArray();
+        Set<String> enabledBuiltIns = builtInPluginStateStore.enabledIds();
+        for (String id : builtInPluginIds()) {
+            builtIns.put(new JSONObject().put("id", id).put("enabled", enabledBuiltIns.contains(id)));
+        }
+        JSONArray external = new JSONArray();
+        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
+            external.put(new JSONObject()
+                    .put("id", descriptor.id)
+                    .put("enabled", externalPluginStore.isEnabled(descriptor.id)));
+        }
+        return root.put("builtIn", builtIns).put("external", external);
+    }
+
+    private void writeHostDataItem(
+            MigrationBridgeManager.DatasetOption option,
+            OutputStream output
+    ) throws IOException {
+        try {
+            if (option.kind == DataPackageArchive.ItemKind.HOST_SETTINGS) {
+                output.write(new JSONObject()
+                        .put("formatVersion", 1)
+                        .put("settings", captureHostSettings())
+                        .toString()
+                        .getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (option.kind == DataPackageArchive.ItemKind.HOST_PLUGIN_STATE) {
+                output.write(capturePluginState().toString().getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (option.kind == DataPackageArchive.ItemKind.HOST_PLUGIN_PACKAGE) {
+                String pluginId = option.packagedPluginId();
+                ImportedPluginDescriptor descriptor = null;
+                for (ImportedPluginDescriptor candidate : externalPluginStore.load()) {
+                    if (pluginId.equals(candidate.id)) {
+                        descriptor = candidate;
+                        break;
+                    }
+                }
+                if (descriptor == null) throw new IOException("插件包不存在：" + pluginId);
+                ByteArrayOutputStream packageOutput = new ByteArrayOutputStream();
+                writePluginPackage(packageOutput, descriptor);
+                output.write(packageOutput.toByteArray());
+                return;
+            }
+            throw new IOException("不支持的应用数据项目：" + option.descriptor.name);
+        } catch (JSONException error) {
+            throw new IOException("无法生成应用数据项目：" + option.descriptor.name, error);
+        }
+    }
+
     private HostMigrationArchive.Snapshot createMigrationSnapshot()
             throws IOException, JSONException {
         List<HostMigrationArchive.PluginEntry> entries = new ArrayList<>();
@@ -2614,84 +3301,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             HostMigrationArchive.Snapshot snapshot,
             List<PreparedMigrationPlugin> prepared
     ) {
-        List<ExternalPluginStore.PluginState> previousPlugins = new ArrayList<>();
-        JSONObject previousHost;
-        Set<String> previousBuiltIns = builtInPluginStateStore.enabledIds();
         try {
-            previousHost = captureHostSettings();
-            for (PreparedMigrationPlugin item : prepared) {
-                previousPlugins.add(externalPluginStore.snapshot(item.pluginImport.descriptor.id));
-            }
-        } catch (IOException | JSONException error) {
-            showToast("无法创建迁移回滚点：" + error.getMessage());
-            return;
-        }
-
-        try {
-            Set<String> migratedIds = builtInPluginIds();
-            for (PreparedMigrationPlugin item : prepared) {
-                migratedIds.add(item.pluginImport.descriptor.id);
-            }
-            JSONObject mergedHost = mergeHostSettings(previousHost, snapshot.host, migratedIds);
-
-            List<MigrationTransaction.Operation> operations = new ArrayList<>();
-            for (int index = 0; index < prepared.size(); index++) {
-                PreparedMigrationPlugin item = prepared.get(index);
-                ExternalPluginStore.PluginState previous = previousPlugins.get(index);
-                operations.add(new MigrationTransaction.Operation() {
-                    @Override
-                    public void apply() throws IOException, JSONException {
-                        ImportedPluginDescriptor descriptor = item.pluginImport.descriptor;
-                        externalPluginStore.installPlugin(
-                                descriptor,
-                                item.pluginImport.codeBytes,
-                                "",
-                                "",
-                                "",
-                                false,
-                                0
-                        );
-                        externalPluginStore.confirmInstall(descriptor.id);
-                        externalPluginStore.setEnabled(descriptor.id, item.enabled);
-                    }
-
-                    @Override
-                    public void rollback() throws IOException, JSONException {
-                        externalPluginStore.restore(previous);
-                    }
-                });
-            }
-            operations.add(new MigrationTransaction.Operation() {
-                @Override
-                public void apply() throws IOException {
-                    if (!builtInPluginStateStore.replaceEnabledIds(snapshot.builtInEnabledIds)) {
-                        throw new IOException("无法保存内置插件状态");
-                    }
-                }
-
-                @Override
-                public void rollback() throws IOException {
-                    if (!builtInPluginStateStore.replaceEnabledIds(previousBuiltIns)) {
-                        throw new IOException("无法恢复内置插件状态");
-                    }
-                }
-            });
-            operations.add(new MigrationTransaction.Operation() {
-                @Override
-                public void apply() throws IOException {
-                    if (!applyHostSettings(mergedHost)) {
-                        throw new IOException("无法保存应用设置");
-                    }
-                }
-
-                @Override
-                public void rollback() throws IOException {
-                    if (!applyHostSettings(previousHost)) {
-                        throw new IOException("无法恢复应用设置");
-                    }
-                }
-            });
-            MigrationTransaction.execute(operations);
+            applyMigrationOrThrow(snapshot, prepared);
             reloadPlugins(null);
             updateCatalog = null;
             checkForUpdates(true, false, false);
@@ -2705,6 +3316,83 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
+    private void applyMigrationOrThrow(
+            HostMigrationArchive.Snapshot snapshot,
+            List<PreparedMigrationPlugin> prepared
+    ) throws IOException, JSONException {
+        List<ExternalPluginStore.PluginState> previousPlugins = new ArrayList<>();
+        JSONObject previousHost = captureHostSettings();
+        Set<String> previousBuiltIns = builtInPluginStateStore.enabledIds();
+        for (PreparedMigrationPlugin item : prepared) {
+            previousPlugins.add(externalPluginStore.snapshot(item.pluginImport.descriptor.id));
+        }
+
+        Set<String> migratedIds = builtInPluginIds();
+        for (PreparedMigrationPlugin item : prepared) {
+            migratedIds.add(item.pluginImport.descriptor.id);
+        }
+        JSONObject mergedHost = mergeHostSettings(previousHost, snapshot.host, migratedIds);
+
+        List<MigrationTransaction.Operation> operations = new ArrayList<>();
+        for (int index = 0; index < prepared.size(); index++) {
+            PreparedMigrationPlugin item = prepared.get(index);
+            ExternalPluginStore.PluginState previous = previousPlugins.get(index);
+            operations.add(new MigrationTransaction.Operation() {
+                @Override
+                public void apply() throws IOException, JSONException {
+                    ImportedPluginDescriptor descriptor = item.pluginImport.descriptor;
+                    externalPluginStore.installPlugin(
+                            descriptor,
+                            item.pluginImport.codeBytes,
+                            "",
+                            "",
+                            "",
+                            false,
+                            0
+                    );
+                    externalPluginStore.confirmInstall(descriptor.id);
+                    externalPluginStore.setEnabled(descriptor.id, item.enabled);
+                }
+
+                @Override
+                public void rollback() throws IOException, JSONException {
+                    externalPluginStore.restore(previous);
+                }
+            });
+        }
+        operations.add(new MigrationTransaction.Operation() {
+            @Override
+            public void apply() throws IOException {
+                if (!builtInPluginStateStore.replaceEnabledIds(snapshot.builtInEnabledIds)) {
+                    throw new IOException("无法保存内置插件状态");
+                }
+            }
+
+            @Override
+            public void rollback() throws IOException {
+                if (!builtInPluginStateStore.replaceEnabledIds(previousBuiltIns)) {
+                    throw new IOException("无法恢复内置插件状态");
+                }
+            }
+        });
+        operations.add(new MigrationTransaction.Operation() {
+            @Override
+            public void apply() throws IOException {
+                if (!applyHostSettings(mergedHost)) {
+                    throw new IOException("无法保存应用设置");
+                }
+            }
+
+            @Override
+            public void rollback() throws IOException {
+                if (!applyHostSettings(previousHost)) {
+                    throw new IOException("无法恢复应用设置");
+                }
+            }
+        });
+        MigrationTransaction.execute(operations);
+    }
+
     private Set<String> builtInPluginIds() {
         LinkedHashSet<String> ids = new LinkedHashSet<>();
         for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
@@ -2715,6 +3403,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     private JSONObject captureHostSettings() throws JSONException {
         JSONObject host = new JSONObject();
+        host.put("theme", themePreferenceForUi());
+        host.put("color", colorPreferenceForUi());
+        host.put("autoCheckUpdates", autoCheckUpdatesForUi());
         host.put("pluginRepositoryChannel", pluginRepositoryChannelForUi());
         host.put("hiddenWidgets", strings(uiPreferences.getStringSet(
                 PREF_HIDDEN_WIDGETS, Collections.emptySet()
@@ -2739,6 +3430,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             Set<String> migratedIds
     ) throws JSONException {
         JSONObject merged = new JSONObject(current.toString());
+        merged.put("theme", incoming.optString("theme", current.optString("theme", "system")));
+        merged.put("color", incoming.optString("color", current.optString("color", "brand")));
+        merged.put("autoCheckUpdates", incoming.optBoolean(
+                "autoCheckUpdates",
+                current.optBoolean("autoCheckUpdates", true)
+        ));
         String channel = incoming.optString("pluginRepositoryChannel", UpdateCatalog.CHANNEL_RELEASE);
         merged.put(
                 "pluginRepositoryChannel",
@@ -2830,6 +3527,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private boolean applyHostSettings(JSONObject host) {
         SharedPreferences.Editor editor = uiPreferences.edit()
                 .putString(
+                        PREF_THEME,
+                        Arrays.asList("system", "light", "dark").contains(host.optString("theme"))
+                                ? host.optString("theme") : "system"
+                )
+                .putString(PREF_COLOR, "dynamic".equals(host.optString("color")) ? "dynamic" : "brand")
+                .putBoolean(PREF_AUTO_CHECK_UPDATES, host.optBoolean("autoCheckUpdates", true))
+                .putString(
                         PREF_PLUGIN_REPOSITORY_CHANNEL,
                         UpdateCatalog.CHANNEL_DEBUG.equals(
                                 host.optString("pluginRepositoryChannel")
@@ -2841,7 +3545,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 .putString(PREF_WIDGET_ORDER, String.join("\n", jsonStrings(host.optJSONArray("widgetOrder"))))
                 .putStringSet(PREF_FULL_WIDTH_WIDGETS, jsonStrings(host.optJSONArray("fullWidthWidgets")))
                 .putStringSet(PREF_WIDGET_SIZES, jsonStrings(host.optJSONArray("widgetSizes")));
-        return editor.commit();
+        boolean committed = editor.commit();
+        if (committed) syncSuiteThemePreferences();
+        return committed;
     }
 
     private static JSONArray strings(Set<String> values) {
@@ -2906,7 +3612,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         if (inputStream == null) {
             throw new IOException("无法读取插件文件");
         }
-        try (InputStream stream = inputStream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+        try (InputStream stream = inputStream) {
+            return readBytes(stream, limit);
+        }
+    }
+
+    private static byte[] readBytes(InputStream stream, int limit) throws IOException {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int read;
             while ((read = stream.read(buffer)) != -1) {
@@ -2916,6 +3628,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 output.write(buffer, 0, read);
             }
             return output.toByteArray();
+        }
+    }
+
+    private static byte[] readFileBytes(File file, int limit) throws IOException {
+        try (FileInputStream input = new FileInputStream(file)) {
+            return readBytes(input, limit);
         }
     }
 
