@@ -39,8 +39,8 @@ build/outputs/atsplugin/<plugin-name>.atsplugin
     "description": "这是一个示例插件。",
     "version": "1.0",
     "versionCode": 1,
-    "minHostVersionCode": 11,
-    "sdkVersion": "1.1.0",
+    "minHostVersionCode": 22,
+    "sdkVersion": "1.3.1",
     "author": "Local",
     "entryClass": "com.example.plugins.sample.SamplePlugin"
   },
@@ -87,7 +87,7 @@ build/outputs/atsplugin/<plugin-name>.atsplugin
 - 提供 public 无参构造方法。
 - 在 `plugin.entryClass` 中声明完整类名。
 
-插件工程只依赖已发布的 `com.androidtoolsuite:plugin-sdk:1.1.0` AAR，不依赖宿主的 `:app` 或本地 `:plugin-sdk` project。主体仓库可通过 `gradle :plugin-sdk:publishToMavenLocal` 发布 SDK，插件仓库随后可直接执行 `gradle packagePlugin`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
+插件工程只依赖已发布的 `com.androidtoolsuite:plugin-sdk:<version>` AAR，不依赖宿主的 `:app` 或本地 `:plugin-sdk` project。主体仓库可通过 `gradle :plugin-sdk:publishToMavenLocal` 发布 SDK，插件仓库随后可直接执行 `gradle packagePlugin`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
 
 ## 官方仓库与更新
 
