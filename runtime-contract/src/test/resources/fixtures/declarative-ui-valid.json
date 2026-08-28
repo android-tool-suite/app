@@ -1,0 +1,52 @@
+{
+  "$schema": "https://android-tool-suite.test/contracts/declarative-ui-v1.schema.json",
+  "formatVersion": 1,
+  "initialState": {
+    "session": {
+      "platform": "正在读取"
+    }
+  },
+  "queries": [
+    {
+      "id": "session",
+      "capability": "app",
+      "method": "app.getSession",
+      "payload": { "platform": { "$state": "session.platform" } },
+      "target": "session",
+      "required": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "refresh",
+      "capability": "app",
+      "method": "app.getSession",
+      "payload": {},
+      "target": "session",
+      "refresh": ["session"],
+      "successMessage": "状态已刷新"
+    }
+  ],
+  "body": {
+    "type": "column",
+    "gap": "large",
+    "children": [
+      {
+        "type": "section",
+        "title": "声明式工具",
+        "subtitle": "由宿主组件渲染",
+        "children": [
+          {
+            "type": "card",
+            "tone": "surface",
+            "children": [
+              { "type": "icon", "name": "check-circle", "tone": "success" },
+              { "type": "metric", "label": "平台", "value": { "path": "session.platform", "fallback": "未知" } },
+              { "type": "button", "label": "刷新", "action": "refresh", "style": "primary", "fullWidth": true }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

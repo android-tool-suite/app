@@ -1,0 +1,54 @@
+{
+  "$schema": "https://android-tool-suite.test/contracts/manifest-v3.schema.json",
+  "format": "ats-plugin",
+  "formatVersion": 3,
+  "plugin": {
+    "id": "sample_worker_capability",
+    "title": "Worker 能力示例",
+    "description": "普通插件使用受限 JavaScript Worker 提供并消费自定义 Capability。",
+    "version": "1.0.0",
+    "versionCode": 1,
+    "minHostVersionCode": 23,
+    "publisher": "android_tool_suite.samples",
+    "kind": "tool"
+  },
+  "platforms": ["android"],
+  "runtime": {
+    "ui": [
+      { "id": "main", "type": "declarative", "entry": "ui/main.json" }
+    ],
+    "background": [
+      {
+        "id": "echo-provider",
+        "type": "javascript-worker",
+        "entry": "workers/echo-provider.js",
+        "required": true,
+        "timeoutMs": 10000,
+        "maxHeapBytes": 8388608
+      }
+    ],
+    "providers": []
+  },
+  "requires": {
+    "plugins": [],
+    "capabilities": [
+      { "id": "sample.echo", "version": "^1.0.0", "optional": false, "scopes": {} }
+    ]
+  },
+  "provides": {
+    "capabilities": [
+      {
+        "id": "sample.echo",
+        "version": "1.0.0",
+        "workerEntry": "echo-provider",
+        "methods": ["sample.echo.call"]
+      }
+    ]
+  },
+  "contributes": {
+    "tools": [{ "id": "main", "uiEntry": "main" }],
+    "homeWidgets": []
+  },
+  "datasets": [],
+  "tasks": []
+}

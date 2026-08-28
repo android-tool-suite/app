@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 rootProject.name = "android-tool-suite"
 include ":app"
 include ":plugin-sdk"
+include ":runtime-contract"
+include ":trusted-shizuku-provider"

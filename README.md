@@ -1,6 +1,6 @@
 # Android Tool Suite
 
-Android Tool Suite 的主体应用仓库。宿主内置“插件管理”和 Shizuku 授权/绑定能力；每个外部插件均在自己的 Git 仓库中开发和发布，通过 `.atsplugin` 包导入宿主。
+Android Tool Suite 的主体应用仓库。宿主负责插件安装、统一声明式 UI、Capability 权限、数据、调度和最小平台 bootstrap；Host 组件树与 WebView 都是声明式 UI renderer。工具和全信任底层能力通过不同类型的 `.atsplugin` 包独立安装，Shizuku 授权界面与能力 Provider 都不再是内置插件。
 
 当前版本的新增特性、优化和问题修复见 [更新日志](CHANGELOG.md)。
 
@@ -11,43 +11,54 @@ Android Tool Suite 的主体应用仓库。宿主内置“插件管理”和 Shi
 1. 在手机上安装并启动 Shizuku。
 2. 用 Android Studio 打开本主体应用仓库。
 3. 构建并安装 `app` 模块。
-4. 打开 App，授予 Shizuku 权限。
-5. 在底部导航进入“主页”“插件”或“管理”。
-6. 在“插件管理 → 插件仓库”中选择正式或调试仓库，再为每个插件选择具体历史版本进行安装、升级或安全降级；也可以从同一页面导入本地 `.atsplugin`。
-7. 启用插件后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
-8. 可用搜索框按应用名、服务名或包名过滤列表。
-9. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
+4. 导入并启用受信签名的 `artifacts/shizuku-auth.atsplugin`，重启宿主使同包底层能力冷启动激活。
+5. 在管理页允许“管理 Shizuku 连接”，再打开该插件请求系统授权。
+6. 在底部导航进入“主页”“插件”或“管理”。
+7. 在“插件管理 → 插件仓库”中选择正式或调试仓库，再为每个插件选择具体历史版本进行安装、升级或安全降级；也可以从同一页面导入本地 `.atsplugin`。
+8. 启用插件后进入“无障碍授权”，在列表里选择你信任的无障碍服务，点击“启用”或“停用”。
+9. 可用搜索框按应用名、服务名或包名过滤列表。
+10. 可收藏常用服务；打开“启动时自动启用收藏服务”后，每次进入 App 会自动启用已收藏且仍安装的服务。
 
 ## 插件结构
 
-插件实现 `ToolPlugin` 接口。宿主内置插件在 `ToolRegistry.createRequiredBuiltInPlugins()` 中注册；外部插件通过包含 `manifest.json` 和 `plugin.apk` 的完整 `.atsplugin` 包安装，并由 `ExternalToolFactory` 加载可执行入口。
+Runtime v2 插件使用 format v3 清单。普通 Tool 统一声明 `ui/*.json`，由文档选择宿主组件树或隔离 WebView renderer，并且只能通过 Capability Router 使用获授权的能力。API1 `ToolPlugin`／`plugin.apk` 仅在迁移窗口内兼容。
 
 ```text
 app/src/main/java/com/androidtoolsuite/app/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
-  plugin/api/           插件 API：ToolPlugin、PluginHost、HomeWidget、依赖声明
+  plugin/v2/            V3 包、声明式 UI renderer、权限、Capability、数据与调度
+  plugin/api/           冻结的 API1 ToolPlugin 兼容接口
   plugin/store/         插件状态、外部插件清单存储
   plugin/runtime/       插件注册器和外部插件工厂
-  plugins/              宿主必须内置的插件实现
-    builtin/shizuku/    Shizuku 授权内置插件
-
 plugin-sdk/
   src/main/java/...     可发布的插件开发 SDK：API、清单模型、共享 UI 工具
+
+runtime-contract/
+  src/main/resources/   manifest、RPC、声明式 UI 与 Capability 单一契约源
+
+examples/runtime-v2/
+  hello-web/            Web Tool 示例
+  worker-capability/    普通插件用受限 Worker 提供自定义能力的示例
+  shizuku-auth/          合并 UI 与底层能力的全信任 Shizuku 插件
+trusted-shizuku-provider/
+  src/main/java/...      全信任底层能力实现，构建后装入 shizuku-auth 包
 ```
 
-统一工作区内的每个外部插件都是独立 Git 仓库：
+统一工作区内的三个领域插件仍是独立 Git 仓库：
 
 - `../plugins/accessibility-grant`：无障碍授权。
 - `../plugins/phigros-advisor`：Phigros Data Studio。
 - `../plugins/gacha-analysis`：跃迁与祈愿分析。
 
+`shizuku_auth` 当前随主体仓库维护，构建为一个签名的全信任 `.atsplugin`：同包包含声明式授权界面、主页组件和 Native Provider。宿主不会内置或自动启用它，原生能力在启用后的下一次冷启动激活。
+
 主体与各插件仓库之间没有 Gradle project 依赖：主体仓库发布版本化 SDK AAR，每个插件仓库按 Maven 坐标消费它。新增插件时应创建新的仓库，不加入主体仓库或其他插件仓库。
 
-需要 Shizuku shell 能力的插件可以通过 `PluginHost.runShellCommand(...)` 复用宿主已经绑定好的 Shizuku UserService。插件代码与宿主运行在同一进程，宿主不提供容易被绕过的插件级权限开关，因此只应安装可信插件。
+普通插件既能消费 Capability，也能通过受限 JavaScript Worker 提供自定义 Capability；Worker 的下游调用以提供者插件自己的身份重新检查声明和权限，不会继承消费者权限。需要宿主身份的系统交互才使用 `trusted-provider`，但它仍可拥有普通插件的 UI、主页组件、Worker 和工具贡献。`shizuku_auth` 通过最小宿主 bridge 注册 `shizuku.control`、`accessibility.manage`，宿主本身不再注册这些业务能力。普通插件的未授权调用会在 Router 被阻断；API1 与 `trusted-provider` 仍是同进程全信任代码，权限开关不能替代来源审核。插件私有数据空间是运行基础，不列入权限页面；完全信任插件自身也不显示无法生效的权限开关。
 
 ## 导入插件
 
-只支持导入完整 `.atsplugin` 插件包：包内必须同时包含 `manifest.json`、`plugin.apk`，清单还必须声明 `plugin.entryClass`。单个 JSON、只有说明信息的包以及缺少可执行入口的包都会被拒绝。插件默认停用，可以通过 `dependencies` 声明依赖；依赖未满足时不能启用，未启用的插件不会进入主页和工具列表。
+format v3 包必须包含 `manifest.json`、`META-INF/ats-integrity.json` 以及清单引用的 `web/`、`ui/`、`workers/` 或可选 `android/provider.apk`；Provider 包还必须有受信 publisher 签名。旧 format v1/v2 包继续要求 `plugin.apk`。插件默认停用，依赖未满足时不能启用；敏感 Capability 默认待用户决定。
 
 完整包格式与 SDK 接入方式见 `docs/plugin-package-format.md`。
 
@@ -73,7 +84,7 @@ gradle -p ..\plugins\phigros-advisor `
 
 说明：应用会在管理页明确提示同进程插件的信任边界。启用外部插件前，请确认插件来源和代码可信。
 
-工具页和主页小部件的显隐统一在“插件管理 → 界面管理”中按插件设置；每个插件只显示一次，并分别提供“工具页”和“主页”开关。隐藏只影响界面展示，不会停用插件。主页小部件和工具卡片都可以长按拖动，使用相同虚影预览松手后的落点，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。
+工具页、主页小部件、更新检查和 V2 Capability 权限统一在管理页的插件展开卡中设置。隐藏只影响界面展示，不会停用插件。主页小部件和工具卡片都可以长按拖动，使用相同虚影预览松手后的落点，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。
 
 ## 构建要求
 

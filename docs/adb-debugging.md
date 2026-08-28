@@ -17,6 +17,18 @@ $sdk = 'C:\Users\19635\AppData\Local\Android\Sdk'
 & "$sdk\emulator\emulator.exe" -avd Medium_Phone_API_36.1
 ```
 
+Runtime v2 的开发服务器仅存在于 Debug 构建，可手动设置或由 `ats dev --android` 管理：
+
+```powershell
+.\tools\adb-debug.ps1 -Command set-v2-dev-server `
+  -Plugin accessibility_grant `
+  -DevUrl http://127.0.0.1:8765/web/index.html
+.\tools\adb-debug.ps1 -Command clear-v2-dev-server -Plugin accessibility_grant
+```
+
+模拟器和实体设备都使用 `adb reverse` 后的 `127.0.0.1`，并由 Debug Host
+代理到插件 HTTPS 虚拟源；不要把远程地址或 dev 开关写入 Release 包。
+
 ## 图形界面与 ADB 并行调试
 
 图形界面和 ADB 可以同时使用。Emulator 窗口用于观察页面、手动点击和处理授权弹窗；ADB 用于安装、改变应用状态、抓取日志、读取 UI 树和执行可重复的自动化步骤。两者连接的是同一个虚拟设备，互不冲突。
@@ -48,7 +60,13 @@ $adb = "$sdk\platform-tools\adb.exe"
 
 # 保持窗口可见，同时用 ADB 查询和修改状态
 .\tools\adb-debug.ps1 -Command status
+.\tools\adb-debug.ps1 -Command import-plugin `
+  -PluginFile .\artifacts\shizuku-auth.atsplugin
 .\tools\adb-debug.ps1 -Command set-plugin-enabled -Plugin shizuku_auth -Enabled $true
+& $adb shell am force-stop com.androidtoolsuite.app.debug
+& $adb shell monkey -p com.androidtoolsuite.app.debug 1
+.\tools\adb-debug.ps1 -Command set-permission `
+  -Plugin shizuku_auth -Capability shizuku.control -Enabled $true
 
 # 观察实时日志；按 Ctrl+C 停止
 $appPid = (& $adb shell pidof com.androidtoolsuite.app.debug).Trim()
@@ -71,10 +89,14 @@ $appPid = (& $adb shell pidof com.androidtoolsuite.app.debug).Trim()
 & $adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh
 ```
 
-回到 Shizuku 图形界面确认服务已启动，再打开本项目应用完成授权。可用下面的命令回读连接状态：
+回到 Shizuku 图形界面确认服务已启动。导入并启用签名的 `shizuku-auth.atsplugin`，冷启动宿主
+使同包系统功能激活；完全信任的 Shizuku 插件自身不显示权限开关，直接打开该插件请求 Shizuku 授权。
+Provider 未激活前，同包 UI 不加载，管理页显示需要重启。
+可用下面的命令回读连接和插件权限状态：
 
 ```powershell
 .\tools\adb-debug.ps1 -Command status
+.\tools\adb-debug.ps1 -Command list-permissions -Plugin shizuku_auth
 ```
 
 应看到 `shizukuReady` 和 `shizukuPermission` 的状态；首次授权通常需要在模拟器窗口中确认。模拟器完全重启后，通常需要重新执行 Shizuku 的启动脚本。
@@ -117,22 +139,33 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | `help` | 无 | 返回协议和命令列表 |
 | `status` | 无 | 返回版本、SDK、Shizuku、组件和插件状态 |
 | `list-plugins` | 无 | 列出内置/外部插件、依赖和活动状态 |
-| `import-plugin` | `-PluginFile <本机文件>`，或 `-Path <收件箱相对路径>` | 导入包含清单和 APK 的完整 `.atsplugin`，默认停用 |
+| `import-plugin` | `-PluginFile <本机文件>`，或 `-Path <收件箱相对路径>`；开发中可追加 `-ReplaceSameVersion` | 导入完整 `.atsplugin`；同版本开发替换只在 Debug ADB 入口显式开启，仍使用原子 generation 切换并保留 Dataset |
 | `export-plugin` | `-Plugin <id> [-OutputFile <本机文件>]` | 导出外部插件包并通过 ADB 拉取到电脑 |
 | `delete-plugin` | `-Plugin <id>` | 删除外部插件；有已启用依赖方时拒绝 |
 | `set-plugin-enabled` | `-Plugin <id> -Enabled $true/$false` | 启停插件并校验依赖 |
+| `list-permissions` | `-Plugin <id>` | 列出 V2 插件声明的权限、scope、当前状态和有限审计 |
+| `set-permission` | `-Plugin <id> -Capability <id> -Enabled $true/$false` | Debug 构建中允许或撤销 V2 Capability |
 | `set-widget-visible` | `-Widget <plugin:id> -Visible $true/$false` | 显示或隐藏主页组件 |
 | `navigate` | `-Destination dashboard/plugins/manager/store/settings/about/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
-| `reset-state` | 无 | 删除外部插件，停用可选内置插件并恢复组件显示状态 |
+| `reset-state` | 无 | 删除外部插件和权限状态，并恢复组件显示状态 |
 
 完整例子：
 
 ```powershell
 .\tools\adb-debug.ps1 -Command import-plugin `
+  -PluginFile .\artifacts\shizuku-auth.atsplugin
+
+.\tools\adb-debug.ps1 -Command import-plugin `
   -PluginFile ..\plugins\accessibility-grant\artifacts\accessibility-grant.atsplugin
 
 .\tools\adb-debug.ps1 -Command set-plugin-enabled `
   -Plugin shizuku_auth -Enabled $true
+
+adb shell am force-stop com.androidtoolsuite.app.debug
+adb shell monkey -p com.androidtoolsuite.app.debug 1
+
+.\tools\adb-debug.ps1 -Command set-permission `
+  -Plugin shizuku_auth -Capability shizuku.control -Enabled $true
 
 .\tools\adb-debug.ps1 -Command export-plugin `
   -Plugin accessibility_grant -OutputFile .\artifacts\accessibility-grant-debug.atsplugin
@@ -162,6 +195,14 @@ adb shell am broadcast -W `
   -n "$pkg/.debug.DebugCommandReceiver" `
   --es command set-plugin-enabled `
   --es plugin shizuku_auth `
+  --ez enabled true
+
+adb shell am broadcast -W `
+  -a "$pkg.DEBUG_COMMAND" `
+  -n "$pkg/.debug.DebugCommandReceiver" `
+  --es command set-permission `
+  --es plugin shizuku_auth `
+  --es capability shizuku.control `
   --ez enabled true
 ```
 
@@ -220,5 +261,5 @@ adb exec-out screencap -p > screenshot.png
 - Receiver 位于 `app/src/debug`，不会进入 release 构建。
 - Receiver 要求系统 `android.permission.DUMP`；ADB shell 可调用，普通第三方应用不能调用。
 - 插件导入只接受应用私有 `files/debug-inbox` 下的相对路径，并限制为 64 MiB；导出只写应用专属外部目录。
-- 插件与宿主运行在同一进程，不存在可靠的插件级权限隔离；调试环境也只应导入可信插件。
+- 普通 V3 插件的 WebView／JavaScriptSandbox 代码不获得宿主对象，能力调用由 Router 强制授权；API1 与 `trusted-provider` 仍是同进程全信任原生代码，调试环境也只应导入可信来源。
 - 不提供任意命令执行接口；shell、文件和设备控制直接由 ADB 完成。

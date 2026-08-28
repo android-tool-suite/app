@@ -1,0 +1,20 @@
+{
+  "id": "accessibility.manage",
+  "version": "1.0.0",
+  "description": "列出无障碍服务并显式启用或停用服务，不暴露 raw shell。",
+  "permission": {
+    "mode": "user",
+    "risk": "restricted",
+    "title": "管理无障碍服务",
+    "description": "查看并修改设备上已安装无障碍服务的启用状态。"
+  },
+  "methods": {
+    "accessibility.listServices": { "params": { "type": "object" }, "result": { "type": "object", "required": ["services"] } },
+    "accessibility.setEnabled": {
+      "params": { "type": "object", "required": ["component", "enabled"] },
+      "result": { "type": "object", "required": ["enabled"] }
+    },
+    "accessibility.getConnection": { "params": { "type": "object" }, "result": { "type": "object", "required": ["state"] } }
+  },
+  "events": ["accessibility.connectionChanged", "accessibility.servicesChanged"]
+}

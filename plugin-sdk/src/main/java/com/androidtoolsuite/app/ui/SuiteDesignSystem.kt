@@ -1,6 +1,8 @@
 package com.androidtoolsuite.app.ui
 
 import android.app.Activity
+import android.content.Context
+import android.content.res.Configuration
 import android.os.Build
 import android.view.View
 import androidx.compose.foundation.background
@@ -31,10 +33,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 
 // 浅色档的容器色刻意压得比 Material 生成器给的更暗、更不饱和：
 // primaryContainer 会铺满主页顶部那张摘要卡，#9EF2E2 那种亮青在浅色背景上是整屏最刺眼的一块。
@@ -156,12 +160,7 @@ fun SuiteTheme(
     content: @Composable () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val scheme: ColorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme -> dynamicDarkColorScheme(context)
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
-        darkTheme -> DarkColors
-        else -> LightColors
-    }
+    val scheme = resolveSuiteColorScheme(context, darkTheme, dynamicColor)
     CompositionLocalProvider(
         LocalSuiteSemanticColors provides if (darkTheme) DarkSemanticColors else LightSemanticColors,
         LocalSuiteDarkTheme provides darkTheme,
@@ -183,6 +182,109 @@ fun SuiteTheme(
             ),
             content = content,
         )
+    }
+}
+
+private fun resolveSuiteColorScheme(context: Context, darkTheme: Boolean, dynamicColor: Boolean): ColorScheme = when {
+    dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme -> dynamicDarkColorScheme(context)
+    dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
+    darkTheme -> DarkColors
+    else -> LightColors
+}
+
+/**
+ * Web Tool 使用的同源 CSS token 快照。
+ *
+ * Android Runtime v2 从宿主虚拟源提供这段 CSS；Web Tool 只消费 token，不复制 Compose 色板，也不
+ * 自行读取系统主题覆盖宿主设置。主题改变时宿主创建新快照并发送 `app.themeChanged`。
+ */
+object SuiteWebTheme {
+    @JvmStatic
+    fun css(context: Context): String = css(
+        context,
+        SuiteThemePreferences.themePreference,
+        SuiteThemePreferences.colorPreference,
+    )
+
+    @JvmStatic
+    fun css(
+        context: Context,
+        themePreference: SuiteThemePreference,
+        colorPreference: SuiteColorPreference,
+    ): String {
+        val systemDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        val dark = when (themePreference) {
+            SuiteThemePreference.SYSTEM -> systemDark
+            SuiteThemePreference.LIGHT -> false
+            SuiteThemePreference.DARK -> true
+        }
+        val colors = resolveSuiteColorScheme(
+            context,
+            dark,
+            colorPreference == SuiteColorPreference.DYNAMIC,
+        )
+        val semantic = if (dark) DarkSemanticColors else LightSemanticColors
+        return buildString {
+            append(":root{color-scheme:")
+            append(if (dark) "dark" else "light")
+            append(';')
+            cssColor("primary", colors.primary)
+            cssColor("on-primary", colors.onPrimary)
+            cssColor("primary-container", colors.primaryContainer)
+            cssColor("on-primary-container", colors.onPrimaryContainer)
+            cssColor("secondary-container", colors.secondaryContainer)
+            cssColor("on-secondary-container", colors.onSecondaryContainer)
+            cssColor("background", colors.background)
+            cssColor("on-background", colors.onBackground)
+            cssColor("surface", colors.surface)
+            cssColor("on-surface", colors.onSurface)
+            cssColor("surface-low", colors.surfaceContainerLow)
+            cssColor("surface-container", colors.surfaceContainer)
+            cssColor("surface-high", colors.surfaceContainerHigh)
+            cssColor("surface-highest", colors.surfaceContainerHighest)
+            cssColor("on-surface-variant", colors.onSurfaceVariant)
+            cssColor("outline", colors.outline)
+            cssColor("outline-variant", colors.outlineVariant)
+            cssColor("error", colors.error)
+            cssColor("on-error", colors.onError)
+            cssColor("error-container", colors.errorContainer)
+            cssColor("on-error-container", colors.onErrorContainer)
+            cssColor("success", semantic.success)
+            cssColor("on-success", semantic.onSuccess)
+            cssColor("success-container", semantic.successContainer)
+            cssColor("on-success-container", semantic.onSuccessContainer)
+            cssColor("warning", semantic.warning)
+            cssColor("on-warning", semantic.onWarning)
+            cssColor("warning-container", semantic.warningContainer)
+            cssColor("on-warning-container", semantic.onWarningContainer)
+            cssColor("info", semantic.info)
+            cssColor("on-info", semantic.onInfo)
+            cssColor("info-container", semantic.infoContainer)
+            cssColor("on-info-container", semantic.onInfoContainer)
+            append("--ats-space-xs:4px;--ats-space-sm:8px;--ats-space-md:12px;")
+            append("--ats-space-lg:16px;--ats-space-xl:20px;--ats-space-xxl:24px;--ats-space-xxxl:32px;")
+            append("--ats-card-radius:24px;--ats-inner-radius:16px;--ats-chip-radius:12px;--ats-dialog-radius:28px;")
+            append("--ats-content-max-width:720px;--ats-font-family:system-ui,-apple-system,'Noto Sans SC',sans-serif;")
+            append("--ats-type-headline-large-size:32px;--ats-type-headline-large-line:40px;--ats-type-headline-large-weight:700;")
+            append("--ats-type-headline-small-size:24px;--ats-type-headline-small-line:32px;--ats-type-headline-small-weight:600;")
+            append("--ats-type-title-large-size:22px;--ats-type-title-large-line:28px;--ats-type-title-large-weight:600;")
+            append("--ats-type-title-medium-size:16px;--ats-type-title-medium-line:24px;--ats-type-title-medium-weight:600;")
+            append("--ats-type-body-large-size:16px;--ats-type-body-large-line:24px;--ats-type-body-large-weight:400;")
+            append("--ats-type-body-medium-size:14px;--ats-type-body-medium-line:20px;--ats-type-body-medium-weight:400;")
+            append("--ats-type-body-small-size:12px;--ats-type-body-small-line:16px;--ats-type-body-small-weight:400;")
+            append("--ats-type-label-large-size:14px;--ats-type-label-large-line:20px;--ats-type-label-large-weight:600;")
+            append("--ats-type-label-medium-size:12px;--ats-type-label-medium-line:16px;--ats-type-label-medium-weight:500;")
+            append('}')
+        }
+    }
+
+    private fun StringBuilder.cssColor(name: String, color: Color) {
+        append("--ats-")
+        append(name)
+        append(':')
+        append(String.format(Locale.ROOT, "#%06X", color.toArgb() and 0xFFFFFF))
+        append(';')
     }
 }
 

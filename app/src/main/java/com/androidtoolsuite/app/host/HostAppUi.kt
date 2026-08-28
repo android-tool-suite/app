@@ -155,6 +155,7 @@ import com.androidtoolsuite.app.migration.MigrationBridgeManager
 import com.androidtoolsuite.app.plugin.migration.DatasetCategory
 import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor
+import com.androidtoolsuite.app.plugin.v2.V2PluginPermissionManager
 import com.androidtoolsuite.app.ui.EmptyState
 import com.androidtoolsuite.app.ui.ErrorState
 import com.androidtoolsuite.app.ui.Notice
@@ -165,6 +166,7 @@ import com.androidtoolsuite.app.ui.SuiteSettingsRow
 import com.androidtoolsuite.app.ui.SuiteSettingsSwitchRow
 import com.androidtoolsuite.app.ui.SuiteShapes
 import com.androidtoolsuite.app.ui.SuiteSpacing
+import com.androidtoolsuite.app.ui.SuiteStatusChip
 import com.androidtoolsuite.app.ui.SuiteTheme
 import com.androidtoolsuite.app.ui.SuiteThemePreferences
 import com.androidtoolsuite.app.ui.SuiteTheming
@@ -312,6 +314,7 @@ private fun View.clearRequestedFrameRate() {
     updateRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT)
 }
 
+@androidx.annotation.RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 private fun View.updateRequestedFrameRate(rate: Float) {
     requestedFrameRate = rate
     if (this is ViewGroup) {
@@ -1351,11 +1354,15 @@ private fun PluginListCard(
 @Composable
 private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int, modifier: Modifier = Modifier) {
     hostRevision(activity)
-    PluginAndroidView(
+    val contentModifier = if (activity.isRuntimeV2ToolForUi(plugin)) {
         modifier
+    } else {
+        modifier.padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.sm)
+    }
+    PluginAndroidView(
+        contentModifier
             .semantics { stateDescription = "plugin-$refreshVersion" }
-            .fillMaxSize()
-            .padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.sm),
+            .fillMaxSize(),
     ) { plugin.createView(activity, activity) }
 }
 
@@ -1374,20 +1381,21 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
         item {
             Text("控制插件是否启用，以及在哪里显示。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        item { SectionHeader("系统工具") }
-        if (optionalBuiltIns.isEmpty()) item { EmptyState("没有可选系统工具", "核心应用能力会始终保持启用。") }
-        items(optionalBuiltIns, key = ToolPlugin::id) { plugin ->
-            ManagedPluginCard(
-                pluginId = plugin.id(),
-                title = plugin.title(),
-                version = plugin.version(),
-                icon = pluginIcon(plugin),
-                enabled = activity.isBuiltInPluginEnabled(plugin.id()),
-                loadedPlugin = activity.findToolForUi(plugin.id()),
-                refreshVersion = refreshVersion,
-                onEnabledChange = { activity.setBuiltInPluginEnabled(plugin.id(), it) },
-                activity = activity,
-            )
+        if (optionalBuiltIns.isNotEmpty()) {
+            item { SectionHeader("系统工具") }
+            items(optionalBuiltIns, key = ToolPlugin::id) { plugin ->
+                ManagedPluginCard(
+                    pluginId = plugin.id(),
+                    title = plugin.title(),
+                    version = plugin.version(),
+                    icon = pluginIcon(plugin),
+                    enabled = activity.isBuiltInPluginEnabled(plugin.id()),
+                    loadedPlugin = activity.findToolForUi(plugin.id()),
+                    refreshVersion = refreshVersion,
+                    onEnabledChange = { activity.setBuiltInPluginEnabled(plugin.id(), it) },
+                    activity = activity,
+                )
+            }
         }
         item { SectionHeader("已安装插件", "${imported.size} 个") }
         if (imported.isEmpty()) item { EmptyState("尚未安装插件", "可在仓库中安装，或导入本地插件包。") }
@@ -1403,7 +1411,10 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
                 onEnabledChange = { activity.setImportedPluginEnabled(descriptor.id, it) },
                 activity = activity,
                 removable = true,
-                loadFailed = activity.isImportedPluginEnabled(descriptor.id) && !activity.isPluginLoadedForUi(descriptor.id),
+                activationPending = activity.isRuntimeV2ActivationPendingForUi(descriptor.id),
+                loadFailed = activity.isImportedPluginEnabled(descriptor.id) &&
+                    !activity.isPluginLoadedForUi(descriptor.id) &&
+                    !activity.isRuntimeV2ActivationPendingForUi(descriptor.id),
             )
         }
     }
@@ -1422,21 +1433,29 @@ private fun ManagedPluginCard(
     onEnabledChange: (Boolean) -> Unit,
     removable: Boolean = false,
     loadFailed: Boolean = false,
+    activationPending: Boolean = false,
 ) {
     var expanded by remember(title) { mutableStateOf(false) }
     val hasHomeWidgets = enabled && loadedPlugin != null && activity.hasHomeWidgetsForUi(loadedPlugin)
     val toolVisible = loadedPlugin?.let(activity::isToolVisibleForUi) ?: false
     val homeVisible = loadedPlugin?.let(activity::isPluginHomeVisibleForUi) ?: false
+    val permissions = activity.pluginPermissionsForUi(pluginId)
+    val trustedProvider = activity.isTrustedProviderForUi(pluginId)
+    val visibilitySummary = when {
+        toolVisible && hasHomeWidgets && homeVisible -> "工具页 · 主页"
+        toolVisible -> "仅工具页"
+        hasHomeWidgets && homeVisible -> "仅主页"
+        else -> "已隐藏"
+    }
     val summary = buildString {
         append(
             when {
                 !enabled -> "v$version · 已停用"
-                toolVisible && hasHomeWidgets && homeVisible -> "v$version · 工具页 · 主页"
-                toolVisible -> "v$version · 仅工具页"
-                hasHomeWidgets && homeVisible -> "v$version · 仅主页"
-                else -> "v$version · 已隐藏"
+                activationPending -> "v$version · 等待重启激活"
+                else -> "v$version · $visibilitySummary"
             },
         )
+        if (enabled && trustedProvider) append(" · 完全信任")
         // 关掉更新检查是个容易忘的设置，收起时也得看得见。
         if (removable && !activity.isPluginUpdateCheckEnabledForUi(pluginId)) append(" · 不检查更新")
     }
@@ -1501,6 +1520,44 @@ private fun ManagedPluginCard(
                             )
                         }
                     }
+                    if (permissions.isNotEmpty()) {
+                        Text(
+                            "插件权限",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(top = SuiteSpacing.sm, bottom = SuiteSpacing.sm),
+                        )
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.md),
+                            shape = SuiteShapes.Inner,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Column {
+                                permissions.forEachIndexed { index, permission ->
+                                    PluginPermissionRow(
+                                        permission = permission,
+                                        scope = activity.pluginPermissionScopeForUi(permission),
+                                        onGrantedChange = {
+                                            activity.setPluginPermissionForUi(pluginId, permission.capabilityId, it)
+                                        },
+                                    )
+                                    if (index != permissions.lastIndex) HorizontalDivider()
+                                }
+                            }
+                        }
+                    } else if (trustedProvider) {
+                        Notice(
+                            "这是完全信任的系统插件。启用后，它可以直接使用本应用拥有的系统权限，无法逐项限制。其他插件使用它提供的系统功能时，仍需单独获得允许。",
+                            warning = true,
+                            modifier = Modifier.padding(bottom = SuiteSpacing.md),
+                        )
+                    } else if (removable && !activity.isRuntimeV2PluginForUi(pluginId)) {
+                        Notice(
+                            "此旧版插件可以直接使用应用拥有的功能，无法逐项限制。请只安装来源可信的版本。",
+                            warning = true,
+                            modifier = Modifier.padding(bottom = SuiteSpacing.md),
+                        )
+                    }
                     // 外部插件才有更新与删除；内置插件跟着应用走。
                     if (removable) {
                         VisibilitySwitch(
@@ -1522,7 +1579,7 @@ private fun ManagedPluginCard(
                             ) { Text("删除") }
                         }
                     }
-                    if (removable || loadedPlugin?.legacyDataBridge() != null) {
+                    if (activity.hasPluginDataForUi(pluginId, loadedPlugin)) {
                         Row(
                             Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.sm),
                             horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
@@ -1591,7 +1648,7 @@ private fun PluginRepositoryScreen(
         AlertDialog(
             onDismissRequest = { showRisk = false; activity.acknowledgeStoreRiskForUi() },
             title = { Text("安装可信插件") },
-            text = { Text("插件拥有与本应用相同的权限，请只安装可信来源的插件。") },
+            text = { Text("新版插件只能使用你允许的功能；旧版插件和完全信任的系统插件仍需确认来源可靠。") },
             confirmButton = {
                 TextButton(onClick = { showRisk = false; activity.acknowledgeStoreRiskForUi() }) { Text("知道了") }
             },
@@ -2483,6 +2540,54 @@ private fun MigrationBridgeExportDialog(activity: MainActivity) {
     }
 }
 
+@Composable
+private fun PluginPermissionRow(
+    permission: V2PluginPermissionManager.Permission,
+    scope: String,
+    onGrantedChange: (Boolean) -> Unit,
+) {
+    val granted = permission.state == V2PluginPermissionManager.State.GRANTED
+    val stateLabel = when {
+        permission.state == V2PluginPermissionManager.State.GRANTED -> "已允许"
+        permission.state == V2PluginPermissionManager.State.DENIED -> "已拒绝"
+        else -> "待决定"
+    }
+    val riskLabel = when (permission.risk) {
+        "restricted" -> "敏感操作"
+        "sensitive" -> "需授权"
+        else -> stateLabel
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
+                Text(permission.title, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                SuiteStatusChip(
+                    text = if (permission.risk == "normal") stateLabel else "$riskLabel · $stateLabel",
+                    positive = granted && permission.risk != "restricted",
+                )
+            }
+            Text(
+                permission.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(scope, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (permission.optional) {
+                Text("可选权限；拒绝后插件仍可使用其他功能。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Switch(
+            checked = granted,
+            onCheckedChange = onGrantedChange,
+            enabled = true,
+        )
+    }
+}
+
 private fun exportDatasetIsSensitive(option: MigrationBridgeManager.DatasetOption): Boolean =
     option.descriptor.sensitive || option.descriptor.category == DatasetCategory.SECRET
 
@@ -2728,7 +2833,7 @@ private fun MigrationBridgeDeleteDialog(activity: MainActivity) {
         title = { Text("删除插件数据") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
-                Notice("删除不可撤销。选择被其他 Dataset 依赖的数据时，相关数据会自动一并选中。", warning = true)
+                Notice("删除不可撤销。选择被其他数据项目依赖的内容时，相关数据会自动一并选中。", warning = true)
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 350.dp)) {
                     grouped.forEach { (ownerId, ownerOptions) ->
                         item(key = "delete-owner-$ownerId") {

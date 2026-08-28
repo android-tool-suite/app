@@ -1,0 +1,21 @@
+{
+  "contractVersion": "2.0.0",
+  "packageFormatVersion": 3,
+  "rpcProtocol": "2.0",
+  "schemas": {
+    "manifest": "manifest-v3.schema.json",
+    "rpc": "rpc-v2.schema.json",
+    "declarativeUi": "declarative-ui-v1.schema.json"
+  },
+  "capabilities": [
+    "capabilities/app-1.json",
+    "capabilities/storage-1.json",
+    "capabilities/scheduler-1.json",
+    "capabilities/network-request-1.json",
+    "capabilities/file-import-1.json",
+    "capabilities/clipboard-1.json",
+    "capabilities/notification-1.json",
+    "capabilities/accessibility-manage-1.json",
+    "capabilities/shizuku-control-1.json"
+  ]
+}

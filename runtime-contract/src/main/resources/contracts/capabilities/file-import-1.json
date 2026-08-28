@@ -1,0 +1,18 @@
+{
+  "id": "file.import",
+  "version": "1.0.0",
+  "description": "通过系统选择器导入受 scope 限制的文件。",
+  "permission": {
+    "mode": "user",
+    "risk": "sensitive",
+    "title": "读取所选文件",
+    "description": "在你主动选择后读取符合类型和大小限制的文件。"
+  },
+  "methods": {
+    "file.import.pick": {
+      "params": { "type": "object", "required": ["mimeTypes"] },
+      "result": { "type": "object", "required": ["files"] }
+    }
+  },
+  "events": []
+}

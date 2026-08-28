@@ -1,5 +1,37 @@
 # 更新日志
 
+## 1.7.0（2026-08-28）
+
+### 新增特性
+
+- 交付 Runtime v2 format v3：严格插件清单、确定性完整性清单、原子 generation 安装／回滚、版本化 RPC、TypeScript SDK 与 Capability Router。
+- UI contribution 统一使用 `ui/*.json` 声明式文档；Host 组件树与隔离 WebView 是两种 renderer，共用设计 token、状态外壳、权限与生命周期，旧 `runtime.ui.type=web` 只保留读取兼容。
+- 新增按插件管理的 Capability 权限：基础会话与私有存储自动允许，敏感能力默认待决定；授权绑定 scope 指纹，扩大范围后重新确认，撤销会阻止新调用、取消在途调用并停止相关后台任务。
+- 普通插件可通过必需的 JavaScript Worker 提供自定义 Capability；Worker 的下游调用以提供者插件身份重新授权，不获得宿主身份。
+- 新增 WorkManager 持久调度、API 24+ provider-task 与 API 26+ JavaScriptSandbox worker；任务具备约束、超时、重试、并发租约和持久历史。
+- 新增宿主管理的 KV／blob、Keystore AES-GCM SecretStore、Dataset chunk API 与 staging generation 原子切换，并接入统一 `.atsbackup` v3 数据管理。
+- 提供 Runtime v2 CLI、契约生成、WebView／Host UI 与 Worker Capability 示例及 ADB 调试入口；Runtime Contract 首版为 `2.0.0`，插件 SDK 提升到 `1.4.0`。
+
+### 架构调整
+
+- 普通包禁止声明或夹带 Native Provider；必须以宿主身份与系统交互的插件使用签名的 `trusted-provider`，但仍可同时贡献 UI、主页组件、Worker 与普通 Tool 功能，管理页明确显示完全信任边界。
+- `shizuku_auth` 从内置插件改为单个独立 `1.0.0 (1)` 全信任 V3 包：同包注册 `shizuku.control` 与 `accessibility.manage`，并用声明式 UI 查看连接、请求系统授权和连接 UserService；宿主只保留 Android manifest、UserService 与 Binder 生命周期要求的最小 bridge。
+- API1 与 Runtime v2 插件使用统一迭代依赖装载；旧备份中的内置 `shizuku_auth` 启用状态可映射到同 ID 外部包。
+- 旧版插件升级为同 ID format v3 包时，宿主会先导出并校验兼容 Dataset，再切换插件记录；失败恢复旧插件，旧偏好数据继续保留以便回滚。
+
+### 安全与兼容性
+
+- WebView 禁止远程导航、任意网络、文件访问、Cookie 与 DOM Storage，使用精确来源消息监听和 CSP；普通插件未声明或未授权的能力调用会在 Provider 执行前被拒绝。
+- `trusted-provider` 必须通过 publisher 信任根签名验证；API1 与全信任 Provider 的原生代码不受普通插件权限开关约束。
+- 权限页面只列出用户可以决定的权限：插件私有数据空间不再作为不可关闭的“权限”展示，完全信任插件自身也不再显示或接受权限开关。
+- Shizuku 的 Binder、授权及系统服务连接变化会通知全部插件和主页组件，冷启动停留在主页时也能自动刷新最终状态；系统服务意外退出后会自动重新连接。
+- WebView renderer 新增与 Compose 对齐的字体层级 token，Host 声明式 renderer 新增受限共享图标节点；Shizuku 工具页恢复状态图标、标题说明和并排操作的统一卡片结构。
+- 主页小部件移除重复的“已就绪”标签，异常时才显示“需处理”；全信任 Provider 使用绿色强调背景，普通插件保留原有浅色背景，Shizuku 顶部说明改回通用中性提示色。
+- Debug ADB 导入支持显式同版本开发替换，便于不占用正式版本号地复核 UI；正式安装入口仍拒绝同 `versionCode` 异包，替换过程不删除插件 Dataset。
+- 最低 Android 版本保持 API 24；JavaScript worker 在 API 26 与 WebView 能力双重检查后启用，不用隐藏 WebView 模拟后台执行。
+- 宿主 versionCode 仅从 22 提升到 23；Phigros 与抽卡分析继续保留 API1 兼容实现，本版本不提前迁移其业务 UI。
+- API1 与 Migration Bridge 按既定双稳定版本和 90 天回滚窗口保留，只接受迁移与兼容修复。
+
 ## 1.6.1（2026-08-21）
 
 ### 新增特性

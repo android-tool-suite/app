@@ -1,0 +1,18 @@
+{
+  "id": "scheduler",
+  "version": "1.0.0",
+  "description": "持久后台任务的注册、立即运行、取消与历史查询。",
+  "permission": {
+    "mode": "user",
+    "risk": "sensitive",
+    "title": "后台运行",
+    "description": "允许插件按清单中的条件在后台执行任务。"
+  },
+  "methods": {
+    "scheduler.register": { "params": { "type": "object", "required": ["taskId"] }, "result": { "type": "object" } },
+    "scheduler.runNow": { "params": { "type": "object", "required": ["taskId"] }, "result": { "type": "object" } },
+    "scheduler.cancel": { "params": { "type": "object", "required": ["taskId"] }, "result": { "type": "object" } },
+    "scheduler.lastRun": { "params": { "type": "object", "required": ["taskId"] }, "result": { "type": "object" } }
+  },
+  "events": ["scheduler.runChanged"]
+}

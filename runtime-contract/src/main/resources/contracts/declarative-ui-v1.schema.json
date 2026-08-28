@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://android-tool-suite.test/contracts/declarative-ui-v1.schema.json",
+  "title": "Android Tool Suite Declarative UI v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "body"],
+  "properties": {
+    "$schema": { "type": "string", "maxLength": 256 },
+    "formatVersion": { "const": 1 },
+    "initialState": { "type": "object", "maxProperties": 64 },
+    "queries": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/query" }
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "body": {
+      "oneOf": [
+        { "$ref": "#/$defs/node" },
+        { "$ref": "#/$defs/webviewNode" }
+      ]
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    "capabilityId": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    "statePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*){0,7}$"
+    },
+    "textValue": {
+      "oneOf": [
+        { "type": "string", "maxLength": 320 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "$ref": "#/$defs/statePath" },
+            "fallback": { "type": "string", "maxLength": 320 }
+          }
+        }
+      ]
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "equals"],
+      "properties": {
+        "path": { "$ref": "#/$defs/statePath" },
+        "equals": { "type": ["string", "number", "boolean", "null"] }
+      }
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "capability", "method", "target", "required"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "capability": { "$ref": "#/$defs/capabilityId" },
+        "method": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "payload": { "type": "object", "maxProperties": 64 },
+        "target": { "$ref": "#/$defs/statePath" },
+        "required": { "type": "boolean" },
+        "deadlineMs": { "type": "integer", "minimum": 1000, "maximum": 600000 }
+      }
+    },
+    "confirm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "body", "confirmLabel"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "confirmLabel": { "type": "string", "minLength": 1, "maxLength": 40 }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "capability", "method"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "capability": { "$ref": "#/$defs/capabilityId" },
+        "method": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "payload": { "type": "object", "maxProperties": 64 },
+        "target": { "$ref": "#/$defs/statePath" },
+        "refresh": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "successMessage": { "type": "string", "maxLength": 160 },
+        "confirm": { "$ref": "#/$defs/confirm" },
+        "deadlineMs": { "type": "integer", "minimum": 1000, "maximum": 600000 }
+      }
+    },
+    "node": {
+      "oneOf": [
+        { "$ref": "#/$defs/containerNode" },
+        { "$ref": "#/$defs/sectionNode" },
+        { "$ref": "#/$defs/textNode" },
+        { "$ref": "#/$defs/iconNode" },
+        { "$ref": "#/$defs/metricNode" },
+        { "$ref": "#/$defs/noticeNode" },
+        { "$ref": "#/$defs/buttonNode" },
+        { "$ref": "#/$defs/stateNode" },
+        { "$ref": "#/$defs/dividerNode" },
+        { "$ref": "#/$defs/spacerNode" }
+      ]
+    },
+    "webviewNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "entry"],
+      "properties": {
+        "type": { "const": "webview" },
+        "entry": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 240,
+          "pattern": "^web/(?!.*(?:^|/)\\.{1,2}(?:/|$)).+\\.html$"
+        }
+      }
+    },
+    "containerNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "children"],
+      "properties": {
+        "type": { "enum": ["column", "row", "card"] },
+        "children": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/node" } },
+        "gap": { "enum": ["small", "medium", "large"] },
+        "tone": { "enum": ["surface", "primary", "success", "warning", "danger", "info"] },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "sectionNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "children"],
+      "properties": {
+        "type": { "const": "section" },
+        "title": { "$ref": "#/$defs/textValue" },
+        "subtitle": { "$ref": "#/$defs/textValue" },
+        "children": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/node" } },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "textNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "enum": ["text", "status"] },
+        "value": { "$ref": "#/$defs/textValue" },
+        "style": { "enum": ["headline", "title", "body", "supporting", "label"] },
+        "tone": { "enum": ["default", "primary", "muted", "success", "warning", "danger", "info"] },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "iconNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "const": "icon" },
+        "name": { "enum": ["check-circle", "cloud-off"] },
+        "tone": { "enum": ["default", "primary", "muted", "success", "warning", "danger", "info"] },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "metricNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "label", "value"],
+      "properties": {
+        "type": { "const": "metric" },
+        "label": { "$ref": "#/$defs/textValue" },
+        "value": { "$ref": "#/$defs/textValue" },
+        "supporting": { "$ref": "#/$defs/textValue" },
+        "tone": { "enum": ["default", "primary", "success", "warning", "danger", "info"] },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "noticeNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "notice" },
+        "value": { "$ref": "#/$defs/textValue" },
+        "tone": { "enum": ["neutral", "info", "success", "warning", "danger"] },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "buttonNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "label", "action"],
+      "properties": {
+        "type": { "const": "button" },
+        "label": { "$ref": "#/$defs/textValue" },
+        "action": { "$ref": "#/$defs/id" },
+        "style": { "enum": ["primary", "secondary", "text"] },
+        "fullWidth": { "type": "boolean" },
+        "enabledWhen": { "$ref": "#/$defs/condition" },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "stateNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "variant", "title"],
+      "properties": {
+        "type": { "const": "state" },
+        "variant": { "enum": ["loading", "empty", "error"] },
+        "title": { "$ref": "#/$defs/textValue" },
+        "body": { "$ref": "#/$defs/textValue" },
+        "action": { "$ref": "#/$defs/id" },
+        "actionLabel": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "when": { "$ref": "#/$defs/condition" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["action"] },
+          "then": { "required": ["actionLabel"] }
+        }
+      ]
+    },
+    "dividerNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "divider" },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "spacerNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "spacer" },
+        "size": { "enum": ["small", "medium", "large"] },
+        "when": { "$ref": "#/$defs/condition" }
+      }
+    }
+  }
+}

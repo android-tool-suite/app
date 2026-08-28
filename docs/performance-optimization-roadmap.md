@@ -55,8 +55,8 @@
 
 ### 主线程与插件生命周期
 
-- 对 `loadPlugins`、清单读取、DexClassLoader、插件构造、`createHomeWidgets`、仓库 JSON 解析和签名校验分别打点。
-- 不改变同进程可信插件模型的前提下，把磁盘读取、哈希、JSON 解析等可移出的工作放到后台；UI 对象创建和插件要求主线程的回调仍留在主线程。
+- 对 `loadPlugins`、V3 清单／权限恢复、声明式文档解析、WebView 首建、API1 DexClassLoader、Native Provider、`createHomeWidgets`、仓库 JSON 和签名校验分别打点。
+- 把磁盘读取、哈希和 JSON 解析等可移出的工作放到后台；声明式 Compose 节点、WebView 和 API1 View 的最终创建仍遵守主线程要求。API1/Provider 的同进程信任边界与 Web/声明式 Capability 权限要分别标注。
 - 插件安装后当前实现会完整销毁并重建插件集合。测量后再决定是否能安全地做增量替换；在依赖关系、回滚和插件生命周期没有明确契约前，不先做局部热更新。
 
 ### Pager、列表与绘制

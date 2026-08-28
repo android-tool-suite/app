@@ -1,0 +1,20 @@
+{
+  "id": "app",
+  "version": "1.0.0",
+  "description": "宿主会话、主题、外部打开与可见 UI 生命周期。",
+  "permission": {
+    "mode": "implicit",
+    "risk": "normal",
+    "title": "应用交互",
+    "description": "读取当前会话和主题，并响应你在工具中的导航操作。"
+  },
+  "methods": {
+    "app.getSession": { "params": { "type": "object" }, "result": { "type": "object" } },
+    "app.openExternal": {
+      "params": { "type": "object", "required": ["url"], "properties": { "url": { "type": "string" } } },
+      "result": { "type": "object", "required": ["opened"], "properties": { "opened": { "type": "boolean" } } }
+    },
+    "app.close": { "params": { "type": "object" }, "result": { "type": "object" } }
+  },
+  "events": ["app.themeChanged", "app.containerChanged", "app.visibilityChanged", "app.permissionsChanged"]
+}

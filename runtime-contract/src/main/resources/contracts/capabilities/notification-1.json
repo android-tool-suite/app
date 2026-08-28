@@ -1,0 +1,16 @@
+{
+  "id": "notification",
+  "version": "1.0.0",
+  "description": "按用户同意和 channel scope 发布通知。",
+  "permission": {
+    "mode": "user",
+    "risk": "sensitive",
+    "title": "发送通知",
+    "description": "使用插件声明的通知类别显示或取消通知。"
+  },
+  "methods": {
+    "notification.post": { "params": { "type": "object", "required": ["channel", "title"] }, "result": { "type": "object" } },
+    "notification.cancel": { "params": { "type": "object", "required": ["id"] }, "result": { "type": "object" } }
+  },
+  "events": []
+}

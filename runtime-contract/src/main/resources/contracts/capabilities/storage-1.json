@@ -1,0 +1,33 @@
+{
+  "id": "storage",
+  "version": "1.0.0",
+  "description": "按 pluginId 和 generation 隔离的 KV、blob 与事务存储。",
+  "permission": {
+    "mode": "implicit",
+    "risk": "normal",
+    "title": "插件数据",
+    "description": "只读写此插件自己的设置、文件、凭据和数据集。"
+  },
+  "methods": {
+    "storage.kv.get": { "params": { "type": "object", "required": ["key"] }, "result": {} },
+    "storage.kv.set": { "params": { "type": "object", "required": ["key", "value"] }, "result": { "type": "object" } },
+    "storage.kv.delete": { "params": { "type": "object", "required": ["key"] }, "result": { "type": "object" } },
+    "storage.blob.openRead": { "params": { "type": "object", "required": ["id"] }, "result": { "type": "object" } },
+    "storage.blob.openWrite": { "params": { "type": "object", "required": ["id"] }, "result": { "type": "object" } },
+    "storage.blob.read": { "params": { "type": "object", "required": ["handle", "offset", "maxBytes"] }, "result": { "type": "object" } },
+    "storage.blob.write": { "params": { "type": "object", "required": ["handle", "bytes"] }, "result": { "type": "object" } },
+    "storage.blob.close": { "params": { "type": "object", "required": ["handle"] }, "result": { "type": "object" } },
+    "storage.blob.delete": { "params": { "type": "object", "required": ["id"] }, "result": { "type": "object" } },
+    "storage.secret.get": { "params": { "type": "object", "required": ["datasetId", "key"] }, "result": { "type": "object" } },
+    "storage.secret.set": { "params": { "type": "object", "required": ["datasetId", "key", "value"] }, "result": { "type": "object" } },
+    "storage.secret.delete": { "params": { "type": "object", "required": ["datasetId", "key"] }, "result": { "type": "object" } },
+    "storage.dataset.openRead": { "params": { "type": "object", "required": ["datasetId"] }, "result": { "type": "object" } },
+    "storage.dataset.openWrite": { "params": { "type": "object", "required": ["datasetId"] }, "result": { "type": "object" } },
+    "storage.dataset.read": { "params": { "type": "object", "required": ["handle", "offset", "maxBytes"] }, "result": { "type": "object" } },
+    "storage.dataset.write": { "params": { "type": "object", "required": ["handle", "bytes"] }, "result": { "type": "object" } },
+    "storage.dataset.commit": { "params": { "type": "object", "required": ["handle"] }, "result": { "type": "object" } },
+    "storage.dataset.abort": { "params": { "type": "object", "required": ["handle"] }, "result": { "type": "object" } },
+    "storage.dataset.delete": { "params": { "type": "object", "required": ["datasetId"] }, "result": { "type": "object" } }
+  },
+  "events": []
+}

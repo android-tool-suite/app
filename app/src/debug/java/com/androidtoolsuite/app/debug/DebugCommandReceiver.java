@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 
 import com.androidtoolsuite.app.BuildConfig;
 import android.content.pm.PackageInfo;
@@ -19,6 +20,12 @@ import com.androidtoolsuite.app.plugin.runtime.ExternalToolFactory;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
+import com.androidtoolsuite.app.plugin.v2.V2PackageStore;
+import com.androidtoolsuite.app.plugin.v2.V2CapabilityRouter;
+import com.androidtoolsuite.app.plugin.v2.V2PluginPackageArchive;
+import com.androidtoolsuite.app.plugin.v2.V2PluginPermissionManager;
+import com.androidtoolsuite.app.plugin.v2.V2RuntimeProcess;
+import com.androidtoolsuite.runtime.contract.RuntimePluginManifest;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -36,6 +43,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -81,7 +89,11 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             case "list-plugins":
                 return listPlugins(context);
             case "import-plugin":
-                return importPlugin(context, requiredString(intent, "path"));
+                return importPlugin(
+                        context,
+                        requiredString(intent, "path"),
+                        intent.getBooleanExtra("replace_same_version", false)
+                );
             case "export-plugin":
                 return exportPlugin(
                         context,
@@ -104,6 +116,23 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                 );
             case "reset-state":
                 return resetState(context);
+            case "set-v2-dev-server":
+                return setV2DevServer(
+                        context,
+                        requiredString(intent, "plugin"),
+                        requiredString(intent, "url")
+                );
+            case "list-permissions":
+                return listPermissions(context, requiredString(intent, "plugin"));
+            case "set-permission":
+                return setPermission(
+                        context,
+                        requiredString(intent, "plugin"),
+                        requiredString(intent, "capability"),
+                        requiredBoolean(intent, "enabled")
+                );
+            case "clear-v2-dev-server":
+                return clearV2DevServer(context, requiredString(intent, "plugin"));
             default:
                 throw new IllegalArgumentException("未知命令：" + command + "；使用 help 查看命令列表");
         }
@@ -123,8 +152,12 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         commands.put(command("export-plugin", "plugin", "path"));
         commands.put(command("delete-plugin", "plugin"));
         commands.put(command("set-plugin-enabled", "plugin", "enabled:boolean"));
+        commands.put(command("list-permissions", "plugin"));
+        commands.put(command("set-permission", "plugin", "capability", "enabled:boolean"));
         commands.put(command("set-widget-visible", "widget", "visible:boolean"));
         commands.put(command("reset-state"));
+        commands.put(command("set-v2-dev-server", "plugin", "url"));
+        commands.put(command("clear-v2-dev-server", "plugin"));
         result.put("commands", commands);
         return result;
     }
@@ -144,7 +177,38 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         result.put("shizukuPermission", hasShizukuPermission());
         result.put("hiddenWidgets", new JSONArray(hiddenWidgets(context)));
         result.put("plugins", listPlugins(context).getJSONArray("plugins"));
+        result.put("runtimeV2DevServers", new JSONObject(
+                context.getSharedPreferences("runtime_v2_dev_servers", Context.MODE_PRIVATE).getAll()
+        ));
         return result;
+    }
+
+    private JSONObject setV2DevServer(Context context, String pluginId, String rawUrl) throws Exception {
+        if (V2RuntimeProcess.get(context).packages().find(pluginId) == null) {
+            throw new IllegalArgumentException("Runtime v2 插件不存在：" + pluginId);
+        }
+        Uri url = Uri.parse(rawUrl);
+        String host = clean(url.getHost()).toLowerCase(java.util.Locale.ROOT);
+        if (!"http".equals(url.getScheme())
+                || !("127.0.0.1".equals(host) || "localhost".equals(host) || "10.0.2.2".equals(host))
+                || url.getPort() < 1 || url.getUserInfo() != null || url.getFragment() != null) {
+            throw new IllegalArgumentException("dev URL 必须是带端口的 Android 调试回环地址");
+        }
+        if (!context.getSharedPreferences("runtime_v2_dev_servers", Context.MODE_PRIVATE)
+                .edit().putString(pluginId, url.toString()).commit()) {
+            throw new IOException("无法保存 Runtime v2 dev server");
+        }
+        notifyStateChanged(context);
+        return new JSONObject().put("plugin", pluginId).put("url", url.toString());
+    }
+
+    private JSONObject clearV2DevServer(Context context, String pluginId) throws Exception {
+        if (!context.getSharedPreferences("runtime_v2_dev_servers", Context.MODE_PRIVATE)
+                .edit().remove(pluginId).commit()) {
+            throw new IOException("无法清除 Runtime v2 dev server");
+        }
+        notifyStateChanged(context);
+        return changed("plugin", pluginId, "cleared", true);
     }
 
     private JSONObject listPlugins(Context context) throws Exception {
@@ -183,19 +247,87 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             plugin.put("widgets", widgets);
             plugins.put(plugin);
         }
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        for (V2PackageStore.InstalledPlugin installed : runtime.packages().load()) {
+            JSONObject plugin = new JSONObject();
+            plugin.put("id", installed.manifest.plugin.id);
+            plugin.put("title", installed.manifest.plugin.title);
+            plugin.put("version", installed.manifest.plugin.version);
+            plugin.put("formatVersion", 3);
+            plugin.put("builtIn", false);
+            plugin.put("required", false);
+            plugin.put("enabled", installed.enabled);
+            plugin.put("active", activeIds.contains(installed.manifest.plugin.id));
+            plugin.put("generation", installed.generationDirectory.getName());
+            plugin.put("nativeProvider", !installed.manifest.providerEntries.isEmpty());
+            plugin.put("datasets", installed.manifest.datasets.size());
+            plugin.put("tasks", installed.manifest.tasks.size());
+            List<V2PluginPermissionManager.Permission> permissions = runtime.permissions().permissions(installed.manifest);
+            int pendingPermissions = 0;
+            for (V2PluginPermissionManager.Permission permission : permissions) {
+                if (permission.state != V2PluginPermissionManager.State.GRANTED) pendingPermissions++;
+            }
+            plugin.put("permissions", permissions.size());
+            plugin.put("pendingPermissions", pendingPermissions);
+            plugins.put(plugin);
+        }
 
         JSONObject result = new JSONObject();
         result.put("plugins", plugins);
         return result;
     }
 
-    private JSONObject importPlugin(Context context, String relativePath) throws Exception {
+    private JSONObject importPlugin(
+            Context context,
+            String relativePath,
+            boolean replaceSameVersion
+    ) throws Exception {
         File packageFile = resolveInboxFile(context, relativePath);
         if (!packageFile.isFile()) {
             throw new IllegalArgumentException("调试收件箱中不存在文件：" + relativePath);
         }
         if (packageFile.length() > MAX_PLUGIN_PACKAGE_BYTES) {
             throw new IllegalArgumentException("插件包超过 64 MiB 限制");
+        }
+
+        byte[] packageBytes;
+        try (FileInputStream input = new FileInputStream(packageFile)) {
+            packageBytes = readAll(input, MAX_PLUGIN_PACKAGE_BYTES);
+        }
+        if (V2PluginPackageArchive.hasFormatV3Manifest(packageBytes)) {
+            V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+            V2PackageStore.InstallSession session = runtime.packages().install(
+                    packageBytes, "adb-debug", "debug", false, replaceSameVersion
+            );
+            try {
+                V2PackageStore.InstalledPlugin installed = runtime.packages().find(session.pluginId);
+                if (installed == null) throw new IOException("Runtime v2 install generation is unreadable");
+                runtime.permissions().reconcile(installed.manifest);
+                if (isReservedPluginId(session.pluginId) || findExternal(new ExternalPluginStore(context), session.pluginId) != null) {
+                    throw new IllegalArgumentException("插件 ID 与现有插件冲突：" + session.pluginId);
+                }
+                if (session.newInstall) runtime.packages().setEnabled(session.pluginId, false);
+                runtime.packages().confirmInstall(session);
+                runtime.scheduler().syncPlugin(session.pluginId);
+                notifyStateChanged(context);
+                int pendingPermissions = 0;
+                for (V2PluginPermissionManager.Permission permission
+                        : runtime.permissions().permissions(installed.manifest)) {
+                    if (permission.state != V2PluginPermissionManager.State.GRANTED) pendingPermissions++;
+                }
+                return new JSONObject()
+                        .put("plugin", session.pluginId)
+                        .put("title", installed.manifest.plugin.title)
+                        .put("formatVersion", 3)
+                        .put("updated", !session.newInstall)
+                        .put("sameVersionReplacement", replaceSameVersion && !session.newInstall)
+                        .put("enabled", runtime.packages().isEnabled(session.pluginId))
+                        .put("pendingPermissions", pendingPermissions);
+            } catch (Throwable error) {
+                runtime.packages().rollbackInstall(session);
+                runtime.permissions().reconcile(runtime.packages().load());
+                throw error;
+            }
         }
 
         PluginPackage pluginPackage = readPluginPackage(packageFile);
@@ -222,14 +354,24 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
     private JSONObject deletePlugin(Context context, String pluginId) throws Exception {
         ExternalPluginStore store = new ExternalPluginStore(context);
         ImportedPluginDescriptor descriptor = findExternal(store, pluginId);
-        if (descriptor == null) {
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        V2PackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
+        if (descriptor == null && v2 == null) {
             throw new IllegalArgumentException("外部插件不存在：" + pluginId);
         }
         List<String> dependents = enabledDependents(context, pluginId);
         if (!dependents.isEmpty()) {
             throw new IllegalStateException("仍被已启用插件依赖：" + join(dependents));
         }
-        store.delete(pluginId);
+        if (v2 != null) {
+            runtime.scheduler().cancelPlugin(pluginId);
+            runtime.nativeProviders().deactivate(pluginId);
+            runtime.packages().delete(pluginId);
+            runtime.permissions().removePlugin(pluginId);
+            runtime.workerProviders().sync(runtime.packages().load());
+        } else {
+            store.delete(pluginId);
+        }
         notifyStateChanged(context);
         return changed("plugin", pluginId, "deleted", true);
     }
@@ -237,7 +379,9 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
     private JSONObject exportPlugin(Context context, String pluginId, String relativePath) throws Exception {
         ExternalPluginStore store = new ExternalPluginStore(context);
         ImportedPluginDescriptor descriptor = findExternal(store, pluginId);
-        if (descriptor == null) {
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        V2PackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
+        if (descriptor == null && v2 == null) {
             throw new IllegalArgumentException("外部插件不存在：" + pluginId);
         }
         File output = resolveOutboxFile(context, relativePath);
@@ -245,7 +389,14 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new IOException("无法创建导出目录");
         }
-        writePluginPackage(output, descriptor);
+        if (v2 != null) {
+            try (FileOutputStream stream = new FileOutputStream(output)) {
+                stream.write(runtime.packages().exportPackage(pluginId));
+                stream.getFD().sync();
+            }
+        } else {
+            writePluginPackage(output, descriptor);
+        }
 
         JSONObject result = new JSONObject();
         result.put("plugin", pluginId);
@@ -270,13 +421,19 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
         ToolPlugin optional = findPlugin(ToolRegistry.createOptionalBuiltInPlugins(), pluginId);
         ImportedPluginDescriptor external = findExternal(externalStore, pluginId);
-        if (optional == null && external == null) {
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        V2PackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
+        if (optional == null && external == null && v2 == null) {
             throw new IllegalArgumentException("插件不存在：" + pluginId);
         }
 
-        Set<String> dependencies = optional != null ? optional.dependencies() : external.dependencies;
+        Set<String> dependencies = optional != null
+                ? optional.dependencies()
+                : external == null ? Collections.emptySet() : external.dependencies;
         if (enabled) {
-            List<String> missing = missingDependencies(dependencies, activePluginVersions(context));
+            Map<String, String> activeVersions = activePluginVersions(context);
+            List<String> missing = missingDependencies(dependencies, activeVersions);
+            if (v2 != null) missing.addAll(missingV2Requirements(runtime, v2, activeVersions));
             if (!missing.isEmpty()) {
                 throw new IllegalStateException("依赖未满足：" + join(missing));
             }
@@ -290,11 +447,93 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         if (optional != null) {
             builtInStore.setEnabled(pluginId, enabled);
             optional.onDestroy();
-        } else {
+        } else if (external != null) {
             externalStore.setEnabled(pluginId, enabled);
+        } else {
+            runtime.packages().setEnabled(pluginId, enabled);
+            runtime.scheduler().syncPlugin(pluginId);
+            if (!enabled) runtime.nativeProviders().deactivate(pluginId);
+            runtime.workerProviders().sync(runtime.packages().load());
         }
         notifyStateChanged(context);
         return changed("plugin", pluginId, "enabled", enabled);
+    }
+
+    private List<String> missingV2Requirements(
+            V2RuntimeProcess runtime,
+            V2PackageStore.InstalledPlugin installed,
+            Map<String, String> activeVersions
+    ) {
+        List<String> missing = new ArrayList<>();
+        RuntimePluginManifest manifest = installed.manifest;
+        if (manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
+            missing.add("host>=" + manifest.plugin.minHostVersionCode);
+        }
+        for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
+            if (!requirement.optional
+                    && !V2CapabilityRouter.versionSatisfied(
+                            activeVersions.get(requirement.id), requirement.version)) {
+                missing.add(requirement.id + "@" + requirement.version);
+            }
+        }
+        for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
+            if (requirement.optional || runtime.capabilities().canResolve(requirement.id, requirement.version)) {
+                continue;
+            }
+            boolean selfProvided = false;
+            for (RuntimePluginManifest.CapabilityContribution contribution
+                    : manifest.capabilityContributions) {
+                if (contribution.id.equals(requirement.id)
+                        && V2CapabilityRouter.versionSatisfied(contribution.version, requirement.version)) {
+                    selfProvided = true;
+                    break;
+                }
+            }
+            if (!selfProvided) missing.add(requirement.id + "@" + requirement.version);
+        }
+        return missing;
+    }
+
+    private JSONObject listPermissions(Context context, String pluginId) throws Exception {
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        V2PackageStore.InstalledPlugin installed = runtime.packages().find(pluginId);
+        if (installed == null) throw new IllegalArgumentException("Runtime v2 插件不存在：" + pluginId);
+        runtime.permissions().reconcile(installed.manifest);
+        JSONArray values = new JSONArray();
+        for (V2PluginPermissionManager.Permission permission
+                : runtime.permissions().permissions(installed.manifest)) {
+            values.put(new JSONObject()
+                    .put("capability", permission.capabilityId)
+                    .put("title", permission.title)
+                    .put("description", permission.description)
+                    .put("risk", permission.risk)
+                    .put("optional", permission.optional)
+                    .put("managed", permission.isManaged())
+                    .put("state", permission.state.name().toLowerCase(Locale.ROOT))
+                    .put("scopes", new JSONObject(permission.scopesJson)));
+        }
+        return new JSONObject()
+                .put("plugin", pluginId)
+                .put("permissions", values)
+                .put("audit", runtime.permissions().audit(pluginId));
+    }
+
+    private JSONObject setPermission(
+            Context context,
+            String pluginId,
+            String capabilityId,
+            boolean enabled
+    ) throws Exception {
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        V2PackageStore.InstalledPlugin installed = runtime.packages().find(pluginId);
+        if (installed == null) throw new IllegalArgumentException("Runtime v2 插件不存在：" + pluginId);
+        runtime.permissions().setGranted(installed.manifest, capabilityId, enabled);
+        runtime.scheduler().syncPlugin(pluginId);
+        notifyStateChanged(context);
+        return new JSONObject()
+                .put("plugin", pluginId)
+                .put("capability", capabilityId)
+                .put("enabled", enabled);
     }
 
     private JSONObject setWidgetVisible(Context context, String widget, boolean visible) throws JSONException {
@@ -322,6 +561,16 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         for (ImportedPluginDescriptor descriptor : imported) {
             externalStore.delete(descriptor.id);
         }
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        int removedV2 = 0;
+        for (V2PackageStore.InstalledPlugin installed : new ArrayList<>(runtime.packages().load())) {
+            runtime.scheduler().cancelPlugin(installed.manifest.plugin.id);
+            runtime.nativeProviders().deactivate(installed.manifest.plugin.id);
+            runtime.packages().delete(installed.manifest.plugin.id);
+            runtime.permissions().removePlugin(installed.manifest.plugin.id);
+            removedV2++;
+        }
+        runtime.workerProviders().sync(runtime.packages().load());
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
         for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
             builtInStore.setEnabled(plugin.id(), false);
@@ -333,7 +582,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         notifyStateChanged(context);
 
         JSONObject result = new JSONObject();
-        result.put("removedExternalPlugins", imported.size());
+        result.put("removedExternalPlugins", imported.size() + removedV2);
         result.put("optionalBuiltInsEnabled", false);
         result.put("hiddenWidgets", new JSONArray());
         result.put("note", "完整清空应用数据请使用 adb shell pm clear " + context.getPackageName());
@@ -357,6 +606,22 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             plugin.onDestroy();
         }
 
+        V2RuntimeProcess runtime = V2RuntimeProcess.get(context);
+        for (V2PackageStore.InstalledPlugin installed : runtime.packages().load()) {
+            boolean providerReady = !"trusted-provider".equals(installed.manifest.plugin.kind)
+                    || runtime.nativeProviders().isActive(
+                            installed.manifest.plugin.id,
+                            installed.generationDirectory.getName());
+            boolean workerReady = installed.manifest.capabilityContributions.stream()
+                    .noneMatch(item -> !item.workerEntry.isEmpty())
+                    || runtime.workerProviders().isActive(
+                            installed.manifest.plugin.id,
+                            installed.generationDirectory.getName());
+            if (installed.enabled && providerReady && workerReady
+                    && !active.containsKey(installed.manifest.plugin.id)) {
+                active.put(installed.manifest.plugin.id, installed.manifest.plugin.version);
+            }
+        }
         List<ImportedPluginDescriptor> pending = new ArrayList<>(externalStore.load());
         pending.removeIf(plugin -> !externalStore.isEnabled(plugin.id));
         boolean loaded;
@@ -406,6 +671,15 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         for (ImportedPluginDescriptor descriptor : externalStore.load()) {
             if (externalStore.isEnabled(descriptor.id) && dependsOn(descriptor.dependencies, pluginId)) {
                 dependents.add(descriptor.id);
+            }
+        }
+        for (V2PackageStore.InstalledPlugin installed : V2RuntimeProcess.get(context).packages().load()) {
+            if (!installed.enabled) continue;
+            for (com.androidtoolsuite.runtime.contract.RuntimePluginManifest.Requirement requirement
+                    : installed.manifest.pluginRequirements) {
+                if (!requirement.optional && requirement.id.equals(pluginId)) {
+                    dependents.add(installed.manifest.plugin.id);
+                }
             }
         }
         return dependents;

@@ -3,6 +3,10 @@
 /build/
 /app/build/
 /plugin-sdk/build/
+/runtime-contract/build/
+/trusted-shizuku-provider/build/
+/runtime-v2/sdk/node_modules/
+__pycache__/
 /dist/
 /artifacts/
 /local.properties

@@ -1,98 +1,205 @@
 # ATS Plugin Package Format
 
-插件包必须使用 `.atsplugin` 扩展名。本质是 zip 文件，根目录必须同时包含 `manifest.json` 和 `plugin.apk`。
+插件包使用 `.atsplugin` 扩展名，本质是一个受限 ZIP。宿主当前同时读取两代格式：
 
-## 目录结构
+- **format v3**：Runtime v2 的主格式，普通工具使用统一声明式 UI（Host 或 WebView renderer）、版本化 Capability、宿主存储和可选后台任务；
+- **format v1/v2**：旧 API1 Android AAR/Compose 插件的冻结兼容格式，只用于既有插件迁移和回滚。
+
+新插件必须使用 format v3。旧格式在三个官方插件完成迁移以及 ADR-0007 的双稳定版本／90 天窗口结束前继续可用，但不再增加 API。
+
+## 1. Format v3 目录结构
+
+最小 Web Tool：
 
 ```text
 example.atsplugin
-  manifest.json
-  plugin.apk
-  assets/
+├─ manifest.json
+├─ ui/
+│  └─ main.json
+├─ web/
+│  ├─ index.html
+│  ├─ app.js
+│  └─ styles.css
+└─ META-INF/
+   └─ ats-integrity.json
 ```
 
-宿主会解析 `manifest.json`，把 `plugin.apk` 复制到应用内部目录，再按清单中的 `entryClass` 动态加载插件入口类。缺少任一文件或入口类时会拒绝导入。
-
-## 打包
-
-可执行插件应在各自的独立仓库构建。每个插件仓库的根工程都提供：
-
-```powershell
-gradle packagePlugin
-```
-
-输出文件：
+按需还可以包含：
 
 ```text
-build/outputs/atsplugin/<plugin-name>.atsplugin
+workers/*.js              JavaScriptSandbox 后台任务
+workers/*.wasm            预留的可选 WASM worker；当前 Android Backend 会明确拒绝执行
+ui/*.json                 宿主渲染的声明式 UI v1 文档
+android/provider.apk      受信 Native Provider
+META-INF/ats-signature.sig
 ```
 
-## manifest.json
+format v3 不包含根级 `plugin.apk`，也不允许 ZIP 目录占位项、未知顶层目录、绝对路径、反斜杠、路径穿越、重复路径或仅大小写不同的路径。所有入口都必须位于包内并由清单引用。
+
+权威 schema 位于 `../runtime-contract/src/main/resources/contracts/manifest-v3.schema.json`；Java 与 TypeScript 绑定由同一契约源生成。
+
+## 2. Manifest v3
+
+下面是最小 Web Tool 的结构示例；字段细节和上限以 schema 为准：
 
 ```json
 {
+  "$schema": "https://android-tool-suite.test/contracts/manifest-v3.schema.json",
   "format": "ats-plugin",
-  "formatVersion": "2",
+  "formatVersion": 3,
   "plugin": {
     "id": "sample_notes",
-    "title": "示例插件",
-    "description": "这是一个示例插件。",
-    "version": "1.0",
+    "title": "示例笔记",
+    "description": "使用宿主存储保存笔记。",
+    "version": "1.0.0",
     "versionCode": 1,
-    "minHostVersionCode": 22,
-    "sdkVersion": "1.3.1",
-    "author": "Local",
-    "entryClass": "com.example.plugins.sample.SamplePlugin"
+    "minHostVersionCode": 23,
+    "publisher": "example.publisher",
+    "kind": "tool"
   },
-  "dependencies": [
-    "shizuku_auth"
+  "platforms": ["android"],
+  "runtime": {
+    "ui": [
+      { "id": "main", "type": "declarative", "entry": "ui/main.json" }
+    ],
+    "background": [],
+    "providers": []
+  },
+  "requires": {
+    "plugins": [],
+    "capabilities": [
+      { "id": "storage", "version": "^1.0.0", "optional": false, "scopes": {} }
+    ]
+  },
+  "provides": { "capabilities": [] },
+  "contributes": {
+    "tools": [{ "id": "main", "uiEntry": "main" }],
+    "homeWidgets": []
+  },
+  "datasets": [],
+  "tasks": []
+}
+```
+
+重要规则：
+
+- 插件、入口、Capability、Dataset 和任务 ID 使用稳定的小写 ID；版本使用 SemVer；
+- 新包的 `runtime.ui` 统一使用 `declarative` 与 `ui/*.json`；文档根节点选择 Host 组件树或 `webview` renderer。旧 `type: web` 仅保留读取兼容；
+- `requires.capabilities` 同时声明版本范围、是否可选和最小 scope；未声明的能力不可调用；
+- `runtime.background` 可声明 `javascript-worker`、`provider-task` 和预留的 `wasm-worker`；后台任务不能依赖常驻 WebView；
+- `datasets` 声明类别、格式版本、敏感性、恢复方式、上限和依赖；恢复由宿主 staging、校验后原子切换；
+- `plugin.kind = tool` 不得包含 Native Provider；它可以贡献 UI/Tool，也可以通过必需的 `javascript-worker`（未来可选 WASM Worker）提供 Capability；
+- `plugin.kind = trusted-provider` 必须包含受信 Native Provider，只用于必须以宿主身份访问 Android／Shizuku 等系统能力的全信任代码；它仍可像普通插件一样贡献 UI、Tool、主页组件和 Worker；
+- `provides.capabilities` 必须列出版本、方法集合以及恰好一个实现入口：普通插件使用 `workerEntry`，底层 Provider 使用 `providerEntry`。普通插件提供能力不会获得宿主身份。
+
+## 3. 完整性与 Publisher 签名
+
+`META-INF/ats-integrity.json` 使用固定格式：
+
+```json
+{
+  "algorithm": "sha256",
+  "formatVersion": 1,
+  "files": [
+    { "path": "manifest.json", "size": 1234, "sha256": "..." },
+    { "path": "web/index.html", "size": 456, "sha256": "..." }
   ]
 }
 ```
 
-`formatVersion: "2"` 在 v1 基础上新增：
+文件列表按路径排序，覆盖除 `META-INF/ats-integrity.json` 和 `META-INF/ats-signature.sig` 外的全部文件。宿主在写入活动 generation 前验证项目集合、大小和 SHA-256；损坏包不会替换当前版本。
 
-- `versionCode`：严格递增的整数版本，用于可靠判断升级和禁止仓库降级。
-- `minHostVersionCode`：能够加载该插件的最低宿主整数版本。
-- `sdkVersion`：构建插件时使用的 `com.androidtoolsuite:plugin-sdk` 版本，用于追溯兼容性。
+普通 Tool 在本地手动导入时可以没有 publisher 签名，并会显示为未经仓库验证。`trusted-provider` 必须包含 `android/provider.apk` 与 `META-INF/ats-signature.sig`：签名算法为 ECDSA P-256/SHA-256，签名对象是 `ats-integrity.json` 的原始字节。宿主只使用内置或 Debug Developer Mode 明确加入的 publisher 公钥，不信任包内自报公钥。普通 Tool 即使不在清单中引用，夹带 `android/provider.apk` 也会被 CLI 和宿主拒绝。
 
-宿主继续接受旧的 format v1 包；缺少 `versionCode` 时按旧插件处理。官方仓库发布必须使用 format v2，且包内字段必须与签名更新索引一致。
+底层 Provider 与宿主同进程运行，因此签名代表来源和完整性，不构成恶意代码隔离。它只能通过公开 SDK 注册清单中声明的高层 Capability 或 `provider-task`；不得把通用 Shell、Host 内部类或隐含官方权限暴露给其他插件。全信任包可以同时贡献普通 UI/Tool；这些贡献不会降低同包原生代码的信任级别。普通插件的 Worker Provider 则处于受限运行时，可以像其他插件一样组合和替换 Capability。
 
-## 安全边界
+## 4. CLI 工作流
 
-可执行插件与宿主运行在同一 Android 进程，并能取得宿主传入的 `Activity` 和 `PluginHost`。插件清单不提供权限声明或授权开关，因为这种同进程开关无法构成可靠隔离。请只安装可信来源的插件；需要更强隔离时，应将插件迁移到独立进程并通过受限 IPC 暴露能力。
+普通 Web 插件不需要 Android SDK 或 Gradle：
 
-## 依赖
+```powershell
+python tools\runtime-v2\ats.py create sample-notes `
+  --plugin-id sample_notes `
+  --title "示例笔记" `
+  --publisher example.publisher
 
-插件可以通过 `dependencies` 或 `pluginDependencies` 声明依赖的插件 ID。宿主只会加载依赖已满足的插件；依赖未满足时，插件仍会出现在“插件管理”中，但不会出现在主页和插件列表。
+python tools\runtime-v2\ats.py lint sample-notes
+python tools\runtime-v2\ats.py pack sample-notes --output sample-notes.atsplugin
+python tools\runtime-v2\ats.py verify sample-notes.atsplugin
+python tools\runtime-v2\ats.py dev sample-notes --android --serial <设备序列号>
+```
 
-常见依赖：
+包含 Native Provider 时必须签名，并在离线验收中使用对应公钥：
 
-- `shizuku_auth`：宿主内置的 Shizuku 授权插件。
+```powershell
+python tools\runtime-v2\ats.py pack provider-project --output provider.atsplugin `
+  --signing-key <publisher-private.pem> `
+  --public-key <publisher-public.pem>
+```
 
-内置可选插件和外部插件默认停用，都可以在“插件管理”中启用或停用。启停状态保存在当前宿主内，不会写入导出的插件包。管理页会显示每个插件的依赖、被依赖方，以及完整依赖树。
+私钥不得进入仓库或插件包。正式 Publisher 私钥由 CI/发布流程保管；本地 Debug key 不能替代正式发布验收。
 
-如果依赖未满足，插件不能被启用，并会保留在“插件管理”中等待用户先启用依赖项。如果某个插件仍被其他已启用插件依赖，宿主会阻止停用或删除并提示依赖方。
+## 5. WebView renderer 与能力边界
 
-## 主页小部件
+宿主把 Web 资源加载到每插件独立的虚拟 HTTPS origin，并注入版本化消息传输层。页面默认不能访问 `file://`、任意导航、Cookie、DOM 持久化或 Host Java 对象；外部网络必须通过声明了 origin/method scope 的 `network.request`。主题、生命周期、返回、错误和取消通过 Runtime v2 SDK 传递。
 
-可执行插件通过 `ToolPlugin.createHomeWidgets()` 注册动态小部件。主页小部件和工具卡片使用统一的长按拖动与落点虚影，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。工具页和主页小部件的显隐统一在“插件管理 → 界面管理”中按插件设置，每个插件分别提供“工具页”和“主页”开关。
+复杂交互可以使用任意能产出静态 Web 资源的框架；插件不得复制宿主设计 token。项目内官方插件应使用 SDK 提供的主题变量和 `SuiteDesignSystem` 对应的语义组件，覆盖浅色、深色、窄屏、横屏、加载、空、错误和离线状态。
 
-## 可执行插件
+## 6. 声明式 UI
 
-可执行插件的入口类必须：
+所有新工具把 UI entry 声明为：
 
-- 编译进插件包根目录的 `plugin.apk`。
-- 实现 `com.androidtoolsuite.app.plugin.api.ToolPlugin`。
-- 提供 public 无参构造方法。
-- 在 `plugin.entryClass` 中声明完整类名。
+```json
+{ "id": "main", "type": "declarative", "entry": "ui/main.json" }
+```
 
-插件工程只依赖已发布的 `com.androidtoolsuite:plugin-sdk:<version>` AAR，不依赖宿主的 `:app` 或本地 `:plugin-sdk` project。主体仓库可通过 `gradle :plugin-sdk:publishToMavenLocal` 发布 SDK，插件仓库随后可直接执行 `gradle packagePlugin`。宿主通过 `DexClassLoader` 加载 `plugin.apk`，因此插件代码可以独立构建和分发。
+声明式 UI v1 只提供 `column`、`row`、`section`、`card`、`text`、`icon`、`status`、`metric`、`notice`、`button`、`state`、`divider` 和 `spacer`。`icon` 只接受契约列出的共享 Material 图标名称，避免插件用字符或自绘图标形成另一套视觉语言；普通说明使用 `notice.tone = neutral`，成功、警告、危险和信息才使用对应语义色。数据由启动 Query 写入受限状态路径，按钮 Action 只能调用 manifest 已声明的 Capability；没有任意表达式、HTML、脚本或宿主类访问。根节点、节点数、层级、文本、payload、deadline 和 action 引用都在安装前校验。
 
-## 官方仓库与更新
+简单状态工具、设置页和动作面板使用 `body.type = column`。复杂图表、编辑器、画布和高度自定义交互使用 WebView renderer：
 
-官方插件仓库由 `android-tool-suite/plugin-registry` 的 GitHub Pages 提供，分为正式与调试两个索引。正式索引读取 `v<versionName>` Release；调试索引自动发现组织内 `plugin-*` 仓库的滚动 `debug` 预发布。宿主只接受通过内置 ECDSA 公钥验证的索引，并在安装前核对 `.atsplugin` 的大小、SHA-256、插件 ID、版本、依赖和最低宿主版本。
+```json
+{
+  "formatVersion": 1,
+  "body": { "type": "webview", "entry": "web/index.html" }
+}
+```
 
-正式仓库、调试仓库和手动导入是三条明确区分的来源路径。两个远程索引都验证签名，但调试构建可能尚未完成正式验收；手动导入仍显示“本地导入 · 未经仓库验证”。三种路径中的插件都与宿主同进程运行。
+WebView 根文档不能同时定义 Host 状态、Query 或 Action；页面通过统一 RPC 调用 Capability。两种 renderer 共用宿主详情顶栏、主题、语义色、状态组件、Capability Router 和权限管理。
+WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号、行高和字重 token；插件根内容不重复绘制宿主详情标题，卡片和状态图标应与共享 Compose 组件保持同一信息层级。
 
-单个 JSON 清单和不含 `plugin.apk` 的说明型插件包不受支持。
+## 7. 插件权限
+
+`requires.capabilities` 既是最小能力声明，也是权限请求上限。应用管理页按插件逐项展示权限说明、风险和 scope：
+
+- `app` 与只访问本插件命名空间的 `storage` 是运行基础，始终允许且不列入面向用户的权限管理；
+- 网络、所选文件、剪贴板、通知和后台任务由用户允许；
+- 无障碍管理与 Shizuku 连接属于敏感操作，默认不允许；
+- 授权绑定规范化 scope 的 SHA-256 指纹，升级时扩大或改变范围会重新进入待决定状态；
+- 撤销后新调用和事件立即被拒绝，在途调用会取消，后台任务停止调度；权限决定和拒绝只记录时间、插件、Capability 与结果，不记录请求载荷。
+
+普通 V3 插件的 Host Action、WebView RPC、Worker、事件和后台任务都只能经过 Capability Router：未声明或未授权的调用在 Provider 执行前被拒绝，撤销还会取消在途调用和插件持有的临时 handle。普通插件提供 Capability 时，Worker 的下游调用以提供者自身身份再次检查权限，不能继承消费者授权。`trusted-provider` 与 API1 `plugin.apk` 仍是同进程可信代码，逐项 Capability 开关不能约束其原生代码，因此完全信任包自身不显示权限列表；管理页会明确区分这条边界。
+
+## 8. 安装、更新与回滚
+
+宿主先在 staging 目录完成路径、schema、完整性、平台和签名校验，再把整个包切换为新的只读 generation。失败时保留旧 generation；Provider 更新在下次宿主冷启动激活。删除插件时同时关闭 session、任务和 Provider effect，但业务 Dataset 仍按显式数据管理流程处理。
+
+正式仓库、调试仓库和手动导入是不同来源：
+
+- 正式/调试索引还会校验索引签名、包大小、SHA-256、插件 ID、版本和最低宿主版本；
+- 手动导入不取得仓库信誉；
+- 无论来源，包内 format v3 校验规则相同；Native Provider 仍必须命中受信 publisher key。
+
+## 9. Legacy format v1/v2
+
+旧包结构仍为：
+
+```text
+legacy.atsplugin
+├─ manifest.json
+├─ plugin.apk
+└─ assets/
+```
+
+`plugin.entryClass` 实现 `com.androidtoolsuite.app.plugin.api.ToolPlugin`，宿主通过 `DexClassLoader` 在同一进程加载。format v2 在 v1 基础上增加整数 `versionCode`、`minHostVersionCode` 和 `sdkVersion`。这条路径只接受兼容性、迁移和安全修复；新 Capability、任务、Dataset 与 Web UI 只进入 format v3。
+
+API1 的停止发布、Registry 拒绝和代码删除必须按外层工作区的 `../../docs/adr/0007-api1-exit-and-release-order.md` 执行，不能因为 V3 包已经可安装就提前破坏旧数据回滚窗口。

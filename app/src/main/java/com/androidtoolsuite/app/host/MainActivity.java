@@ -1,21 +1,22 @@
 package com.androidtoolsuite.app.host;
 
 import com.androidtoolsuite.app.BuildConfig;
-import com.androidtoolsuite.app.IShellService;
+import android.Manifest;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.net.Uri;
+import android.database.Cursor;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.IBinder;
-import android.os.RemoteException;
+import android.os.SystemClock;
+import android.util.Log;
 import android.provider.Settings;
+import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 
@@ -33,13 +34,32 @@ import com.androidtoolsuite.app.migration.MigrationBridgeManager;
 import com.androidtoolsuite.app.migration.HostMigrationArchive;
 import com.androidtoolsuite.app.migration.MigrationTransaction;
 import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
+import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
 import com.androidtoolsuite.app.plugin.runtime.ExternalToolFactory;
+import com.androidtoolsuite.app.plugin.v2.V2HostActions;
+import com.androidtoolsuite.app.plugin.v2.V2CapabilityRouter;
+import com.androidtoolsuite.app.plugin.v2.V2BackgroundTaskRegistry;
+import com.androidtoolsuite.app.plugin.v2.V2HostCapabilityProviders;
+import com.androidtoolsuite.app.plugin.v2.V2NativeProviderManager;
+import com.androidtoolsuite.app.plugin.v2.V2PackageStore;
+import com.androidtoolsuite.app.plugin.v2.V2PluginPermissionManager;
+import com.androidtoolsuite.app.plugin.v2.V2PluginPackageArchive;
+import com.androidtoolsuite.app.plugin.v2.V2RuntimeProcess;
+import com.androidtoolsuite.app.plugin.v2.V2SchedulerService;
+import com.androidtoolsuite.app.plugin.v2.V2JavaScriptWorkerEngine;
+import com.androidtoolsuite.app.plugin.v2.V2StorageService;
+import com.androidtoolsuite.app.plugin.v2.V2DatasetService;
+import com.androidtoolsuite.app.plugin.v2.V2DeclarativeToolPlugin;
+import com.androidtoolsuite.app.plugin.v2.V2MigrationToolPlugin;
+import com.androidtoolsuite.app.plugin.v2.V2ShizukuService;
+import com.androidtoolsuite.app.plugin.v2.V2WebToolPlugin;
+import com.androidtoolsuite.app.plugin.v2.CapabilityFailure;
 import com.androidtoolsuite.app.plugin.api.HomeWidget;
 import com.androidtoolsuite.app.plugin.api.HomeWidgetSize;
 import com.androidtoolsuite.app.plugin.api.PluginDependency;
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor;
 import com.androidtoolsuite.app.plugin.api.PluginHost;
-import com.androidtoolsuite.app.plugins.builtin.shizuku.ShizukuPlugin;
 import com.androidtoolsuite.app.plugin.api.ToolPlugin;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.ui.SuiteColorPreference;
@@ -49,6 +69,9 @@ import com.androidtoolsuite.app.update.UpdateCatalog;
 import com.androidtoolsuite.app.update.UpdateClient;
 import com.androidtoolsuite.app.update.AppUpdatePolicy;
 import com.androidtoolsuite.app.update.PluginUpdatePolicy;
+import com.androidtoolsuite.runtime.contract.ContractException;
+import com.androidtoolsuite.runtime.contract.ContractLimits;
+import com.androidtoolsuite.runtime.contract.RuntimePluginManifest;
 
 import org.json.JSONException;
 import org.json.JSONArray;
@@ -75,13 +98,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CompletableFuture;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 import rikka.shizuku.Shizuku;
 
-public class MainActivity extends ComponentActivity implements PluginHost {
+public class MainActivity extends ComponentActivity implements PluginHost, V2HostActions {
     public static final String EXTRA_DEBUG_DESTINATION = "debug_destination";
     private static WeakReference<MainActivity> debugInstance = new WeakReference<>(null);
 
@@ -92,6 +116,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private static final int REQUEST_EXPORT_MIGRATION = 4004;
     private static final int REQUEST_EXPORT_MIGRATION_BRIDGE = 4005;
     private static final int REQUEST_IMPORT_MIGRATION_BRIDGE = 4006;
+    private static final int REQUEST_V2_FILE_IMPORT = 4007;
+    private static final int REQUEST_V2_NOTIFICATION_PERMISSION = 4008;
 
     private static final int SECTION_DASHBOARD = 0;
     private static final int SECTION_PLUGINS = 1;
@@ -118,9 +144,24 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
     private final Map<String, ImportedPluginDescriptor> importedDescriptorCache = new LinkedHashMap<>();
+    private final Map<String, V2PackageStore.InstalledPlugin> v2InstalledCache = new LinkedHashMap<>();
     private final Set<String> optionalBuiltInPluginIds = new HashSet<>();
     private ToolPlugin selectedPlugin;
     private ExternalPluginStore externalPluginStore;
+    private V2RuntimeProcess v2RuntimeProcess;
+    private V2PackageStore v2PackageStore;
+    private V2StorageService v2StorageService;
+    private V2DatasetService v2DatasetService;
+    private V2CapabilityRouter v2CapabilityRouter;
+    private V2BackgroundTaskRegistry v2BackgroundTaskRegistry;
+    private V2PluginPermissionManager v2PermissionManager;
+    private V2NativeProviderManager v2NativeProviderManager;
+    private V2SchedulerService v2SchedulerService;
+    private V2ShizukuService v2ShizukuService;
+    private AutoCloseable v2ShizukuStateRegistration;
+    private List<AutoCloseable> v2ProviderRegistrations = Collections.emptyList();
+    private AutoCloseable v2PermissionRegistration;
+    private PendingV2FilePick pendingV2FilePick;
     private BuiltInPluginStateStore builtInPluginStateStore;
     private UpdateClient updateClient;
     private UpdateCatalog updateCatalog;
@@ -198,45 +239,24 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             setEnabled(true);
         }
     };
-    private IShellService shellService;
-    private Shizuku.UserServiceArgs shellServiceArgs;
-    private boolean shellServiceBinding;
-
     private final Shizuku.OnBinderReceivedListener binderReceivedListener = () -> runOnUiThread(() -> {
-        ensureShellServiceIfAuthorized();
+        if (v2ShizukuService != null) v2ShizukuService.ensureIfAuthorized();
         notifyHostStateChangedAfterBinderCallback();
     });
     private final Shizuku.OnBinderDeadListener binderDeadListener = () -> runOnUiThread(() -> {
-        shellService = null;
-        shellServiceBinding = false;
         notifyHostStateChanged();
     });
     private final Shizuku.OnRequestPermissionResultListener permissionResultListener = (requestCode, grantResult) -> {
         if (requestCode == REQUEST_SHIZUKU) {
             runOnUiThread(() -> {
-                ensureShellServiceIfAuthorized();
+                if (v2ShizukuService != null) v2ShizukuService.ensureIfAuthorized();
                 notifyHostStateChangedAfterBinderCallback();
             });
         }
     };
-    private final ServiceConnection shellConnection = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            shellService = IShellService.Stub.asInterface(service);
-            shellServiceBinding = false;
-            runOnUiThread(MainActivity.this::notifyHostStateChangedAfterBinderCallback);
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-            shellService = null;
-            shellServiceBinding = false;
-            runOnUiThread(MainActivity.this::notifyHostStateChangedAfterBinderCallback);
-        }
-    };
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        long startupStartedAt = SystemClock.elapsedRealtime();
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -255,13 +275,48 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                     .start();
         });
         externalPluginStore = new ExternalPluginStore(this);
+        v2RuntimeProcess = V2RuntimeProcess.get(this);
+        v2PackageStore = v2RuntimeProcess.packages();
+        v2StorageService = v2RuntimeProcess.storage();
+        v2DatasetService = v2RuntimeProcess.datasets();
+        v2BackgroundTaskRegistry = v2RuntimeProcess.backgroundTasks();
+        v2PermissionManager = v2RuntimeProcess.permissions();
+        v2CapabilityRouter = v2RuntimeProcess.capabilities();
+        v2NativeProviderManager = v2RuntimeProcess.nativeProviders();
+        v2SchedulerService = v2RuntimeProcess.scheduler();
+        v2ShizukuService = v2RuntimeProcess.shizuku();
+        debugStartup("runtime-v2-ready", startupStartedAt);
+        try {
+            v2ProviderRegistrations = V2HostCapabilityProviders.registerActivityCapabilities(
+                    this, this, v2CapabilityRouter
+            );
+            v2PermissionRegistration = v2PermissionManager.addListener((pluginId, capabilityId, granted) ->
+                    runOnUiThread(() -> {
+                        if (!granted && pendingV2FilePick != null
+                                && pendingV2FilePick.pluginId.equals(pluginId)) {
+                            PendingV2FilePick pending = pendingV2FilePick;
+                            pendingV2FilePick = null;
+                            pending.result.completeExceptionally(new CapabilityFailure(
+                                    "PERMISSION_DENIED",
+                                    "文件选择已因插件权限撤销而取消",
+                                    false
+                            ));
+                        }
+                        notifyHostStateChanged();
+                    })
+            );
+        } catch (CapabilityFailure error) {
+            throw new IllegalStateException("Runtime v2 host capability registration failed", error);
+        }
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
         updateClient = new UpdateClient(this);
         uiPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         syncSuiteThemePreferences();
         // 用户看到主界面前把全部插件准备好，避免把类加载抖动摊到打开后的几秒和首次切页。
         loadPlugins();
+        debugStartup("plugins-loaded", startupStartedAt);
         setContentView(createContentView());
+        debugStartup("content-view-set", startupStartedAt);
         getOnBackPressedDispatcher().addCallback(this, appBackCallback);
         if (BuildConfig.DEBUG) {
             debugInstance = new WeakReference<>(this);
@@ -270,16 +325,36 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         Shizuku.addBinderReceivedListener(binderReceivedListener);
         Shizuku.addBinderDeadListener(binderDeadListener);
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
+        v2ShizukuStateRegistration = v2ShizukuService.addStateListener(() -> runOnUiThread(
+                this::notifyHostStateChangedAfterBinderCallback
+        ));
 
         showDashboard();
-        applyDebugDestination(getIntent());
+        if (BuildConfig.DEBUG && getIntent().hasExtra(EXTRA_DEBUG_DESTINATION)) {
+            getWindow().getDecorView().postDelayed(() -> {
+                applyDebugDestination(getIntent());
+                debugStartup("destination-applied", startupStartedAt);
+            }, 500L);
+        } else {
+            applyDebugDestination(getIntent());
+            debugStartup("destination-applied", startupStartedAt);
+        }
         ensureShellServiceIfAuthorized();
         notifyHostStateChanged();
+    }
+
+    private static void debugStartup(String stage, long startedAt) {
+        if (BuildConfig.DEBUG) {
+            Log.d("AtsStartup", stage + " +" + (SystemClock.elapsedRealtime() - startedAt) + "ms");
+        }
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        ensureShellServiceIfAuthorized();
+        notifyHostStateChangedAfterBinderCallback();
+        v2SchedulerService.onHostStartedAsync();
         if (autoCheckUpdatesForUi()) {
             checkForUpdates(false, false, false);
         }
@@ -304,16 +379,38 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         destroyMigrationBridgePlugins(migrationBridgeImportOwnedPlugins);
         destroyMigrationBridgePlugins(migrationBridgeDeleteOwnedPlugins);
         migrationBridgeExecutor.shutdownNow();
+        if (pendingV2FilePick != null) {
+            pendingV2FilePick.result.completeExceptionally(
+                    new CapabilityFailure("CANCELLED", "Activity was destroyed", true)
+            );
+            pendingV2FilePick = null;
+        }
         for (ToolPlugin plugin : plugins) {
             plugin.onDestroy();
         }
         Shizuku.removeBinderReceivedListener(binderReceivedListener);
         Shizuku.removeBinderDeadListener(binderDeadListener);
         Shizuku.removeRequestPermissionResultListener(permissionResultListener);
+        if (v2ShizukuStateRegistration != null) {
+            try { v2ShizukuStateRegistration.close(); } catch (Exception ignored) { }
+            v2ShizukuStateRegistration = null;
+        }
         if (debugInstance.get() == this) {
             debugInstance.clear();
         }
-        unbindShellService();
+        for (int index = v2ProviderRegistrations.size() - 1; index >= 0; index--) {
+            try {
+                v2ProviderRegistrations.get(index).close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (v2PermissionRegistration != null) {
+            try {
+                v2PermissionRegistration.close();
+            } catch (Exception ignored) {
+            }
+            v2PermissionRegistration = null;
+        }
         updateClient.close();
         super.onDestroy();
     }
@@ -509,9 +606,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     private void loadPlugins() {
         plugins.clear();
         importedDescriptorCache.clear();
+        v2InstalledCache.clear();
         optionalBuiltInPluginIds.clear();
+        v2RuntimeProcess.workerProviders().sync(v2PackageStore.load());
         loadBuiltInPlugins();
-        plugins.addAll(createExternalPlugins(plugins));
+        plugins.addAll(createInstalledPlugins(plugins));
     }
 
     private void loadBuiltInPlugins() {
@@ -535,7 +634,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
-    private List<ToolPlugin> createExternalPlugins(List<ToolPlugin> activePlugins) {
+    private List<ToolPlugin> createInstalledPlugins(List<ToolPlugin> activePlugins) {
         List<ToolPlugin> result = new ArrayList<>();
         LinkedHashMap<String, String> activeVersions = new LinkedHashMap<>();
         for (ToolPlugin plugin : activePlugins) {
@@ -545,9 +644,46 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         for (ImportedPluginDescriptor descriptor : pendingExternalPlugins) {
             importedDescriptorCache.put(descriptor.id, descriptor);
         }
+        List<V2PackageStore.InstalledPlugin> pendingRuntimeV2 = new ArrayList<>(v2PackageStore.load());
+        for (V2PackageStore.InstalledPlugin installed : pendingRuntimeV2) {
+            v2InstalledCache.put(installed.manifest.plugin.id, installed);
+        }
         boolean loadedPlugin;
         do {
             loadedPlugin = false;
+            for (int index = pendingRuntimeV2.size() - 1; index >= 0; index--) {
+                V2PackageStore.InstalledPlugin installed = pendingRuntimeV2.get(index);
+                RuntimePluginManifest manifest = installed.manifest;
+                String pluginId = manifest.plugin.id;
+                if (!installed.enabled
+                        || importedDescriptorCache.containsKey(pluginId)
+                        || activeVersions.containsKey(pluginId)) {
+                    pendingRuntimeV2.remove(index);
+                } else if (!manifest.providerEntries.isEmpty()
+                        && !v2NativeProviderManager.isActive(pluginId, installed.generationDirectory.getName())) {
+                    // A Provider is active only after this exact verified generation loaded at cold start.
+                    pendingRuntimeV2.remove(index);
+                } else if (manifest.capabilityContributions.stream()
+                        .anyMatch(item -> !item.workerEntry.isEmpty())
+                        && !v2RuntimeProcess.workerProviders().isActive(
+                                pluginId, installed.generationDirectory.getName())) {
+                    pendingRuntimeV2.remove(index);
+                } else if (manifest.toolContributions.isEmpty()
+                        && areV2RequirementsSatisfied(manifest, activeVersions)) {
+                    activeVersions.put(pluginId, manifest.plugin.version);
+                    pendingRuntimeV2.remove(index);
+                    loadedPlugin = true;
+                } else if (areV2RequirementsSatisfied(manifest, activeVersions)) {
+                    RuntimePluginManifest.UiEntry uiEntry = manifest.defaultUiEntry();
+                    ToolPlugin plugin = "declarative".equals(uiEntry.type)
+                            ? new V2DeclarativeToolPlugin(installed, this)
+                            : new V2WebToolPlugin(installed, this);
+                    result.add(plugin);
+                    activeVersions.put(plugin.id(), plugin.version());
+                    pendingRuntimeV2.remove(index);
+                    loadedPlugin = true;
+                }
+            }
             for (int i = pendingExternalPlugins.size() - 1; i >= 0; i--) {
                 ImportedPluginDescriptor descriptor = pendingExternalPlugins.get(i);
                 if (!externalPluginStore.isEnabled(descriptor.id)) {
@@ -612,8 +748,14 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     private void notifyHostStateChanged() {
-        if (selectedPlugin != null) {
-            selectedPlugin.onHostStateChanged();
+        // Home widgets are owned by plugins too. Notify every active plugin so a dashboard widget
+        // observes provider connections without requiring the user to leave and re-enter Home.
+        for (ToolPlugin plugin : new ArrayList<>(plugins)) {
+            try {
+                plugin.onHostStateChanged();
+            } catch (RuntimeException error) {
+                Log.w("AtsHostState", "Plugin state callback failed: " + plugin.id(), error);
+            }
         }
         invalidateComposeUi();
     }
@@ -682,12 +824,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
      */
     public boolean canDisablePluginForUi(ToolPlugin plugin) {
         return importedDescriptorCache.containsKey(plugin.id())
+                || v2InstalledCache.containsKey(plugin.id())
                 || optionalBuiltInPluginIds.contains(plugin.id());
     }
 
     /** 停用插件，自动分派到内置或外部两条通道。依赖校验与提示由被调用方负责。 */
     public void disablePluginForUi(ToolPlugin plugin) {
-        if (findImportedDescriptor(plugin.id()) != null) {
+        if (findImportedDescriptor(plugin.id()) != null || findRuntimeV2Plugin(plugin.id()) != null) {
             setImportedPluginEnabled(plugin.id(), false);
         } else if (canDisablePluginForUi(plugin)) {
             setBuiltInPluginEnabled(plugin.id(), false);
@@ -887,8 +1030,17 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         invalidateComposeUi();
     }
 
+    public boolean isRuntimeV2ToolForUi(ToolPlugin plugin) {
+        return plugin instanceof V2WebToolPlugin || plugin instanceof V2DeclarativeToolPlugin;
+    }
+
     public List<ImportedPluginDescriptor> importedDescriptorsForUi() {
-        return new ArrayList<>(importedDescriptorCache.values());
+        List<ImportedPluginDescriptor> result = new ArrayList<>(importedDescriptorCache.values());
+        for (V2PackageStore.InstalledPlugin installed : v2InstalledCache.values()) {
+            result.add(toUiDescriptor(installed));
+        }
+        result.sort((left, right) -> left.title.compareToIgnoreCase(right.title));
+        return result;
     }
 
     public void showPluginRepositoryForUi() {
@@ -1111,10 +1263,10 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public void requestDeletePluginForUi(String pluginId) {
-        ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        if (descriptor == null) return;
+        String title = pluginTitleOrId(pluginId);
+        if (findImportedDescriptor(pluginId) == null && findRuntimeV2Plugin(pluginId) == null) return;
         showComposeDialog(
-                "删除 " + descriptor.title + "？",
+                "删除 " + title + "？",
                 "插件包会从应用中移除。插件自行保存的业务数据不会自动清理。",
                 "取消",
                 "删除",
@@ -1773,7 +1925,15 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     public boolean isPluginLoadedForUi(String pluginId) {
-        return findPlugin(pluginId) != null;
+        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
+        return findPlugin(pluginId) != null || (runtimeV2 != null
+                && !runtimeV2.manifest.providerEntries.isEmpty()
+                && v2NativeProviderManager.isActive(pluginId, runtimeV2.generationDirectory.getName()));
+    }
+
+    public boolean isRuntimeV2ActivationPendingForUi(String pluginId) {
+        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        return installed != null && v2NativeProviderManager.isPendingRestart(installed);
     }
 
     @Override
@@ -1782,35 +1942,165 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     }
 
     @Override
-    public boolean isShizukuReady() {
-        try {
-            return Shizuku.pingBinder() && !Shizuku.isPreV11();
-        } catch (Throwable ignored) {
-            return false;
+    public void closeTool() {
+        runOnUiThread(this::closePluginForUi);
+    }
+
+    @Override
+    public void showMessage(String message) {
+        showToast(message);
+    }
+
+    @Override
+    public V2CapabilityRouter capabilityRouter() {
+        return v2CapabilityRouter;
+    }
+
+    @Override
+    public void closeRuntimeSession(String sessionId) {
+        v2StorageService.closeSession(sessionId);
+        v2DatasetService.closeSession(sessionId);
+        PendingV2FilePick pending = pendingV2FilePick;
+        if (pending != null && pending.sessionId.equals(sessionId)) {
+            pendingV2FilePick = null;
+            pending.result.completeExceptionally(
+                    new CapabilityFailure("CANCELLED", "Runtime session closed", true)
+            );
         }
+    }
+
+    @Override
+    public CompletableFuture<JSONObject> pickFile(
+            String pluginId,
+            String sessionId,
+            JSONArray mimeTypes,
+            int maxBytes
+    ) {
+        CompletableFuture<JSONObject> result = new CompletableFuture<>();
+        runOnUiThread(() -> {
+            if (pendingV2FilePick != null) {
+                result.completeExceptionally(
+                        new CapabilityFailure("PROVIDER_OFFLINE", "Another file picker is active", true)
+                );
+                return;
+            }
+            List<String> types = new ArrayList<>();
+            for (int index = 0; index < mimeTypes.length(); index++) {
+                String value = mimeTypes.optString(index, "").trim();
+                if (!value.isEmpty()) types.add(value);
+            }
+            pendingV2FilePick = new PendingV2FilePick(pluginId, sessionId, Math.max(1, maxBytes), result);
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType(types.size() == 1 ? types.get(0) : "*/*");
+            if (types.size() > 1) intent.putExtra(Intent.EXTRA_MIME_TYPES, types.toArray(new String[0]));
+            startActivityForResult(intent, REQUEST_V2_FILE_IMPORT);
+        });
+        return result;
+    }
+
+    public List<V2PluginPermissionManager.Permission> pluginPermissionsForUi(String pluginId) {
+        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        if (installed == null) return Collections.emptyList();
+        return v2PermissionManager.permissions(installed.manifest);
+    }
+
+    public boolean isRuntimeV2PluginForUi(String pluginId) {
+        return findRuntimeV2Plugin(pluginId) != null;
+    }
+
+    public boolean isTrustedProviderForUi(String pluginId) {
+        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        return installed != null && "trusted-provider".equals(installed.manifest.plugin.kind);
+    }
+
+    public boolean hasPluginDataForUi(String pluginId, ToolPlugin loadedPlugin) {
+        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        if (installed != null) return !installed.manifest.datasets.isEmpty();
+        return loadedPlugin != null && loadedPlugin.legacyDataBridge() != null;
+    }
+
+    public void setPluginPermissionForUi(String pluginId, String capabilityId, boolean granted) {
+        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        if (installed == null) {
+            showToast("插件不存在");
+            return;
+        }
+        try {
+            v2PermissionManager.setGranted(installed.manifest, capabilityId, granted);
+            v2SchedulerService.syncPluginAsync(pluginId);
+            showToast(granted ? "已允许此权限" : "已撤销此权限");
+            invalidateComposeUi();
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            showToast("权限修改失败：" + safeMessage(error));
+        }
+    }
+
+    public String pluginPermissionScopeForUi(V2PluginPermissionManager.Permission permission) {
+        try {
+            JSONObject scopes = new JSONObject(permission.scopesJson);
+            if (scopes.length() == 0) return "不申请额外范围";
+            if ("network.request".equals(permission.capabilityId)) {
+                return "仅访问 " + jsonArraySummary(scopes.optJSONArray("hosts"), "声明的域名")
+                        + " · " + jsonArraySummary(scopes.optJSONArray("methods"), "声明的请求方式");
+            }
+            if ("file.import".equals(permission.capabilityId)) {
+                return "仅限你选择的 " + jsonArraySummary(scopes.optJSONArray("mimeTypes"), "文件类型");
+            }
+            if ("notification".equals(permission.capabilityId)) {
+                return "仅使用 " + jsonArraySummary(scopes.optJSONArray("channels"), "声明的通知类别");
+            }
+            if ("accessibility.manage".equals(permission.capabilityId)
+                    && scopes.optBoolean("allowBackground", false)) {
+                return "允许按插件任务在后台执行";
+            }
+            return "使用插件清单中声明的受限范围";
+        } catch (JSONException error) {
+            return "权限范围无法读取";
+        }
+    }
+
+    private static String jsonArraySummary(JSONArray values, String fallback) {
+        if (values == null || values.length() == 0) return fallback;
+        List<String> text = new ArrayList<>();
+        for (int index = 0; index < values.length() && index < 3; index++) {
+            String value = values.optString(index, "").trim();
+            if (!value.isEmpty()) text.add(value);
+        }
+        if (text.isEmpty()) return fallback;
+        String summary = String.join("、", text);
+        return values.length() > text.size() ? summary + " 等" : summary;
+    }
+
+    @Override
+    public void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            runOnUiThread(() -> requestPermissions(
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_V2_NOTIFICATION_PERMISSION
+            ));
+        }
+    }
+
+    @Override
+    public boolean isShizukuReady() {
+        return v2ShizukuService != null && v2ShizukuService.isReady();
     }
 
     @Override
     public boolean hasShizukuPermission() {
-        try {
-            return Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
-        } catch (Throwable ignored) {
-            return false;
-        }
+        return v2ShizukuService != null && v2ShizukuService.hasPermission();
     }
 
     @Override
     public boolean isShellServiceConnected() {
-        return shellService != null;
+        return v2ShizukuService != null && v2ShizukuService.isConnected();
     }
 
     @Override
     public int shizukuUid() {
-        try {
-            return Shizuku.getUid();
-        } catch (Throwable ignored) {
-            return -1;
-        }
+        return v2ShizukuService == null ? -1 : v2ShizukuService.uid();
     }
 
     @Override
@@ -1828,42 +2118,16 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     @Override
     public void ensureShellService() {
-        if (shellServiceBinding || shellService != null || !hasShizukuPermission()) {
-            return;
-        }
-        shellServiceBinding = true;
-        ComponentName componentName = new ComponentName(getPackageName(), ShellUserService.class.getName());
-        shellServiceArgs = new Shizuku.UserServiceArgs(componentName)
-                .daemon(false)
-                .debuggable(BuildConfig.DEBUG)
-                .processNameSuffix("shell")
-                .tag("shell")
-                .version(1);
-        try {
-            Shizuku.bindUserService(shellServiceArgs, shellConnection);
-        } catch (Throwable e) {
-            shellServiceBinding = false;
-            showToast("连接 UserService 失败：" + e.getMessage());
-        }
+        v2ShizukuService.ensure();
     }
 
     private void ensureShellServiceIfAuthorized() {
-        if (isShizukuReady() && hasShizukuPermission()) {
-            ensureShellService();
-        }
+        if (v2ShizukuService != null) v2ShizukuService.ensureIfAuthorized();
     }
 
     @Override
     public String runShellCommand(String... command) throws IOException {
-        IShellService service = shellService;
-        if (service == null) {
-            throw new IOException("Shizuku UserService 未连接");
-        }
-        try {
-            return service.run(command);
-        } catch (RemoteException e) {
-            throw new IOException(e.getMessage(), e);
-        }
+        return v2ShizukuService.run(command);
     }
 
     @Override
@@ -1877,7 +2141,8 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     @Override
     public void exportPlugin(String pluginId) {
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        if (descriptor == null) {
+        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
+        if (descriptor == null && runtimeV2 == null) {
             showToast("只能导出外部插件清单");
             return;
         }
@@ -1885,7 +2150,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("application/zip");
-        intent.putExtra(Intent.EXTRA_TITLE, descriptor.id + ".atsplugin");
+        intent.putExtra(Intent.EXTRA_TITLE, pluginId + ".atsplugin");
         startActivityForResult(intent, REQUEST_EXPORT_PLUGIN);
     }
 
@@ -1952,6 +2217,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                         ownedPlugins.add(plugin);
                     }
                 }
+                addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
                 List<MigrationBridgeManager.DatasetOption> options =
                         MigrationBridgeManager.discover(this, candidates);
                 if (ownerId == null) {
@@ -2028,6 +2294,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                         ownedPlugins.add(plugin);
                     }
                 }
+                addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
                 List<MigrationBridgeManager.DatasetOption> discovered =
                         MigrationBridgeManager.discover(this, candidates);
                 List<MigrationBridgeManager.DatasetOption> scoped = new ArrayList<>();
@@ -2331,10 +2598,17 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return;
         }
         try {
-            externalPluginStore.delete(pluginId);
+            if (findRuntimeV2Plugin(pluginId) != null) {
+                v2SchedulerService.cancelPlugin(pluginId);
+                v2PackageStore.delete(pluginId);
+                v2NativeProviderManager.deactivate(pluginId);
+                v2PermissionManager.removePlugin(pluginId);
+            } else {
+                externalPluginStore.delete(pluginId);
+            }
             showToast("已删除插件");
             reloadPlugins(selectedPlugin == null || selectedPlugin.id().equals(pluginId) ? null : selectedPlugin.id());
-        } catch (JSONException e) {
+        } catch (JSONException | IOException | ContractException e) {
             showToast("删除失败：" + e.getMessage());
         }
     }
@@ -2362,6 +2636,53 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             handleMigrationBridgeExportResult(resultCode, data);
         } else if (requestCode == REQUEST_IMPORT_MIGRATION_BRIDGE) {
             handleMigrationBridgeImportSelection(resultCode, data);
+        } else if (requestCode == REQUEST_V2_FILE_IMPORT) {
+            handleV2FileImportResult(resultCode, data);
+        }
+    }
+
+    private void handleV2FileImportResult(int resultCode, Intent data) {
+        PendingV2FilePick pending = pendingV2FilePick;
+        pendingV2FilePick = null;
+        if (pending == null) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            pending.result.completeExceptionally(
+                    new CapabilityFailure("CANCELLED", "File selection was cancelled", false)
+            );
+            return;
+        }
+        Uri uri = data.getData();
+        try {
+            byte[] bytes = readBytes(uri, pending.maxBytes);
+            String displayName = "imported-file";
+            try (Cursor cursor = getContentResolver().query(
+                    uri,
+                    new String[]{OpenableColumns.DISPLAY_NAME},
+                    null,
+                    null,
+                    null
+            )) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    String candidate = cursor.getString(0);
+                    if (candidate != null && !candidate.trim().isEmpty()) displayName = candidate.trim();
+                }
+            }
+            String blobId = "import." + java.util.UUID.randomUUID().toString().replace("-", "");
+            JSONObject stored = v2StorageService.importBlob(
+                    pending.pluginId, pending.sessionId, blobId, bytes
+            );
+            JSONObject file = new JSONObject()
+                    .put("name", displayName)
+                    .put("mime", getContentResolver().getType(uri) == null
+                            ? "application/octet-stream" : getContentResolver().getType(uri))
+                    .put("size", bytes.length)
+                    .put("blobId", blobId)
+                    .put("sha256", stored.optString("sha256", ""));
+            pending.result.complete(new JSONObject().put("files", new JSONArray().put(file)));
+        } catch (IOException | JSONException | CapabilityFailure error) {
+            pending.result.completeExceptionally(error instanceof CapabilityFailure
+                    ? error
+                    : new CapabilityFailure("INTERNAL", safeMessage(error), true));
         }
     }
 
@@ -2400,6 +2721,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                         ownedPlugins.add(plugin);
                     }
                 }
+                addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
                 List<MigrationBridgeManager.DatasetOption> options;
                 DataPackageArchive.ReadResult dataInspection = null;
                 BackupArchiveV2.ReadResult bridgeInspection = null;
@@ -2543,12 +2865,65 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
         boolean installStarted = false;
         String pluginId = null;
+        V2PackageStore.InstallSession runtimeV2Session = null;
+        LegacyV2Upgrade legacyUpgrade = null;
         try {
-            PluginImport pluginImport = readPluginPackage(data.getData());
+            byte[] packageBytes = readBytes(data.getData(), (int) ContractLimits.MAX_PACKAGE_BYTES);
+            if (V2PluginPackageArchive.hasFormatV3Manifest(packageBytes)) {
+                runtimeV2Session = v2PackageStore.install(packageBytes, "local", "", false);
+                pluginId = runtimeV2Session.pluginId;
+                V2PackageStore.InstalledPlugin installed = v2PackageStore.find(pluginId);
+                if (installed == null) throw new IOException("安装后的新版插件不可读");
+                v2PermissionManager.reconcile(installed.manifest);
+                if (isBuiltInPluginId(pluginId)) {
+                    throw new IOException("插件 ID 与现有插件冲突");
+                }
+                if (installed.manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
+                    throw new IOException("当前应用版本不兼容此插件");
+                }
+                ImportedPluginDescriptor legacyDescriptor = findImportedDescriptor(pluginId);
+                if (legacyDescriptor != null) {
+                    if (!runtimeV2Session.newInstall) {
+                        throw new IOException("同一插件同时存在旧版和新版记录，请先处理重复安装");
+                    }
+                    legacyUpgrade = prepareLegacyV2Upgrade(installed, legacyDescriptor);
+                    migrateLegacyV2Data(installed, legacyUpgrade);
+                    externalPluginStore.delete(pluginId);
+                    legacyUpgrade.externalRemoved = true;
+                    v2PackageStore.setEnabled(pluginId, legacyUpgrade.wasEnabled);
+                }
+                boolean wasEnabled = v2PackageStore.isEnabled(pluginId);
+                boolean updating = !runtimeV2Session.newInstall || legacyUpgrade != null;
+                reloadPluginsKeepingCurrentPage();
+                boolean nativeProvider = !installed.manifest.providerEntries.isEmpty();
+                if (wasEnabled && !nativeProvider && findPlugin(pluginId) == null) {
+                    throw new IOException("新版本插件无法激活");
+                }
+                v2PackageStore.confirmInstall(runtimeV2Session);
+                v2SchedulerService.syncPluginAsync(pluginId);
+                runtimeV2Session = null;
+                String message;
+                if (legacyUpgrade != null) {
+                    message = "已升级插件并导入 " + legacyUpgrade.migratedDatasets + " 项旧设置："
+                            + installed.manifest.plugin.title;
+                } else {
+                    message = (updating ? "已更新插件：" : "已导入插件，默认停用：")
+                            + installed.manifest.plugin.title;
+                }
+                if (v2PermissionManager.permissions(installed.manifest).stream()
+                        .anyMatch(permission -> permission.state != V2PluginPermissionManager.State.GRANTED)) {
+                    message += "；请在管理页检查插件权限";
+                }
+                if (wasEnabled && nativeProvider) message += "；重启应用后启用系统功能";
+                showToast(message);
+                if (legacyUpgrade != null) legacyUpgrade.cleanup();
+                return;
+            }
+            PluginImport pluginImport = readPluginPackage(packageBytes);
             ImportedPluginDescriptor descriptor = pluginImport.descriptor;
             pluginId = descriptor.id;
-            if (isBuiltInPluginId(descriptor.id)) {
-                showToast("插件 ID 与内置插件冲突");
+            if (isBuiltInPluginId(descriptor.id) || findRuntimeV2Plugin(descriptor.id) != null) {
+                showToast("插件 ID 与现有插件冲突");
                 return;
             }
             if (descriptor.minHostVersionCode > BuildConfig.VERSION_CODE) {
@@ -2569,7 +2944,22 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             }
             externalPluginStore.confirmInstall(descriptor.id);
             showToast((updating ? "已更新插件：" : "已导入插件，默认停用：") + descriptor.title);
-        } catch (IOException | JSONException e) {
+        } catch (IOException | JSONException | ContractException e) {
+            if (legacyUpgrade != null && legacyUpgrade.externalRemoved) {
+                try {
+                    externalPluginStore.restore(legacyUpgrade.externalSnapshot);
+                } catch (IOException | JSONException restoreError) {
+                    Log.e("AtsPluginUpgrade", "Cannot restore legacy plugin after failed upgrade", restoreError);
+                }
+            }
+            if (legacyUpgrade != null) legacyUpgrade.cleanup();
+            if (runtimeV2Session != null) {
+                v2PackageStore.rollbackInstall(runtimeV2Session);
+                v2PermissionManager.reconcile(v2PackageStore.load());
+                reloadPluginsKeepingCurrentPage();
+                showToast("导入失败：" + e.getMessage() + "，已恢复上一代插件");
+                return;
+            }
             if (installStarted && pluginId != null) {
                 externalPluginStore.rollbackInstall(pluginId);
                 reloadPluginsKeepingCurrentPage();
@@ -2583,9 +2973,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             pendingExportPluginId = null;
             return;
         }
-        ImportedPluginDescriptor descriptor = findImportedDescriptor(pendingExportPluginId);
+        String pluginId = pendingExportPluginId;
+        ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
+        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
         pendingExportPluginId = null;
-        if (descriptor == null) {
+        if (descriptor == null && runtimeV2 == null) {
             showToast("导出失败：插件不存在");
             return;
         }
@@ -2593,7 +2985,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             if (outputStream == null) {
                 throw new IOException("无法写入文件");
             }
-            writePluginPackage(outputStream, descriptor);
+            if (runtimeV2 != null) {
+                outputStream.write(v2PackageStore.exportPackage(pluginId));
+            } else {
+                writePluginPackage(outputStream, descriptor);
+            }
             showToast("已导出插件包");
         } catch (IOException | JSONException e) {
             showToast("导出失败：" + e.getMessage());
@@ -2637,6 +3033,95 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             );
         } catch (IOException | JSONException error) {
             showToast("读取迁移包失败：" + error.getMessage());
+        }
+    }
+
+    /**
+     * Stages every legacy Dataset before the old plugin record is removed. The legacy preferences
+     * themselves are intentionally retained, so switching package formats follows Copy -> Validate
+     * -> Switch -> Retain and remains recoverable.
+     */
+    private LegacyV2Upgrade prepareLegacyV2Upgrade(
+            V2PackageStore.InstalledPlugin installed,
+            ImportedPluginDescriptor legacyDescriptor
+    ) throws IOException {
+        ToolPlugin legacyPlugin = findPlugin(legacyDescriptor.id);
+        boolean ownedPlugin = false;
+        if (legacyPlugin == null) {
+            legacyPlugin = ExternalToolFactory.create(this, legacyDescriptor);
+            ownedPlugin = true;
+        }
+        if (legacyPlugin == null) throw new IOException("旧版插件无法加载，不能安全迁移数据");
+        File staging = new File(getCacheDir(), "legacy-v2-upgrade-" + java.util.UUID.randomUUID());
+        if (!staging.mkdirs()) {
+            if (ownedPlugin) legacyPlugin.onDestroy();
+            throw new IOException("无法创建旧数据迁移目录");
+        }
+        try {
+            LegacyDataBridge bridge = legacyPlugin.legacyDataBridge();
+            if (bridge == null) {
+                if (externalPluginStore.mayHavePluginData(legacyDescriptor.id)) {
+                    throw new IOException("旧版插件没有提供数据迁移支持，已保留原版本");
+                }
+                return new LegacyV2Upgrade(
+                        externalPluginStore.snapshot(legacyDescriptor.id),
+                        externalPluginStore.isEnabled(legacyDescriptor.id),
+                        staging,
+                        Collections.emptyMap()
+                );
+            }
+            Map<String, RuntimePluginManifest.Dataset> targets = new LinkedHashMap<>();
+            for (RuntimePluginManifest.Dataset dataset : installed.manifest.datasets) {
+                targets.put(dataset.id, dataset);
+            }
+            Map<String, File> staged = new LinkedHashMap<>();
+            int index = 0;
+            for (LegacyDatasetDescriptor source : bridge.datasets(this)) {
+                if (!bridge.hasData(this, source.id)) continue;
+                RuntimePluginManifest.Dataset target = targets.get(source.id);
+                if (target == null
+                        || target.formatVersion != source.dataFormatVersion
+                        || !target.restoreModes.contains("replace")) {
+                    throw new IOException("新版插件无法读取旧数据：" + source.name);
+                }
+                File payload = new File(staging, "dataset-" + index++ + ".payload");
+                try (FileOutputStream output = new FileOutputStream(payload)) {
+                    bridge.exportDataset(this, source.id, output);
+                    output.getFD().sync();
+                }
+                if (payload.length() > target.maxBytes) {
+                    throw new IOException("旧数据超过新版插件限制：" + source.name);
+                }
+                staged.put(source.id, payload);
+            }
+            return new LegacyV2Upgrade(
+                    externalPluginStore.snapshot(legacyDescriptor.id),
+                    externalPluginStore.isEnabled(legacyDescriptor.id),
+                    staging,
+                    staged
+            );
+        } catch (IOException | RuntimeException error) {
+            deleteRecursively(staging);
+            throw error;
+        } finally {
+            if (ownedPlugin) {
+                try { legacyPlugin.onDestroy(); } catch (RuntimeException ignored) { }
+            }
+        }
+    }
+
+    private void migrateLegacyV2Data(
+            V2PackageStore.InstalledPlugin installed,
+            LegacyV2Upgrade upgrade
+    ) throws IOException {
+        for (Map.Entry<String, File> entry : upgrade.datasets.entrySet()) {
+            try (FileInputStream input = new FileInputStream(entry.getValue())) {
+                v2DatasetService.importDataset(installed.manifest.plugin.id, entry.getKey(), "replace", input);
+            }
+            if (!v2DatasetService.hasDataset(installed.manifest.plugin.id, entry.getKey())) {
+                throw new IOException("旧数据迁移校验失败：" + entry.getKey());
+            }
+            upgrade.migratedDatasets++;
         }
     }
 
@@ -2832,9 +3317,54 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         return result;
     }
 
+    private boolean areV2RequirementsSatisfied(
+            RuntimePluginManifest manifest,
+            Map<String, String> activeVersions
+    ) {
+        if (manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE
+                || (!manifest.toolContributions.isEmpty()
+                && manifest.defaultUiEntry() == null)) {
+            return false;
+        }
+        for (RuntimePluginManifest.BackgroundEntry entry : manifest.backgroundEntries) {
+            if (entry.required && !isV2BackgroundEntryAvailable(manifest.plugin.id, entry)) return false;
+        }
+        for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
+            if (!requirement.optional
+                    && !isVersionRequirementSatisfied(activeVersions.get(requirement.id), requirement.version)) {
+                return false;
+            }
+        }
+        for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
+            if (!requirement.optional
+                    && !v2CapabilityRouter.canResolve(requirement.id, requirement.version)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isV2BackgroundEntryAvailable(
+            String pluginId,
+            RuntimePluginManifest.BackgroundEntry entry
+    ) {
+        if ("provider-task".equals(entry.type)) {
+            return v2BackgroundTaskRegistry.contains(pluginId, entry.entry);
+        }
+        if ("javascript-worker".equals(entry.type)) {
+            return V2JavaScriptWorkerEngine.isSupported();
+        }
+        return false;
+    }
+
+    private static boolean isVersionRequirementSatisfied(String actual, String requirement) {
+        return V2CapabilityRouter.versionSatisfied(actual, requirement);
+    }
+
     private void applyPluginState(JSONObject root, DatasetRestoreMode mode) throws IOException {
         Map<String, Boolean> incomingBuiltIns = readPluginState(root, "builtIn");
         Map<String, Boolean> incomingExternal = readPluginState(root, "external");
+        migrateLegacyShizukuState(incomingBuiltIns, incomingExternal);
         Set<String> knownBuiltIns = builtInPluginIds();
         if (!knownBuiltIns.containsAll(incomingBuiltIns.keySet())) {
             throw new IOException("插件启用状态包含未知内置插件");
@@ -2857,6 +3387,21 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 );
             }
         }
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            String pluginId = installed.manifest.plugin.id;
+            if (mode == DatasetRestoreMode.REPLACE || incomingExternal.containsKey(pluginId)) {
+                v2PackageStore.setEnabled(pluginId, incomingExternal.getOrDefault(pluginId, false));
+                v2SchedulerService.syncPluginAsync(pluginId);
+            }
+        }
+    }
+
+    private static void migrateLegacyShizukuState(
+            Map<String, Boolean> builtIns,
+            Map<String, Boolean> external
+    ) {
+        Boolean enabled = builtIns.remove("shizuku_auth");
+        if (enabled != null) external.putIfAbsent("shizuku_auth", enabled);
     }
 
     private void validateHostDataDependencies(
@@ -2866,9 +3411,13 @@ public class MainActivity extends ComponentActivity implements PluginHost {
     ) throws IOException {
         Set<String> enabledBuiltIns = new LinkedHashSet<>(builtInPluginStateStore.enabledIds());
         Set<String> enabledExternal = new LinkedHashSet<>(externalPluginStore.enabledIds());
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            if (installed.enabled) enabledExternal.add(installed.manifest.plugin.id);
+        }
         if (pluginState != null) {
             Map<String, Boolean> incomingBuiltIns = readPluginState(pluginState, "builtIn");
             Map<String, Boolean> incomingExternal = readPluginState(pluginState, "external");
+            migrateLegacyShizukuState(incomingBuiltIns, incomingExternal);
             Set<String> knownBuiltIns = builtInPluginIds();
             if (!knownBuiltIns.containsAll(incomingBuiltIns.keySet())) {
                 throw new IOException("插件启用状态包含未知内置插件");
@@ -2888,7 +3437,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         for (PluginImport pluginImport : packageImports.values()) {
             resultingExternal.put(pluginImport.descriptor.id, pluginImport.descriptor);
         }
-        enabledExternal.retainAll(resultingExternal.keySet());
+        Set<String> resultingExternalIds = new LinkedHashSet<>(resultingExternal.keySet());
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            resultingExternalIds.add(installed.manifest.plugin.id);
+        }
+        enabledExternal.retainAll(resultingExternalIds);
 
         Map<String, String> activeVersions = new LinkedHashMap<>();
         List<ToolPlugin> builtIns = ToolRegistry.createBuiltInPlugins();
@@ -2900,7 +3453,12 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             }
             for (String pluginId : enabledExternal) {
                 ImportedPluginDescriptor descriptor = resultingExternal.get(pluginId);
-                if (descriptor != null) activeVersions.put(pluginId, descriptor.version);
+                if (descriptor != null) {
+                    activeVersions.put(pluginId, descriptor.version);
+                    continue;
+                }
+                V2PackageStore.InstalledPlugin installed = v2PackageStore.find(pluginId);
+                if (installed != null) activeVersions.put(pluginId, installed.manifest.plugin.version);
             }
             for (ToolPlugin plugin : builtIns) {
                 if (enabledBuiltIns.contains(plugin.id())
@@ -2917,6 +3475,15 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                         throw new IOException(
                                 descriptor.title + " 缺少依赖 " + dependency.label()
                         );
+                    }
+                }
+            }
+            for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+                if (!enabledExternal.contains(installed.manifest.plugin.id)) continue;
+                for (RuntimePluginManifest.Requirement requirement : installed.manifest.pluginRequirements) {
+                    if (!requirement.optional
+                            && !isVersionRequirementSatisfied(activeVersions.get(requirement.id), requirement.version)) {
+                        throw new IOException(installed.manifest.plugin.title + " 缺少依赖 " + requirement.id);
                     }
                 }
             }
@@ -2964,23 +3531,38 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 ownedPlugins.add(plugin);
             }
         }
+        addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
         return MigrationBridgeManager.resolveDataPackageImportBridges(this, candidates, selected);
+    }
+
+    private void addRuntimeV2MigrationPlugins(List<ToolPlugin> candidates, List<ToolPlugin> ownedPlugins) {
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            if (installed.manifest.datasets.isEmpty()) continue;
+            ToolPlugin adapter = new V2MigrationToolPlugin(installed, v2DatasetService);
+            candidates.add(adapter);
+            ownedPlugins.add(adapter);
+        }
     }
 
     @Override
     public boolean isImportedPluginEnabled(String pluginId) {
-        return externalPluginStore.isEnabled(pluginId);
+        return findRuntimeV2Plugin(pluginId) != null
+                ? v2PackageStore.isEnabled(pluginId)
+                : externalPluginStore.isEnabled(pluginId);
     }
 
     @Override
     public void setImportedPluginEnabled(String pluginId, boolean enabled) {
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        if (descriptor == null) {
+        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
+        if (descriptor == null && runtimeV2 == null) {
             showToast("插件不存在");
             return;
         }
         if (enabled) {
-            List<String> missingDependencies = findMissingDependencyTitles(descriptor.dependencies);
+            List<String> missingDependencies = runtimeV2 == null
+                    ? findMissingDependencyTitles(descriptor.dependencies)
+                    : findMissingV2Requirements(runtimeV2.manifest);
             if (!missingDependencies.isEmpty()) {
                 showToast("无法启用，依赖未满足：" + joinNames(missingDependencies));
                 return;
@@ -2992,9 +3574,33 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 return;
             }
         }
-        externalPluginStore.setEnabled(pluginId, enabled);
-        showToast(enabled ? "已启用插件" : "已停用插件");
+        if (runtimeV2 != null) {
+            v2PackageStore.setEnabled(pluginId, enabled);
+            v2SchedulerService.syncPluginAsync(pluginId);
+            if (!enabled && !runtimeV2.manifest.providerEntries.isEmpty()) {
+                v2NativeProviderManager.deactivate(pluginId);
+            }
+        } else {
+            externalPluginStore.setEnabled(pluginId, enabled);
+        }
         reloadPlugins(null);
+        V2PackageStore.InstalledPlugin reloadedV2 = findRuntimeV2Plugin(pluginId);
+        if (enabled && reloadedV2 != null && !reloadedV2.manifest.providerEntries.isEmpty()
+                && v2NativeProviderManager.isPendingRestart(reloadedV2)) {
+            showToast("已启用插件，原生能力将在重启应用后激活");
+            return;
+        }
+        if (enabled && !isPluginLoadedForUi(pluginId)) {
+            if (runtimeV2 != null) {
+                v2PackageStore.setEnabled(pluginId, false);
+                v2SchedulerService.syncPluginAsync(pluginId);
+            }
+            else externalPluginStore.setEnabled(pluginId, false);
+            reloadPlugins(null);
+            showToast("插件无法激活，已保持停用");
+            return;
+        }
+        showToast(enabled ? "已启用插件" : "已停用插件");
     }
 
     @Override
@@ -3046,7 +3652,7 @@ public class MainActivity extends ComponentActivity implements PluginHost {
                 return true;
             }
         }
-        return ShizukuPlugin.ID.equals(pluginId);
+        return false;
     }
 
     private ToolPlugin findBuiltInPlugin(String pluginId) {
@@ -3075,6 +3681,23 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         for (ToolPlugin plugin : plugins) {
             activeVersions.put(plugin.id(), plugin.version());
         }
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            if (installed.enabled
+                    && "trusted-provider".equals(installed.manifest.plugin.kind)
+                    && v2NativeProviderManager.isActive(
+                            installed.manifest.plugin.id,
+                            installed.generationDirectory.getName())) {
+                activeVersions.put(installed.manifest.plugin.id, installed.manifest.plugin.version);
+            }
+            if (installed.enabled
+                    && installed.manifest.capabilityContributions.stream()
+                    .anyMatch(item -> !item.workerEntry.isEmpty())
+                    && v2RuntimeProcess.workerProviders().isActive(
+                            installed.manifest.plugin.id,
+                            installed.generationDirectory.getName())) {
+                activeVersions.put(installed.manifest.plugin.id, installed.manifest.plugin.version);
+            }
+        }
         return activeVersions;
     }
 
@@ -3084,7 +3707,9 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             return builtInPlugin.title();
         }
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        return descriptor == null ? pluginId : descriptor.title;
+        if (descriptor != null) return descriptor.title;
+        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
+        return runtimeV2 == null ? pluginId : runtimeV2.manifest.plugin.title;
     }
 
     private List<String> findDependentPluginTitles(String pluginId) {
@@ -3099,6 +3724,15 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
             if (externalPluginStore.isEnabled(descriptor.id) && dependsOn(descriptor.dependencies, pluginId)) {
                 dependents.add(descriptor.title);
+            }
+        }
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            if (!installed.enabled || installed.manifest.plugin.id.equals(pluginId)) continue;
+            for (RuntimePluginManifest.Requirement requirement : installed.manifest.pluginRequirements) {
+                if (!requirement.optional && requirement.id.equals(pluginId)) {
+                    dependents.add(installed.manifest.plugin.title);
+                    break;
+                }
             }
         }
         return dependents;
@@ -3126,6 +3760,87 @@ public class MainActivity extends ComponentActivity implements PluginHost {
 
     private ImportedPluginDescriptor findImportedDescriptor(String pluginId) {
         return pluginId == null ? null : importedDescriptorCache.get(pluginId);
+    }
+
+    private V2PackageStore.InstalledPlugin findRuntimeV2Plugin(String pluginId) {
+        return pluginId == null ? null : v2InstalledCache.get(pluginId);
+    }
+
+    private ImportedPluginDescriptor toUiDescriptor(V2PackageStore.InstalledPlugin installed) {
+        RuntimePluginManifest manifest = installed.manifest;
+        LinkedHashSet<String> dependencies = new LinkedHashSet<>();
+        for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
+            if (!requirement.optional) dependencies.add(v2DependencyLabel(requirement));
+        }
+        return new ImportedPluginDescriptor(
+                manifest.plugin.id,
+                manifest.plugin.title,
+                manifest.plugin.description,
+                manifest.plugin.version,
+                manifest.plugin.versionCode,
+                manifest.plugin.minHostVersionCode,
+                "runtime-v2",
+                manifest.plugin.publisher,
+                "3",
+                "",
+                "",
+                dependencies,
+                Collections.emptyList()
+        );
+    }
+
+    private static String v2DependencyLabel(RuntimePluginManifest.Requirement requirement) {
+        String version = requirement.version == null ? "" : requirement.version.trim();
+        if (version.isEmpty() || "*".equals(version)) return requirement.id;
+        if (version.startsWith(">") || version.startsWith("<") || version.startsWith("=")) {
+            return requirement.id + version;
+        }
+        return requirement.id + "=" + version;
+    }
+
+    private List<String> findMissingV2Requirements(RuntimePluginManifest manifest) {
+        Map<String, String> activeVersions = activePluginVersions();
+        List<String> missing = new ArrayList<>();
+        if (manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
+            missing.add("Android Tool Suite " + manifest.plugin.minHostVersionCode + "+");
+        }
+        if (!manifest.toolContributions.isEmpty()
+                && manifest.defaultUiEntry() == null) {
+            missing.add("当前版本需要 Web 或声明式工具入口");
+        }
+        for (RuntimePluginManifest.BackgroundEntry entry : manifest.backgroundEntries) {
+            if (entry.required && !isV2BackgroundEntryAvailable(manifest.plugin.id, entry)) {
+                missing.add("后台运行时 " + entry.type);
+            }
+        }
+        for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
+            if (!requirement.optional
+                    && !isVersionRequirementSatisfied(activeVersions.get(requirement.id), requirement.version)) {
+                missing.add(pluginTitleOrId(requirement.id) + "（需要 "
+                        + v2DependencyLabel(requirement) + "）");
+            }
+        }
+        for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
+            if (!requirement.optional
+                    && !v2CapabilityRouter.canResolve(requirement.id, requirement.version)
+                    && !providesCompatibleCapability(manifest, requirement)) {
+                missing.add("能力 " + requirement.id + " " + requirement.version);
+            }
+        }
+        return missing;
+    }
+
+    private static boolean providesCompatibleCapability(
+            RuntimePluginManifest manifest,
+            RuntimePluginManifest.CapabilityRequirement requirement
+    ) {
+        for (RuntimePluginManifest.CapabilityContribution contribution : manifest.capabilityContributions) {
+            if (contribution.id.equals(requirement.id)
+                    && isVersionRequirementSatisfied(contribution.version, requirement.version)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<MigrationBridgeManager.DatasetOption> createHostDataExportOptions(
@@ -3161,6 +3876,11 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             external.put(new JSONObject()
                     .put("id", descriptor.id)
                     .put("enabled", externalPluginStore.isEnabled(descriptor.id)));
+        }
+        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            external.put(new JSONObject()
+                    .put("id", installed.manifest.plugin.id)
+                    .put("enabled", installed.enabled));
         }
         return root.put("builtIn", builtIns).put("external", external);
     }
@@ -3698,20 +4418,6 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
-    private void unbindShellService() {
-        if (shellServiceArgs == null) {
-            return;
-        }
-        try {
-            Shizuku.unbindUserService(shellServiceArgs, shellConnection, true);
-        } catch (Throwable ignored) {
-        } finally {
-            shellService = null;
-            shellServiceBinding = false;
-            shellServiceArgs = null;
-        }
-    }
-
     private static final class WidgetRegistration {
         final String pluginTitle;
         final String key;
@@ -3734,6 +4440,25 @@ public class MainActivity extends ComponentActivity implements PluginHost {
         }
     }
 
+    private static final class PendingV2FilePick {
+        final String pluginId;
+        final String sessionId;
+        final int maxBytes;
+        final CompletableFuture<JSONObject> result;
+
+        PendingV2FilePick(
+                String pluginId,
+                String sessionId,
+                int maxBytes,
+                CompletableFuture<JSONObject> result
+        ) {
+            this.pluginId = pluginId;
+            this.sessionId = sessionId;
+            this.maxBytes = maxBytes;
+            this.result = result;
+        }
+    }
+
     private static final class PreparedMigrationPlugin {
         final PluginImport pluginImport;
         final boolean enabled;
@@ -3742,6 +4467,38 @@ public class MainActivity extends ComponentActivity implements PluginHost {
             this.pluginImport = pluginImport;
             this.enabled = enabled;
         }
+    }
+
+    private static final class LegacyV2Upgrade {
+        final ExternalPluginStore.PluginState externalSnapshot;
+        final boolean wasEnabled;
+        final File stagingDirectory;
+        final Map<String, File> datasets;
+        boolean externalRemoved;
+        int migratedDatasets;
+
+        LegacyV2Upgrade(
+                ExternalPluginStore.PluginState externalSnapshot,
+                boolean wasEnabled,
+                File stagingDirectory,
+                Map<String, File> datasets
+        ) {
+            this.externalSnapshot = externalSnapshot;
+            this.wasEnabled = wasEnabled;
+            this.stagingDirectory = stagingDirectory;
+            this.datasets = Collections.unmodifiableMap(new LinkedHashMap<>(datasets));
+        }
+
+        void cleanup() {
+            deleteRecursively(stagingDirectory);
+        }
+    }
+
+    private static void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        File[] children = file.listFiles();
+        if (children != null) for (File child : children) deleteRecursively(child);
+        if (!file.delete()) file.deleteOnExit();
     }
 
     private static final class ZipPluginPackage {

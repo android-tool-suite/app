@@ -1,0 +1,35 @@
+{
+  "$schema": "https://android-tool-suite.test/contracts/declarative-ui-v1.schema.json",
+  "formatVersion": 1,
+  "queries": [
+    {
+      "id": "echo",
+      "capability": "sample.echo",
+      "method": "sample.echo.call",
+      "payload": { "value": "普通插件能力已运行" },
+      "target": "echo",
+      "required": true,
+      "deadlineMs": 10000
+    }
+  ],
+  "actions": [],
+  "body": {
+    "type": "column",
+    "children": [
+      {
+        "type": "section",
+        "title": "Worker Capability",
+        "subtitle": "实现运行在受限 JavaScript Worker，不获得宿主身份。",
+        "children": [
+          {
+            "type": "card",
+            "children": [
+              { "type": "text", "value": "调用结果", "style": "label", "tone": "muted" },
+              { "type": "status", "value": { "path": "echo.value", "fallback": "等待授权或运行" }, "tone": "success" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

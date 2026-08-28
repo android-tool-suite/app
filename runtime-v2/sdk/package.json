@@ -1,0 +1,15 @@
+{
+  "name": "@android-tool-suite/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "files": ["src"],
+  "scripts": {
+    "check": "npm run check:generated && tsc -p tsconfig.json",
+    "check:generated": "python ../../tools/runtime-v2/ats.py generate --check"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

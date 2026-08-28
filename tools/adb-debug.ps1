@@ -9,20 +9,27 @@ param(
         'export-plugin',
         'delete-plugin',
         'set-plugin-enabled',
+        'list-permissions',
+        'set-permission',
         'set-widget-visible',
         'navigate',
-        'reset-state'
+        'reset-state',
+        'set-v2-dev-server',
+        'clear-v2-dev-server'
     )]
     [string]$Command,
 
     [string]$Plugin,
+    [string]$Capability,
     [string]$Widget,
     [string]$Destination,
     [string]$Path,
     [string]$PluginFile,
     [string]$OutputFile,
+    [string]$DevUrl,
     [bool]$Enabled,
     [bool]$Visible,
+    [switch]$ReplaceSameVersion,
     [string]$Serial
 )
 
@@ -123,6 +130,9 @@ switch ($Command) {
         }
         Require-Value 'Path or -PluginFile' $Path
         $extras += @('--es', 'path', $Path)
+        if ($ReplaceSameVersion) {
+            $extras += @('--ez', 'replace_same_version', 'true')
+        }
     }
     'delete-plugin' {
         Require-Value 'Plugin' $Plugin
@@ -147,12 +157,37 @@ switch ($Command) {
         }
         $extras += @('--es', 'plugin', $Plugin, '--ez', 'enabled', (Boolean-Text $Enabled))
     }
+    'list-permissions' {
+        Require-Value 'Plugin' $Plugin
+        $extras += @('--es', 'plugin', $Plugin)
+    }
+    'set-permission' {
+        Require-Value 'Plugin' $Plugin
+        Require-Value 'Capability' $Capability
+        if (-not $PSBoundParameters.ContainsKey('Enabled')) {
+            throw "命令 $Command 缺少参数 -Enabled"
+        }
+        $extras += @(
+            '--es', 'plugin', $Plugin,
+            '--es', 'capability', $Capability,
+            '--ez', 'enabled', (Boolean-Text $Enabled)
+        )
+    }
     'set-widget-visible' {
         Require-Value 'Widget' $Widget
         if (-not $PSBoundParameters.ContainsKey('Visible')) {
             throw "命令 $Command 缺少参数 -Visible"
         }
         $extras += @('--es', 'widget', $Widget, '--ez', 'visible', (Boolean-Text $Visible))
+    }
+    'set-v2-dev-server' {
+        Require-Value 'Plugin' $Plugin
+        Require-Value 'DevUrl' $DevUrl
+        $extras += @('--es', 'plugin', $Plugin, '--es', 'url', $DevUrl)
+    }
+    'clear-v2-dev-server' {
+        Require-Value 'Plugin' $Plugin
+        $extras += @('--es', 'plugin', $Plugin)
     }
 }
 

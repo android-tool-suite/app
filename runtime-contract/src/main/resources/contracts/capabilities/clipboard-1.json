@@ -1,0 +1,16 @@
+{
+  "id": "clipboard",
+  "version": "1.0.0",
+  "description": "在用户动作上下文中读取或写入剪贴板。",
+  "permission": {
+    "mode": "user",
+    "risk": "sensitive",
+    "title": "剪贴板",
+    "description": "在你操作工具时读取或写入剪贴板内容。"
+  },
+  "methods": {
+    "clipboard.read": { "params": { "type": "object" }, "result": { "type": "object" } },
+    "clipboard.write": { "params": { "type": "object", "required": ["text"] }, "result": { "type": "object" } }
+  },
+  "events": []
+}

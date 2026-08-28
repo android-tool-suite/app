@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://android-tool-suite.test/contracts/rpc-v2.schema.json",
+  "title": "Android Tool Suite RPC v2 Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "kind", "pluginId", "sessionId", "requestId"],
+  "properties": {
+    "protocol": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$", "maxLength": 16 },
+    "kind": { "enum": ["hello", "ready", "request", "response", "event", "cancel"] },
+    "pluginId": { "type": "string", "minLength": 2, "maxLength": 128 },
+    "sessionId": { "type": "string", "minLength": 16, "maxLength": 128 },
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "method": { "type": "string", "minLength": 3, "maxLength": 160 },
+    "event": { "type": "string", "minLength": 3, "maxLength": 160 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "deadlineMs": { "type": "integer", "minimum": 1, "maximum": 600000 },
+    "payload": {},
+    "ok": { "type": "boolean" },
+    "result": {},
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "$defs": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_REQUEST",
+            "PROTOCOL_MISMATCH",
+            "CAPABILITY_UNDECLARED",
+            "CAPABILITY_UNAVAILABLE",
+              "CAPABILITY_VERSION_MISMATCH",
+              "PERMISSION_DENIED",
+              "CONSENT_REQUIRED",
+            "PROVIDER_OFFLINE",
+            "TIMEOUT",
+            "CANCELLED",
+            "CANCEL_PENDING",
+            "RESOURCE_LIMIT",
+            "NOT_SUPPORTED",
+            "INTERNAL"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "retryable": { "type": "boolean" },
+        "details": {}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "request" } } },
+      "then": { "required": ["method", "payload"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "response" }, "ok": { "const": true } }, "required": ["ok"] },
+      "then": { "required": ["result"], "not": { "required": ["error"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "response" }, "ok": { "const": false } }, "required": ["ok"] },
+      "then": { "required": ["error"], "not": { "required": ["result"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "event" } } },
+      "then": { "required": ["event", "sequence", "payload"] }
+    }
+  ]
+}

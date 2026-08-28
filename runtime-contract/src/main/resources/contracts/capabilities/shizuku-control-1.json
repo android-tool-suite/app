@@ -1,0 +1,29 @@
+{
+  "id": "shizuku.control",
+  "version": "1.0.0",
+  "description": "查看 Shizuku 连接并在明确用户动作下请求授权或连接 UserService。",
+  "permission": {
+    "mode": "user",
+    "risk": "restricted",
+    "title": "管理 Shizuku 连接",
+    "description": "请求本应用的 Shizuku 授权并连接受控系统服务。"
+  },
+  "methods": {
+    "shizuku.getConnection": {
+      "params": { "type": "object" },
+      "result": {
+        "type": "object",
+        "required": ["state", "title", "detail", "ready", "granted", "connected", "uid"]
+      }
+    },
+    "shizuku.requestPermission": {
+      "params": { "type": "object" },
+      "result": { "type": "object", "required": ["requested"] }
+    },
+    "shizuku.connect": {
+      "params": { "type": "object" },
+      "result": { "type": "object", "required": ["connecting"] }
+    }
+  },
+  "events": ["shizuku.connectionChanged"]
+}

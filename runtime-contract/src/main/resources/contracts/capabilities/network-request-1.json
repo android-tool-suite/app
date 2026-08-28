@@ -1,0 +1,18 @@
+{
+  "id": "network.request",
+  "version": "1.0.0",
+  "description": "按 manifest host/method/MIME/size scope 执行 HTTPS 请求。",
+  "permission": {
+    "mode": "user",
+    "risk": "sensitive",
+    "title": "网络访问",
+    "description": "访问插件声明的 HTTPS 域名和请求方式。"
+  },
+  "methods": {
+    "network.request": {
+      "params": { "type": "object", "required": ["url", "method"] },
+      "result": { "type": "object", "required": ["status", "headers", "body"] }
+    }
+  },
+  "events": []
+}
