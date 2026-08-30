@@ -195,7 +195,7 @@ private fun resolveSuiteColorScheme(context: Context, darkTheme: Boolean, dynami
 /**
  * Web Tool 使用的同源 CSS token 快照。
  *
- * Android Runtime v2 从宿主虚拟源提供这段 CSS；Web Tool 只消费 token，不复制 Compose 色板，也不
+ * Android 插件运行时 从宿主虚拟源提供这段 CSS；Web Tool 只消费 token，不复制 Compose 色板，也不
  * 自行读取系统主题覆盖宿主设置。主题改变时宿主创建新快照并发送 `app.themeChanged`。
  */
 object SuiteWebTheme {

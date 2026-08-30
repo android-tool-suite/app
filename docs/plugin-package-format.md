@@ -2,10 +2,10 @@
 
 插件包使用 `.atsplugin` 扩展名，本质是一个受限 ZIP。宿主当前同时读取两代格式：
 
-- **format v3**：Runtime v2 的主格式，普通工具使用统一声明式 UI（Host 或 WebView renderer）、版本化 Capability、宿主存储和可选后台任务；
+- **format v3**：插件运行时 的主格式，普通工具使用统一声明式 UI（Host 或 WebView renderer）、版本化 Capability、宿主存储和可选后台任务；
 - **format v1/v2**：旧 API1 Android AAR/Compose 插件的冻结兼容格式，只用于既有插件迁移和回滚。
 
-新插件必须使用 format v3。旧格式在三个官方插件完成迁移以及 ADR-0007 的双稳定版本／90 天窗口结束前继续可用，但不再增加 API。
+新插件必须使用 format v3。旧格式只为尚未迁移的 Phigros 与抽卡插件以及双稳定版本／90 天回滚窗口继续可用，不再增加 API。
 
 ## 1. Format v3 目录结构
 
@@ -118,21 +118,21 @@ format v3 不包含根级 `plugin.apk`，也不允许 ZIP 目录占位项、未�
 普通 Web 插件不需要 Android SDK 或 Gradle：
 
 ```powershell
-python tools\runtime-v2\ats.py create sample-notes `
+python tools\plugin\ats.py create sample-notes `
   --plugin-id sample_notes `
   --title "示例笔记" `
   --publisher example.publisher
 
-python tools\runtime-v2\ats.py lint sample-notes
-python tools\runtime-v2\ats.py pack sample-notes --output sample-notes.atsplugin
-python tools\runtime-v2\ats.py verify sample-notes.atsplugin
-python tools\runtime-v2\ats.py dev sample-notes --android --serial <设备序列号>
+python tools\plugin\ats.py lint sample-notes
+python tools\plugin\ats.py pack sample-notes --output sample-notes.atsplugin
+python tools\plugin\ats.py verify sample-notes.atsplugin
+python tools\plugin\ats.py dev sample-notes --android --serial <设备序列号>
 ```
 
 包含 Native Provider 时必须签名，并在离线验收中使用对应公钥：
 
 ```powershell
-python tools\runtime-v2\ats.py pack provider-project --output provider.atsplugin `
+python tools\plugin\ats.py pack provider-project --output provider.atsplugin `
   --signing-key <publisher-private.pem> `
   --public-key <publisher-public.pem>
 ```
@@ -141,7 +141,7 @@ python tools\runtime-v2\ats.py pack provider-project --output provider.atsplugin
 
 ## 5. WebView renderer 与能力边界
 
-宿主把 Web 资源加载到每插件独立的虚拟 HTTPS origin，并注入版本化消息传输层。页面默认不能访问 `file://`、任意导航、Cookie、DOM 持久化或 Host Java 对象；外部网络必须通过声明了 origin/method scope 的 `network.request`。主题、生命周期、返回、错误和取消通过 Runtime v2 SDK 传递。
+宿主把 Web 资源加载到每插件独立的虚拟 HTTPS origin，并注入版本化消息传输层。页面默认不能访问 `file://`、任意导航、Cookie、DOM 持久化或 Host Java 对象；外部网络必须通过声明了 origin/method scope 的 `network.request`。主题、生命周期、返回、错误和取消通过 插件运行时 SDK 传递。
 
 复杂交互可以使用任意能产出静态 Web 资源的框架；插件不得复制宿主设计 token。项目内官方插件应使用 SDK 提供的主题变量和 `SuiteDesignSystem` 对应的语义组件，覆盖浅色、深色、窄屏、横屏、加载、空、错误和离线状态。
 
@@ -189,7 +189,28 @@ WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号�
 - 手动导入不取得仓库信誉；
 - 无论来源，包内 format v3 校验规则相同；Native Provider 仍必须命中受信 publisher key。
 
-## 9. Legacy format v1/v2
+## 9. 数据格式兼容与降级
+
+需要支持历史版本选择的插件在仓库根目录维护 `data-compatibility.json`：
+
+```json
+{
+  "schemaVersion": 1,
+  "dataFormatVersion": 1,
+  "minReadableDataFormatVersion": 0,
+  "maxReadableDataFormatVersion": 1
+}
+```
+
+- `dataFormatVersion` 是当前版本可能写入的最高业务数据格式，不是插件包格式；
+- 可读范围必须包含自身格式；没有声明的历史版本按只读 `v0` 处理；
+- 写入旧版无法理解的结构前必须递增数据格式，并用测试证明可读范围；
+- 降级目标无法读取当前格式时，宿主必须阻止安装；同一格式内可以提示后继续；
+- 代码 generation 回滚只恢复插件包，不代表回滚业务 Dataset。降级前应导出 `.atsbackup` Dataset 或插件领域标准格式。
+
+format v3 Dataset 的格式、恢复模式和依赖由 manifest 声明；API1 的物理路径、删除能力和迁移验收统一由外层 [数据管理文档](../../docs/data-management.md) 约束。
+
+## 10. Legacy format v1/v2
 
 旧包结构仍为：
 
@@ -202,4 +223,4 @@ legacy.atsplugin
 
 `plugin.entryClass` 实现 `com.androidtoolsuite.app.plugin.api.ToolPlugin`，宿主通过 `DexClassLoader` 在同一进程加载。format v2 在 v1 基础上增加整数 `versionCode`、`minHostVersionCode` 和 `sdkVersion`。这条路径只接受兼容性、迁移和安全修复；新 Capability、任务、Dataset 与 Web UI 只进入 format v3。
 
-API1 的停止发布、Registry 拒绝和代码删除必须按外层工作区的 `../../docs/adr/0007-api1-exit-and-release-order.md` 执行，不能因为 V3 包已经可安装就提前破坏旧数据回滚窗口。
+API1 的停止发布、Registry 拒绝和代码删除必须按外层 [插件运行时架构](../../docs/plugin-runtime-architecture.md) 的迁移窗口执行，不能因为 V3 包已经可安装就提前破坏旧数据回滚窗口。

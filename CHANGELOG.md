@@ -10,10 +10,13 @@
 - 普通插件可通过必需的 JavaScript Worker 提供自定义 Capability；Worker 的下游调用以提供者插件身份重新授权，不获得宿主身份。
 - 新增 WorkManager 持久调度、API 24+ provider-task 与 API 26+ JavaScriptSandbox worker；任务具备约束、超时、重试、并发租约和持久历史。
 - 新增宿主管理的 KV／blob、Keystore AES-GCM SecretStore、Dataset chunk API 与 staging generation 原子切换，并接入统一 `.atsbackup` v3 数据管理。
-- 提供 Runtime v2 CLI、契约生成、WebView／Host UI 与 Worker Capability 示例及 ADB 调试入口；Runtime Contract 首版为 `2.0.0`，插件 SDK 提升到 `1.4.0`。
+- 提供插件 CLI、契约生成、WebView／Host UI 与 Worker Capability 示例及 ADB 调试入口；Runtime Contract 首版为 `2.0.0`，插件 SDK 保持 `1.4.0`。
 
 ### 架构调整
 
+- 运行时实现归并到 `plugin/runtime` 并改用职责类名；Web SDK、CLI 和示例分别整理到 `web-sdk`、`tools/plugin` 与 `examples/plugins`，不再把 V2 工作代号写入文件名或包名。
+- Shizuku 授权及 Native Provider 源码迁移到独立 `plugin-shizuku-auth` 仓库，主体只保留平台生命周期桥和公开 SDK/契约。
+- 插件 SDK 的 Native Provider API 从工作代号包 `.plugin.v2` 迁移到稳定包 `.plugin.runtime`；本次只整理源码命名，不改变 SDK 版本，Provider 插件随当前源码重新编译。
 - 普通包禁止声明或夹带 Native Provider；必须以宿主身份与系统交互的插件使用签名的 `trusted-provider`，但仍可同时贡献 UI、主页组件、Worker 与普通 Tool 功能，管理页明确显示完全信任边界。
 - `shizuku_auth` 从内置插件改为单个独立 `1.0.0 (1)` 全信任 V3 包：同包注册 `shizuku.control` 与 `accessibility.manage`，并用声明式 UI 查看连接、请求系统授权和连接 UserService；宿主只保留 Android manifest、UserService 与 Binder 生命周期要求的最小 bridge。
 - API1 与 Runtime v2 插件使用统一迭代依赖装载；旧备份中的内置 `shizuku_auth` 启用状态可映射到同 ID 外部包。

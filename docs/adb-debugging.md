@@ -17,13 +17,13 @@ $sdk = 'C:\Users\19635\AppData\Local\Android\Sdk'
 & "$sdk\emulator\emulator.exe" -avd Medium_Phone_API_36.1
 ```
 
-Runtime v2 的开发服务器仅存在于 Debug 构建，可手动设置或由 `ats dev --android` 管理：
+插件 Web 开发服务器仅存在于 Debug 构建，可手动设置或由 `ats dev --android` 管理：
 
 ```powershell
-.\tools\adb-debug.ps1 -Command set-v2-dev-server `
+.\tools\adb-debug.ps1 -Command set-dev-server `
   -Plugin accessibility_grant `
   -DevUrl http://127.0.0.1:8765/web/index.html
-.\tools\adb-debug.ps1 -Command clear-v2-dev-server -Plugin accessibility_grant
+.\tools\adb-debug.ps1 -Command clear-dev-server -Plugin accessibility_grant
 ```
 
 模拟器和实体设备都使用 `adb reverse` 后的 `127.0.0.1`，并由 Debug Host
@@ -61,12 +61,10 @@ $adb = "$sdk\platform-tools\adb.exe"
 # 保持窗口可见，同时用 ADB 查询和修改状态
 .\tools\adb-debug.ps1 -Command status
 .\tools\adb-debug.ps1 -Command import-plugin `
-  -PluginFile .\artifacts\shizuku-auth.atsplugin
+  -PluginFile ..\plugins\shizuku-auth\artifacts\shizuku-auth.atsplugin
 .\tools\adb-debug.ps1 -Command set-plugin-enabled -Plugin shizuku_auth -Enabled $true
 & $adb shell am force-stop com.androidtoolsuite.app.debug
 & $adb shell monkey -p com.androidtoolsuite.app.debug 1
-.\tools\adb-debug.ps1 -Command set-permission `
-  -Plugin shizuku_auth -Capability shizuku.control -Enabled $true
 
 # 观察实时日志；按 Ctrl+C 停止
 $appPid = (& $adb shell pidof com.androidtoolsuite.app.debug).Trim()
@@ -143,8 +141,8 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | `export-plugin` | `-Plugin <id> [-OutputFile <本机文件>]` | 导出外部插件包并通过 ADB 拉取到电脑 |
 | `delete-plugin` | `-Plugin <id>` | 删除外部插件；有已启用依赖方时拒绝 |
 | `set-plugin-enabled` | `-Plugin <id> -Enabled $true/$false` | 启停插件并校验依赖 |
-| `list-permissions` | `-Plugin <id>` | 列出 V2 插件声明的权限、scope、当前状态和有限审计 |
-| `set-permission` | `-Plugin <id> -Capability <id> -Enabled $true/$false` | Debug 构建中允许或撤销 V2 Capability |
+| `list-permissions` | `-Plugin <id>` | 列出 format v3 插件声明的权限、scope、当前状态和有限审计 |
+| `set-permission` | `-Plugin <id> -Capability <id> -Enabled $true/$false` | Debug 构建中允许或撤销普通插件 Capability |
 | `set-widget-visible` | `-Widget <plugin:id> -Visible $true/$false` | 显示或隐藏主页组件 |
 | `navigate` | `-Destination dashboard/plugins/manager/store/settings/about/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
 | `reset-state` | 无 | 删除外部插件和权限状态，并恢复组件显示状态 |
@@ -153,7 +151,7 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 
 ```powershell
 .\tools\adb-debug.ps1 -Command import-plugin `
-  -PluginFile .\artifacts\shizuku-auth.atsplugin
+  -PluginFile ..\plugins\shizuku-auth\artifacts\shizuku-auth.atsplugin
 
 .\tools\adb-debug.ps1 -Command import-plugin `
   -PluginFile ..\plugins\accessibility-grant\artifacts\accessibility-grant.atsplugin
@@ -163,9 +161,6 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 
 adb shell am force-stop com.androidtoolsuite.app.debug
 adb shell monkey -p com.androidtoolsuite.app.debug 1
-
-.\tools\adb-debug.ps1 -Command set-permission `
-  -Plugin shizuku_auth -Capability shizuku.control -Enabled $true
 
 .\tools\adb-debug.ps1 -Command export-plugin `
   -Plugin accessibility_grant -OutputFile .\artifacts\accessibility-grant-debug.atsplugin

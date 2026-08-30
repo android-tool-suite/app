@@ -11,7 +11,7 @@ Android Tool Suite 的主体应用仓库。宿主负责插件安装、统一声�
 1. 在手机上安装并启动 Shizuku。
 2. 用 Android Studio 打开本主体应用仓库。
 3. 构建并安装 `app` 模块。
-4. 导入并启用受信签名的 `artifacts/shizuku-auth.atsplugin`，重启宿主使同包底层能力冷启动激活。
+4. 从独立的 `plugin-shizuku-auth` 仓库构建或下载 `shizuku-auth.atsplugin`，导入并启用后重启宿主，使同包底层能力冷启动激活。
 5. 在管理页允许“管理 Shizuku 连接”，再打开该插件请求系统授权。
 6. 在底部导航进入“主页”“插件”或“管理”。
 7. 在“插件管理 → 插件仓库”中选择正式或调试仓库，再为每个插件选择具体历史版本进行安装、升级或安全降级；也可以从同一页面导入本地 `.atsplugin`。
@@ -21,36 +21,39 @@ Android Tool Suite 的主体应用仓库。宿主负责插件安装、统一声�
 
 ## 插件结构
 
-Runtime v2 插件使用 format v3 清单。普通 Tool 统一声明 `ui/*.json`，由文档选择宿主组件树或隔离 WebView renderer，并且只能通过 Capability Router 使用获授权的能力。API1 `ToolPlugin`／`plugin.apk` 仅在迁移窗口内兼容。
+插件运行时 插件使用 format v3 清单。普通 Tool 统一声明 `ui/*.json`，由文档选择宿主组件树或隔离 WebView renderer，并且只能通过 Capability Router 使用获授权的能力。API1 `ToolPlugin`／`plugin.apk` 仅在迁移窗口内兼容。
 
 ```text
 app/src/main/java/com/androidtoolsuite/app/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
-  plugin/v2/            V3 包、声明式 UI renderer、权限、Capability、数据与调度
+  plugin/runtime/       插件运行时、V3 包、UI renderer、权限、数据与调度
   plugin/api/           冻结的 API1 ToolPlugin 兼容接口
-  plugin/store/         插件状态、外部插件清单存储
-  plugin/runtime/       插件注册器和外部插件工厂
+  plugin/store/         API1 插件状态与清单存储
 plugin-sdk/
-  src/main/java/...     可发布的插件开发 SDK：API、清单模型、共享 UI 工具
+  src/main/java/...     可发布的插件 API、Native Provider 接口和共享 UI
 
 runtime-contract/
   src/main/resources/   manifest、RPC、声明式 UI 与 Capability 单一契约源
 
-examples/runtime-v2/
+web-sdk/
+  src/                  Web Tool 使用的 TypeScript SDK
+
+examples/plugins/
   hello-web/            Web Tool 示例
   worker-capability/    普通插件用受限 Worker 提供自定义能力的示例
-  shizuku-auth/          合并 UI 与底层能力的全信任 Shizuku 插件
-trusted-shizuku-provider/
-  src/main/java/...      全信任底层能力实现，构建后装入 shizuku-auth 包
+
+tools/plugin/
+  ats.py                插件校验、打包、开发服务器与契约生成 CLI
 ```
 
-统一工作区内的三个领域插件仍是独立 Git 仓库：
+统一工作区内的插件均是独立 Git 仓库：
 
+- `../plugins/shizuku-auth`：Shizuku 授权与全信任底层能力。
 - `../plugins/accessibility-grant`：无障碍授权。
 - `../plugins/phigros-advisor`：Phigros Data Studio。
 - `../plugins/gacha-analysis`：跃迁与祈愿分析。
 
-`shizuku_auth` 当前随主体仓库维护，构建为一个签名的全信任 `.atsplugin`：同包包含声明式授权界面、主页组件和 Native Provider。宿主不会内置或自动启用它，原生能力在启用后的下一次冷启动激活。
+`shizuku_auth` 构建为一个签名的全信任 `.atsplugin`：同包包含声明式授权界面、主页组件和 Native Provider。宿主不会内置或自动启用它，原生能力在启用后的下一次冷启动激活。
 
 主体与各插件仓库之间没有 Gradle project 依赖：主体仓库发布版本化 SDK AAR，每个插件仓库按 Maven 坐标消费它。新增插件时应创建新的仓库，不加入主体仓库或其他插件仓库。
 
@@ -62,7 +65,7 @@ format v3 包必须包含 `manifest.json`、`META-INF/ats-integrity.json` 以及
 
 完整包格式与 SDK 接入方式见 `docs/plugin-package-format.md`。
 
-历史版本降级的数据格式契约与维护规则见 [插件数据兼容声明](docs/plugin-data-compatibility.md)。该声明属于发布元数据，不修改插件 SDK 公共 API。
+历史版本降级的数据格式契约与维护规则见 [插件包格式](docs/plugin-package-format.md#9-数据格式兼容与降级)。该声明属于发布元数据，不修改插件 SDK 公共 API。
 
 向本机 Maven 仓库发布 SDK：
 
@@ -84,7 +87,7 @@ gradle -p ..\plugins\phigros-advisor `
 
 说明：应用会在管理页明确提示同进程插件的信任边界。启用外部插件前，请确认插件来源和代码可信。
 
-工具页、主页小部件、更新检查和 V2 Capability 权限统一在管理页的插件展开卡中设置。隐藏只影响界面展示，不会停用插件。主页小部件和工具卡片都可以长按拖动，使用相同虚影预览松手后的落点，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。
+工具页、主页小部件、更新检查和普通 format v3 插件的 Capability 权限统一在管理页的插件展开卡中设置。隐藏只影响界面展示，不会停用插件。主页小部件和工具卡片都可以长按拖动，使用相同虚影预览松手后的落点，排序仅在松手时保存；主页小部件长按后松开还可调整尺寸。
 
 ## 构建要求
 
@@ -160,7 +163,7 @@ Release 使用包名 `com.androidtoolsuite.app`，Debug 使用 `com.androidtools
 
 设置页和插件管理页使用统一 `.atsbackup` v3：应用设置、插件启用状态、每个插件包和插件声明的 Dataset 都能独立选择。导出项可设为不导出、明文或密码加密；导入会根据目标是否已有数据和插件能力提供跳过、导入、替换或合并。
 
-Migration Bridge 只处理插件明确声明的 API1 Dataset，导入时先在应用私有缓存完成解密与完整性校验，随后由插件以事务或原子文件切换恢复。它不会写入 Runtime v2 存储；在新运行时迁移完成并越过回滚窗口前，正式版与 Debug 使用相同的归档契约。
+Migration Bridge 只处理插件明确声明的 API1 Dataset，导入时先在应用私有缓存完成解密与完整性校验，随后由插件以事务或原子文件切换恢复。它不会直接操作宿主管理的插件运行时存储；在迁移完成并越过回滚窗口前，正式版与 Debug 使用相同的归档契约。
 
 ## ADB 自动化调试
 

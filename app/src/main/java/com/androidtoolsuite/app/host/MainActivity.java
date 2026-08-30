@@ -37,24 +37,24 @@ import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
 import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
 import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
 import com.androidtoolsuite.app.plugin.runtime.ExternalToolFactory;
-import com.androidtoolsuite.app.plugin.v2.V2HostActions;
-import com.androidtoolsuite.app.plugin.v2.V2CapabilityRouter;
-import com.androidtoolsuite.app.plugin.v2.V2BackgroundTaskRegistry;
-import com.androidtoolsuite.app.plugin.v2.V2HostCapabilityProviders;
-import com.androidtoolsuite.app.plugin.v2.V2NativeProviderManager;
-import com.androidtoolsuite.app.plugin.v2.V2PackageStore;
-import com.androidtoolsuite.app.plugin.v2.V2PluginPermissionManager;
-import com.androidtoolsuite.app.plugin.v2.V2PluginPackageArchive;
-import com.androidtoolsuite.app.plugin.v2.V2RuntimeProcess;
-import com.androidtoolsuite.app.plugin.v2.V2SchedulerService;
-import com.androidtoolsuite.app.plugin.v2.V2JavaScriptWorkerEngine;
-import com.androidtoolsuite.app.plugin.v2.V2StorageService;
-import com.androidtoolsuite.app.plugin.v2.V2DatasetService;
-import com.androidtoolsuite.app.plugin.v2.V2DeclarativeToolPlugin;
-import com.androidtoolsuite.app.plugin.v2.V2MigrationToolPlugin;
-import com.androidtoolsuite.app.plugin.v2.V2ShizukuService;
-import com.androidtoolsuite.app.plugin.v2.V2WebToolPlugin;
-import com.androidtoolsuite.app.plugin.v2.CapabilityFailure;
+import com.androidtoolsuite.app.plugin.runtime.HostActions;
+import com.androidtoolsuite.app.plugin.runtime.CapabilityRouter;
+import com.androidtoolsuite.app.plugin.runtime.BackgroundTaskRegistry;
+import com.androidtoolsuite.app.plugin.runtime.HostCapabilityProviders;
+import com.androidtoolsuite.app.plugin.runtime.NativeProviderManager;
+import com.androidtoolsuite.app.plugin.runtime.PluginPackageStore;
+import com.androidtoolsuite.app.plugin.runtime.PluginPermissionManager;
+import com.androidtoolsuite.app.plugin.runtime.PluginPackageArchive;
+import com.androidtoolsuite.app.plugin.runtime.PluginRuntime;
+import com.androidtoolsuite.app.plugin.runtime.SchedulerService;
+import com.androidtoolsuite.app.plugin.runtime.JavaScriptWorkerEngine;
+import com.androidtoolsuite.app.plugin.runtime.StorageService;
+import com.androidtoolsuite.app.plugin.runtime.DatasetService;
+import com.androidtoolsuite.app.plugin.runtime.DeclarativeToolPlugin;
+import com.androidtoolsuite.app.plugin.runtime.MigrationToolPlugin;
+import com.androidtoolsuite.app.plugin.runtime.ShizukuService;
+import com.androidtoolsuite.app.plugin.runtime.WebToolPlugin;
+import com.androidtoolsuite.app.plugin.runtime.CapabilityFailure;
 import com.androidtoolsuite.app.plugin.api.HomeWidget;
 import com.androidtoolsuite.app.plugin.api.HomeWidgetSize;
 import com.androidtoolsuite.app.plugin.api.PluginDependency;
@@ -105,7 +105,7 @@ import java.util.zip.ZipOutputStream;
 
 import rikka.shizuku.Shizuku;
 
-public class MainActivity extends ComponentActivity implements PluginHost, V2HostActions {
+public class MainActivity extends ComponentActivity implements PluginHost, HostActions {
     public static final String EXTRA_DEBUG_DESTINATION = "debug_destination";
     private static WeakReference<MainActivity> debugInstance = new WeakReference<>(null);
 
@@ -144,24 +144,24 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
 
     private final List<ToolPlugin> plugins = new ArrayList<>();
     private final Map<String, ImportedPluginDescriptor> importedDescriptorCache = new LinkedHashMap<>();
-    private final Map<String, V2PackageStore.InstalledPlugin> v2InstalledCache = new LinkedHashMap<>();
+    private final Map<String, PluginPackageStore.InstalledPlugin> runtimeInstalledCache = new LinkedHashMap<>();
     private final Set<String> optionalBuiltInPluginIds = new HashSet<>();
     private ToolPlugin selectedPlugin;
     private ExternalPluginStore externalPluginStore;
-    private V2RuntimeProcess v2RuntimeProcess;
-    private V2PackageStore v2PackageStore;
-    private V2StorageService v2StorageService;
-    private V2DatasetService v2DatasetService;
-    private V2CapabilityRouter v2CapabilityRouter;
-    private V2BackgroundTaskRegistry v2BackgroundTaskRegistry;
-    private V2PluginPermissionManager v2PermissionManager;
-    private V2NativeProviderManager v2NativeProviderManager;
-    private V2SchedulerService v2SchedulerService;
-    private V2ShizukuService v2ShizukuService;
-    private AutoCloseable v2ShizukuStateRegistration;
-    private List<AutoCloseable> v2ProviderRegistrations = Collections.emptyList();
-    private AutoCloseable v2PermissionRegistration;
-    private PendingV2FilePick pendingV2FilePick;
+    private PluginRuntime pluginRuntime;
+    private PluginPackageStore pluginPackageStore;
+    private StorageService storageService;
+    private DatasetService datasetService;
+    private CapabilityRouter capabilityRouter;
+    private BackgroundTaskRegistry backgroundTaskRegistry;
+    private PluginPermissionManager permissionManager;
+    private NativeProviderManager nativeProviderManager;
+    private SchedulerService schedulerService;
+    private ShizukuService shizukuService;
+    private AutoCloseable shizukuStateRegistration;
+    private List<AutoCloseable> providerRegistrations = Collections.emptyList();
+    private AutoCloseable permissionRegistration;
+    private PendingRuntimeFilePick pendingRuntimeFilePick;
     private BuiltInPluginStateStore builtInPluginStateStore;
     private UpdateClient updateClient;
     private UpdateCatalog updateCatalog;
@@ -240,7 +240,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
     };
     private final Shizuku.OnBinderReceivedListener binderReceivedListener = () -> runOnUiThread(() -> {
-        if (v2ShizukuService != null) v2ShizukuService.ensureIfAuthorized();
+        if (shizukuService != null) shizukuService.ensureIfAuthorized();
         notifyHostStateChangedAfterBinderCallback();
     });
     private final Shizuku.OnBinderDeadListener binderDeadListener = () -> runOnUiThread(() -> {
@@ -249,7 +249,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     private final Shizuku.OnRequestPermissionResultListener permissionResultListener = (requestCode, grantResult) -> {
         if (requestCode == REQUEST_SHIZUKU) {
             runOnUiThread(() -> {
-                if (v2ShizukuService != null) v2ShizukuService.ensureIfAuthorized();
+                if (shizukuService != null) shizukuService.ensureIfAuthorized();
                 notifyHostStateChangedAfterBinderCallback();
             });
         }
@@ -275,27 +275,27 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                     .start();
         });
         externalPluginStore = new ExternalPluginStore(this);
-        v2RuntimeProcess = V2RuntimeProcess.get(this);
-        v2PackageStore = v2RuntimeProcess.packages();
-        v2StorageService = v2RuntimeProcess.storage();
-        v2DatasetService = v2RuntimeProcess.datasets();
-        v2BackgroundTaskRegistry = v2RuntimeProcess.backgroundTasks();
-        v2PermissionManager = v2RuntimeProcess.permissions();
-        v2CapabilityRouter = v2RuntimeProcess.capabilities();
-        v2NativeProviderManager = v2RuntimeProcess.nativeProviders();
-        v2SchedulerService = v2RuntimeProcess.scheduler();
-        v2ShizukuService = v2RuntimeProcess.shizuku();
-        debugStartup("runtime-v2-ready", startupStartedAt);
+        pluginRuntime = PluginRuntime.get(this);
+        pluginPackageStore = pluginRuntime.packages();
+        storageService = pluginRuntime.storage();
+        datasetService = pluginRuntime.datasets();
+        backgroundTaskRegistry = pluginRuntime.backgroundTasks();
+        permissionManager = pluginRuntime.permissions();
+        capabilityRouter = pluginRuntime.capabilities();
+        nativeProviderManager = pluginRuntime.nativeProviders();
+        schedulerService = pluginRuntime.scheduler();
+        shizukuService = pluginRuntime.shizuku();
+        debugStartup("plugin-runtime-ready", startupStartedAt);
         try {
-            v2ProviderRegistrations = V2HostCapabilityProviders.registerActivityCapabilities(
-                    this, this, v2CapabilityRouter
+            providerRegistrations = HostCapabilityProviders.registerActivityCapabilities(
+                    this, this, capabilityRouter
             );
-            v2PermissionRegistration = v2PermissionManager.addListener((pluginId, capabilityId, granted) ->
+            permissionRegistration = permissionManager.addListener((pluginId, capabilityId, granted) ->
                     runOnUiThread(() -> {
-                        if (!granted && pendingV2FilePick != null
-                                && pendingV2FilePick.pluginId.equals(pluginId)) {
-                            PendingV2FilePick pending = pendingV2FilePick;
-                            pendingV2FilePick = null;
+                        if (!granted && pendingRuntimeFilePick != null
+                                && pendingRuntimeFilePick.pluginId.equals(pluginId)) {
+                            PendingRuntimeFilePick pending = pendingRuntimeFilePick;
+                            pendingRuntimeFilePick = null;
                             pending.result.completeExceptionally(new CapabilityFailure(
                                     "PERMISSION_DENIED",
                                     "文件选择已因插件权限撤销而取消",
@@ -306,7 +306,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                     })
             );
         } catch (CapabilityFailure error) {
-            throw new IllegalStateException("Runtime v2 host capability registration failed", error);
+            throw new IllegalStateException("插件运行时 host capability registration failed", error);
         }
         builtInPluginStateStore = new BuiltInPluginStateStore(this);
         updateClient = new UpdateClient(this);
@@ -325,7 +325,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         Shizuku.addBinderReceivedListener(binderReceivedListener);
         Shizuku.addBinderDeadListener(binderDeadListener);
         Shizuku.addRequestPermissionResultListener(permissionResultListener);
-        v2ShizukuStateRegistration = v2ShizukuService.addStateListener(() -> runOnUiThread(
+        shizukuStateRegistration = shizukuService.addStateListener(() -> runOnUiThread(
                 this::notifyHostStateChangedAfterBinderCallback
         ));
 
@@ -354,7 +354,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         super.onStart();
         ensureShellServiceIfAuthorized();
         notifyHostStateChangedAfterBinderCallback();
-        v2SchedulerService.onHostStartedAsync();
+        schedulerService.onHostStartedAsync();
         if (autoCheckUpdatesForUi()) {
             checkForUpdates(false, false, false);
         }
@@ -379,11 +379,11 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         destroyMigrationBridgePlugins(migrationBridgeImportOwnedPlugins);
         destroyMigrationBridgePlugins(migrationBridgeDeleteOwnedPlugins);
         migrationBridgeExecutor.shutdownNow();
-        if (pendingV2FilePick != null) {
-            pendingV2FilePick.result.completeExceptionally(
+        if (pendingRuntimeFilePick != null) {
+            pendingRuntimeFilePick.result.completeExceptionally(
                     new CapabilityFailure("CANCELLED", "Activity was destroyed", true)
             );
-            pendingV2FilePick = null;
+            pendingRuntimeFilePick = null;
         }
         for (ToolPlugin plugin : plugins) {
             plugin.onDestroy();
@@ -391,25 +391,25 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         Shizuku.removeBinderReceivedListener(binderReceivedListener);
         Shizuku.removeBinderDeadListener(binderDeadListener);
         Shizuku.removeRequestPermissionResultListener(permissionResultListener);
-        if (v2ShizukuStateRegistration != null) {
-            try { v2ShizukuStateRegistration.close(); } catch (Exception ignored) { }
-            v2ShizukuStateRegistration = null;
+        if (shizukuStateRegistration != null) {
+            try { shizukuStateRegistration.close(); } catch (Exception ignored) { }
+            shizukuStateRegistration = null;
         }
         if (debugInstance.get() == this) {
             debugInstance.clear();
         }
-        for (int index = v2ProviderRegistrations.size() - 1; index >= 0; index--) {
+        for (int index = providerRegistrations.size() - 1; index >= 0; index--) {
             try {
-                v2ProviderRegistrations.get(index).close();
+                providerRegistrations.get(index).close();
             } catch (Exception ignored) {
             }
         }
-        if (v2PermissionRegistration != null) {
+        if (permissionRegistration != null) {
             try {
-                v2PermissionRegistration.close();
+                permissionRegistration.close();
             } catch (Exception ignored) {
             }
-            v2PermissionRegistration = null;
+            permissionRegistration = null;
         }
         updateClient.close();
         super.onDestroy();
@@ -606,9 +606,9 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     private void loadPlugins() {
         plugins.clear();
         importedDescriptorCache.clear();
-        v2InstalledCache.clear();
+        runtimeInstalledCache.clear();
         optionalBuiltInPluginIds.clear();
-        v2RuntimeProcess.workerProviders().sync(v2PackageStore.load());
+        pluginRuntime.workerProviders().sync(pluginPackageStore.load());
         loadBuiltInPlugins();
         plugins.addAll(createInstalledPlugins(plugins));
     }
@@ -644,43 +644,43 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         for (ImportedPluginDescriptor descriptor : pendingExternalPlugins) {
             importedDescriptorCache.put(descriptor.id, descriptor);
         }
-        List<V2PackageStore.InstalledPlugin> pendingRuntimeV2 = new ArrayList<>(v2PackageStore.load());
-        for (V2PackageStore.InstalledPlugin installed : pendingRuntimeV2) {
-            v2InstalledCache.put(installed.manifest.plugin.id, installed);
+        List<PluginPackageStore.InstalledPlugin> pendingRuntimePlugins = new ArrayList<>(pluginPackageStore.load());
+        for (PluginPackageStore.InstalledPlugin installed : pendingRuntimePlugins) {
+            runtimeInstalledCache.put(installed.manifest.plugin.id, installed);
         }
         boolean loadedPlugin;
         do {
             loadedPlugin = false;
-            for (int index = pendingRuntimeV2.size() - 1; index >= 0; index--) {
-                V2PackageStore.InstalledPlugin installed = pendingRuntimeV2.get(index);
+            for (int index = pendingRuntimePlugins.size() - 1; index >= 0; index--) {
+                PluginPackageStore.InstalledPlugin installed = pendingRuntimePlugins.get(index);
                 RuntimePluginManifest manifest = installed.manifest;
                 String pluginId = manifest.plugin.id;
                 if (!installed.enabled
                         || importedDescriptorCache.containsKey(pluginId)
                         || activeVersions.containsKey(pluginId)) {
-                    pendingRuntimeV2.remove(index);
+                    pendingRuntimePlugins.remove(index);
                 } else if (!manifest.providerEntries.isEmpty()
-                        && !v2NativeProviderManager.isActive(pluginId, installed.generationDirectory.getName())) {
+                        && !nativeProviderManager.isActive(pluginId, installed.generationDirectory.getName())) {
                     // A Provider is active only after this exact verified generation loaded at cold start.
-                    pendingRuntimeV2.remove(index);
+                    pendingRuntimePlugins.remove(index);
                 } else if (manifest.capabilityContributions.stream()
                         .anyMatch(item -> !item.workerEntry.isEmpty())
-                        && !v2RuntimeProcess.workerProviders().isActive(
+                        && !pluginRuntime.workerProviders().isActive(
                                 pluginId, installed.generationDirectory.getName())) {
-                    pendingRuntimeV2.remove(index);
+                    pendingRuntimePlugins.remove(index);
                 } else if (manifest.toolContributions.isEmpty()
-                        && areV2RequirementsSatisfied(manifest, activeVersions)) {
+                        && areRuntimeRequirementsSatisfied(manifest, activeVersions)) {
                     activeVersions.put(pluginId, manifest.plugin.version);
-                    pendingRuntimeV2.remove(index);
+                    pendingRuntimePlugins.remove(index);
                     loadedPlugin = true;
-                } else if (areV2RequirementsSatisfied(manifest, activeVersions)) {
+                } else if (areRuntimeRequirementsSatisfied(manifest, activeVersions)) {
                     RuntimePluginManifest.UiEntry uiEntry = manifest.defaultUiEntry();
                     ToolPlugin plugin = "declarative".equals(uiEntry.type)
-                            ? new V2DeclarativeToolPlugin(installed, this)
-                            : new V2WebToolPlugin(installed, this);
+                            ? new DeclarativeToolPlugin(installed, this)
+                            : new WebToolPlugin(installed, this);
                     result.add(plugin);
                     activeVersions.put(plugin.id(), plugin.version());
-                    pendingRuntimeV2.remove(index);
+                    pendingRuntimePlugins.remove(index);
                     loadedPlugin = true;
                 }
             }
@@ -824,13 +824,13 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
      */
     public boolean canDisablePluginForUi(ToolPlugin plugin) {
         return importedDescriptorCache.containsKey(plugin.id())
-                || v2InstalledCache.containsKey(plugin.id())
+                || runtimeInstalledCache.containsKey(plugin.id())
                 || optionalBuiltInPluginIds.contains(plugin.id());
     }
 
     /** 停用插件，自动分派到内置或外部两条通道。依赖校验与提示由被调用方负责。 */
     public void disablePluginForUi(ToolPlugin plugin) {
-        if (findImportedDescriptor(plugin.id()) != null || findRuntimeV2Plugin(plugin.id()) != null) {
+        if (findImportedDescriptor(plugin.id()) != null || findRuntimePlugin(plugin.id()) != null) {
             setImportedPluginEnabled(plugin.id(), false);
         } else if (canDisablePluginForUi(plugin)) {
             setBuiltInPluginEnabled(plugin.id(), false);
@@ -1030,13 +1030,13 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         invalidateComposeUi();
     }
 
-    public boolean isRuntimeV2ToolForUi(ToolPlugin plugin) {
-        return plugin instanceof V2WebToolPlugin || plugin instanceof V2DeclarativeToolPlugin;
+    public boolean isRuntimeToolForUi(ToolPlugin plugin) {
+        return plugin instanceof WebToolPlugin || plugin instanceof DeclarativeToolPlugin;
     }
 
     public List<ImportedPluginDescriptor> importedDescriptorsForUi() {
         List<ImportedPluginDescriptor> result = new ArrayList<>(importedDescriptorCache.values());
-        for (V2PackageStore.InstalledPlugin installed : v2InstalledCache.values()) {
+        for (PluginPackageStore.InstalledPlugin installed : runtimeInstalledCache.values()) {
             result.add(toUiDescriptor(installed));
         }
         result.sort((left, right) -> left.title.compareToIgnoreCase(right.title));
@@ -1264,7 +1264,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
 
     public void requestDeletePluginForUi(String pluginId) {
         String title = pluginTitleOrId(pluginId);
-        if (findImportedDescriptor(pluginId) == null && findRuntimeV2Plugin(pluginId) == null) return;
+        if (findImportedDescriptor(pluginId) == null && findRuntimePlugin(pluginId) == null) return;
         showComposeDialog(
                 "删除 " + title + "？",
                 "插件包会从应用中移除。插件自行保存的业务数据不会自动清理。",
@@ -1925,15 +1925,15 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     }
 
     public boolean isPluginLoadedForUi(String pluginId) {
-        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
-        return findPlugin(pluginId) != null || (runtimeV2 != null
-                && !runtimeV2.manifest.providerEntries.isEmpty()
-                && v2NativeProviderManager.isActive(pluginId, runtimeV2.generationDirectory.getName()));
+        PluginPackageStore.InstalledPlugin runtimePlugin = findRuntimePlugin(pluginId);
+        return findPlugin(pluginId) != null || (runtimePlugin != null
+                && !runtimePlugin.manifest.providerEntries.isEmpty()
+                && nativeProviderManager.isActive(pluginId, runtimePlugin.generationDirectory.getName()));
     }
 
-    public boolean isRuntimeV2ActivationPendingForUi(String pluginId) {
-        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
-        return installed != null && v2NativeProviderManager.isPendingRestart(installed);
+    public boolean isRuntimeActivationPendingForUi(String pluginId) {
+        PluginPackageStore.InstalledPlugin installed = findRuntimePlugin(pluginId);
+        return installed != null && nativeProviderManager.isPendingRestart(installed);
     }
 
     @Override
@@ -1952,17 +1952,17 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     }
 
     @Override
-    public V2CapabilityRouter capabilityRouter() {
-        return v2CapabilityRouter;
+    public CapabilityRouter capabilityRouter() {
+        return capabilityRouter;
     }
 
     @Override
     public void closeRuntimeSession(String sessionId) {
-        v2StorageService.closeSession(sessionId);
-        v2DatasetService.closeSession(sessionId);
-        PendingV2FilePick pending = pendingV2FilePick;
+        storageService.closeSession(sessionId);
+        datasetService.closeSession(sessionId);
+        PendingRuntimeFilePick pending = pendingRuntimeFilePick;
         if (pending != null && pending.sessionId.equals(sessionId)) {
-            pendingV2FilePick = null;
+            pendingRuntimeFilePick = null;
             pending.result.completeExceptionally(
                     new CapabilityFailure("CANCELLED", "Runtime session closed", true)
             );
@@ -1978,7 +1978,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     ) {
         CompletableFuture<JSONObject> result = new CompletableFuture<>();
         runOnUiThread(() -> {
-            if (pendingV2FilePick != null) {
+            if (pendingRuntimeFilePick != null) {
                 result.completeExceptionally(
                         new CapabilityFailure("PROVIDER_OFFLINE", "Another file picker is active", true)
                 );
@@ -1989,7 +1989,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 String value = mimeTypes.optString(index, "").trim();
                 if (!value.isEmpty()) types.add(value);
             }
-            pendingV2FilePick = new PendingV2FilePick(pluginId, sessionId, Math.max(1, maxBytes), result);
+            pendingRuntimeFilePick = new PendingRuntimeFilePick(pluginId, sessionId, Math.max(1, maxBytes), result);
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType(types.size() == 1 ? types.get(0) : "*/*");
@@ -1999,36 +1999,36 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         return result;
     }
 
-    public List<V2PluginPermissionManager.Permission> pluginPermissionsForUi(String pluginId) {
-        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+    public List<PluginPermissionManager.Permission> pluginPermissionsForUi(String pluginId) {
+        PluginPackageStore.InstalledPlugin installed = findRuntimePlugin(pluginId);
         if (installed == null) return Collections.emptyList();
-        return v2PermissionManager.permissions(installed.manifest);
+        return permissionManager.permissions(installed.manifest);
     }
 
-    public boolean isRuntimeV2PluginForUi(String pluginId) {
-        return findRuntimeV2Plugin(pluginId) != null;
+    public boolean isRuntimePluginForUi(String pluginId) {
+        return findRuntimePlugin(pluginId) != null;
     }
 
     public boolean isTrustedProviderForUi(String pluginId) {
-        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        PluginPackageStore.InstalledPlugin installed = findRuntimePlugin(pluginId);
         return installed != null && "trusted-provider".equals(installed.manifest.plugin.kind);
     }
 
     public boolean hasPluginDataForUi(String pluginId, ToolPlugin loadedPlugin) {
-        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        PluginPackageStore.InstalledPlugin installed = findRuntimePlugin(pluginId);
         if (installed != null) return !installed.manifest.datasets.isEmpty();
         return loadedPlugin != null && loadedPlugin.legacyDataBridge() != null;
     }
 
     public void setPluginPermissionForUi(String pluginId, String capabilityId, boolean granted) {
-        V2PackageStore.InstalledPlugin installed = findRuntimeV2Plugin(pluginId);
+        PluginPackageStore.InstalledPlugin installed = findRuntimePlugin(pluginId);
         if (installed == null) {
             showToast("插件不存在");
             return;
         }
         try {
-            v2PermissionManager.setGranted(installed.manifest, capabilityId, granted);
-            v2SchedulerService.syncPluginAsync(pluginId);
+            permissionManager.setGranted(installed.manifest, capabilityId, granted);
+            schedulerService.syncPluginAsync(pluginId);
             showToast(granted ? "已允许此权限" : "已撤销此权限");
             invalidateComposeUi();
         } catch (IllegalArgumentException | IllegalStateException error) {
@@ -2036,7 +2036,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
     }
 
-    public String pluginPermissionScopeForUi(V2PluginPermissionManager.Permission permission) {
+    public String pluginPermissionScopeForUi(PluginPermissionManager.Permission permission) {
         try {
             JSONObject scopes = new JSONObject(permission.scopesJson);
             if (scopes.length() == 0) return "不申请额外范围";
@@ -2085,22 +2085,22 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
 
     @Override
     public boolean isShizukuReady() {
-        return v2ShizukuService != null && v2ShizukuService.isReady();
+        return shizukuService != null && shizukuService.isReady();
     }
 
     @Override
     public boolean hasShizukuPermission() {
-        return v2ShizukuService != null && v2ShizukuService.hasPermission();
+        return shizukuService != null && shizukuService.hasPermission();
     }
 
     @Override
     public boolean isShellServiceConnected() {
-        return v2ShizukuService != null && v2ShizukuService.isConnected();
+        return shizukuService != null && shizukuService.isConnected();
     }
 
     @Override
     public int shizukuUid() {
-        return v2ShizukuService == null ? -1 : v2ShizukuService.uid();
+        return shizukuService == null ? -1 : shizukuService.uid();
     }
 
     @Override
@@ -2118,16 +2118,16 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
 
     @Override
     public void ensureShellService() {
-        v2ShizukuService.ensure();
+        shizukuService.ensure();
     }
 
     private void ensureShellServiceIfAuthorized() {
-        if (v2ShizukuService != null) v2ShizukuService.ensureIfAuthorized();
+        if (shizukuService != null) shizukuService.ensureIfAuthorized();
     }
 
     @Override
     public String runShellCommand(String... command) throws IOException {
-        return v2ShizukuService.run(command);
+        return shizukuService.run(command);
     }
 
     @Override
@@ -2141,8 +2141,8 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     @Override
     public void exportPlugin(String pluginId) {
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
-        if (descriptor == null && runtimeV2 == null) {
+        PluginPackageStore.InstalledPlugin runtimePlugin = findRuntimePlugin(pluginId);
+        if (descriptor == null && runtimePlugin == null) {
             showToast("只能导出外部插件清单");
             return;
         }
@@ -2217,7 +2217,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                         ownedPlugins.add(plugin);
                     }
                 }
-                addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
+                addRuntimeMigrationPlugins(candidates, ownedPlugins);
                 List<MigrationBridgeManager.DatasetOption> options =
                         MigrationBridgeManager.discover(this, candidates);
                 if (ownerId == null) {
@@ -2294,7 +2294,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                         ownedPlugins.add(plugin);
                     }
                 }
-                addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
+                addRuntimeMigrationPlugins(candidates, ownedPlugins);
                 List<MigrationBridgeManager.DatasetOption> discovered =
                         MigrationBridgeManager.discover(this, candidates);
                 List<MigrationBridgeManager.DatasetOption> scoped = new ArrayList<>();
@@ -2598,11 +2598,11 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             return;
         }
         try {
-            if (findRuntimeV2Plugin(pluginId) != null) {
-                v2SchedulerService.cancelPlugin(pluginId);
-                v2PackageStore.delete(pluginId);
-                v2NativeProviderManager.deactivate(pluginId);
-                v2PermissionManager.removePlugin(pluginId);
+            if (findRuntimePlugin(pluginId) != null) {
+                schedulerService.cancelPlugin(pluginId);
+                pluginPackageStore.delete(pluginId);
+                nativeProviderManager.deactivate(pluginId);
+                permissionManager.removePlugin(pluginId);
             } else {
                 externalPluginStore.delete(pluginId);
             }
@@ -2637,13 +2637,13 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         } else if (requestCode == REQUEST_IMPORT_MIGRATION_BRIDGE) {
             handleMigrationBridgeImportSelection(resultCode, data);
         } else if (requestCode == REQUEST_V2_FILE_IMPORT) {
-            handleV2FileImportResult(resultCode, data);
+            handleRuntimeFileImportResult(resultCode, data);
         }
     }
 
-    private void handleV2FileImportResult(int resultCode, Intent data) {
-        PendingV2FilePick pending = pendingV2FilePick;
-        pendingV2FilePick = null;
+    private void handleRuntimeFileImportResult(int resultCode, Intent data) {
+        PendingRuntimeFilePick pending = pendingRuntimeFilePick;
+        pendingRuntimeFilePick = null;
         if (pending == null) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             pending.result.completeExceptionally(
@@ -2668,7 +2668,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 }
             }
             String blobId = "import." + java.util.UUID.randomUUID().toString().replace("-", "");
-            JSONObject stored = v2StorageService.importBlob(
+            JSONObject stored = storageService.importBlob(
                     pending.pluginId, pending.sessionId, blobId, bytes
             );
             JSONObject file = new JSONObject()
@@ -2721,7 +2721,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                         ownedPlugins.add(plugin);
                     }
                 }
-                addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
+                addRuntimeMigrationPlugins(candidates, ownedPlugins);
                 List<MigrationBridgeManager.DatasetOption> options;
                 DataPackageArchive.ReadResult dataInspection = null;
                 BackupArchiveV2.ReadResult bridgeInspection = null;
@@ -2865,16 +2865,16 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
         boolean installStarted = false;
         String pluginId = null;
-        V2PackageStore.InstallSession runtimeV2Session = null;
+        PluginPackageStore.InstallSession runtimeSession = null;
         LegacyV2Upgrade legacyUpgrade = null;
         try {
             byte[] packageBytes = readBytes(data.getData(), (int) ContractLimits.MAX_PACKAGE_BYTES);
-            if (V2PluginPackageArchive.hasFormatV3Manifest(packageBytes)) {
-                runtimeV2Session = v2PackageStore.install(packageBytes, "local", "", false);
-                pluginId = runtimeV2Session.pluginId;
-                V2PackageStore.InstalledPlugin installed = v2PackageStore.find(pluginId);
+            if (PluginPackageArchive.hasFormatV3Manifest(packageBytes)) {
+                runtimeSession = pluginPackageStore.install(packageBytes, "local", "", false);
+                pluginId = runtimeSession.pluginId;
+                PluginPackageStore.InstalledPlugin installed = pluginPackageStore.find(pluginId);
                 if (installed == null) throw new IOException("安装后的新版插件不可读");
-                v2PermissionManager.reconcile(installed.manifest);
+                permissionManager.reconcile(installed.manifest);
                 if (isBuiltInPluginId(pluginId)) {
                     throw new IOException("插件 ID 与现有插件冲突");
                 }
@@ -2883,25 +2883,25 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 }
                 ImportedPluginDescriptor legacyDescriptor = findImportedDescriptor(pluginId);
                 if (legacyDescriptor != null) {
-                    if (!runtimeV2Session.newInstall) {
+                    if (!runtimeSession.newInstall) {
                         throw new IOException("同一插件同时存在旧版和新版记录，请先处理重复安装");
                     }
                     legacyUpgrade = prepareLegacyV2Upgrade(installed, legacyDescriptor);
                     migrateLegacyV2Data(installed, legacyUpgrade);
                     externalPluginStore.delete(pluginId);
                     legacyUpgrade.externalRemoved = true;
-                    v2PackageStore.setEnabled(pluginId, legacyUpgrade.wasEnabled);
+                    pluginPackageStore.setEnabled(pluginId, legacyUpgrade.wasEnabled);
                 }
-                boolean wasEnabled = v2PackageStore.isEnabled(pluginId);
-                boolean updating = !runtimeV2Session.newInstall || legacyUpgrade != null;
+                boolean wasEnabled = pluginPackageStore.isEnabled(pluginId);
+                boolean updating = !runtimeSession.newInstall || legacyUpgrade != null;
                 reloadPluginsKeepingCurrentPage();
                 boolean nativeProvider = !installed.manifest.providerEntries.isEmpty();
                 if (wasEnabled && !nativeProvider && findPlugin(pluginId) == null) {
                     throw new IOException("新版本插件无法激活");
                 }
-                v2PackageStore.confirmInstall(runtimeV2Session);
-                v2SchedulerService.syncPluginAsync(pluginId);
-                runtimeV2Session = null;
+                pluginPackageStore.confirmInstall(runtimeSession);
+                schedulerService.syncPluginAsync(pluginId);
+                runtimeSession = null;
                 String message;
                 if (legacyUpgrade != null) {
                     message = "已升级插件并导入 " + legacyUpgrade.migratedDatasets + " 项旧设置："
@@ -2910,8 +2910,8 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                     message = (updating ? "已更新插件：" : "已导入插件，默认停用：")
                             + installed.manifest.plugin.title;
                 }
-                if (v2PermissionManager.permissions(installed.manifest).stream()
-                        .anyMatch(permission -> permission.state != V2PluginPermissionManager.State.GRANTED)) {
+                if (permissionManager.permissions(installed.manifest).stream()
+                        .anyMatch(permission -> permission.state != PluginPermissionManager.State.GRANTED)) {
                     message += "；请在管理页检查插件权限";
                 }
                 if (wasEnabled && nativeProvider) message += "；重启应用后启用系统功能";
@@ -2922,7 +2922,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             PluginImport pluginImport = readPluginPackage(packageBytes);
             ImportedPluginDescriptor descriptor = pluginImport.descriptor;
             pluginId = descriptor.id;
-            if (isBuiltInPluginId(descriptor.id) || findRuntimeV2Plugin(descriptor.id) != null) {
+            if (isBuiltInPluginId(descriptor.id) || findRuntimePlugin(descriptor.id) != null) {
                 showToast("插件 ID 与现有插件冲突");
                 return;
             }
@@ -2953,9 +2953,9 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 }
             }
             if (legacyUpgrade != null) legacyUpgrade.cleanup();
-            if (runtimeV2Session != null) {
-                v2PackageStore.rollbackInstall(runtimeV2Session);
-                v2PermissionManager.reconcile(v2PackageStore.load());
+            if (runtimeSession != null) {
+                pluginPackageStore.rollbackInstall(runtimeSession);
+                permissionManager.reconcile(pluginPackageStore.load());
                 reloadPluginsKeepingCurrentPage();
                 showToast("导入失败：" + e.getMessage() + "，已恢复上一代插件");
                 return;
@@ -2975,9 +2975,9 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
         String pluginId = pendingExportPluginId;
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
+        PluginPackageStore.InstalledPlugin runtimePlugin = findRuntimePlugin(pluginId);
         pendingExportPluginId = null;
-        if (descriptor == null && runtimeV2 == null) {
+        if (descriptor == null && runtimePlugin == null) {
             showToast("导出失败：插件不存在");
             return;
         }
@@ -2985,8 +2985,8 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             if (outputStream == null) {
                 throw new IOException("无法写入文件");
             }
-            if (runtimeV2 != null) {
-                outputStream.write(v2PackageStore.exportPackage(pluginId));
+            if (runtimePlugin != null) {
+                outputStream.write(pluginPackageStore.exportPackage(pluginId));
             } else {
                 writePluginPackage(outputStream, descriptor);
             }
@@ -3042,7 +3042,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
      * -> Switch -> Retain and remains recoverable.
      */
     private LegacyV2Upgrade prepareLegacyV2Upgrade(
-            V2PackageStore.InstalledPlugin installed,
+            PluginPackageStore.InstalledPlugin installed,
             ImportedPluginDescriptor legacyDescriptor
     ) throws IOException {
         ToolPlugin legacyPlugin = findPlugin(legacyDescriptor.id);
@@ -3111,14 +3111,14 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     }
 
     private void migrateLegacyV2Data(
-            V2PackageStore.InstalledPlugin installed,
+            PluginPackageStore.InstalledPlugin installed,
             LegacyV2Upgrade upgrade
     ) throws IOException {
         for (Map.Entry<String, File> entry : upgrade.datasets.entrySet()) {
             try (FileInputStream input = new FileInputStream(entry.getValue())) {
-                v2DatasetService.importDataset(installed.manifest.plugin.id, entry.getKey(), "replace", input);
+                datasetService.importDataset(installed.manifest.plugin.id, entry.getKey(), "replace", input);
             }
-            if (!v2DatasetService.hasDataset(installed.manifest.plugin.id, entry.getKey())) {
+            if (!datasetService.hasDataset(installed.manifest.plugin.id, entry.getKey())) {
                 throw new IOException("旧数据迁移校验失败：" + entry.getKey());
             }
             upgrade.migratedDatasets++;
@@ -3317,7 +3317,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         return result;
     }
 
-    private boolean areV2RequirementsSatisfied(
+    private boolean areRuntimeRequirementsSatisfied(
             RuntimePluginManifest manifest,
             Map<String, String> activeVersions
     ) {
@@ -3327,7 +3327,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             return false;
         }
         for (RuntimePluginManifest.BackgroundEntry entry : manifest.backgroundEntries) {
-            if (entry.required && !isV2BackgroundEntryAvailable(manifest.plugin.id, entry)) return false;
+            if (entry.required && !isBackgroundEntryAvailable(manifest.plugin.id, entry)) return false;
         }
         for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
             if (!requirement.optional
@@ -3337,28 +3337,28 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
         for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
             if (!requirement.optional
-                    && !v2CapabilityRouter.canResolve(requirement.id, requirement.version)) {
+                    && !capabilityRouter.canResolve(requirement.id, requirement.version)) {
                 return false;
             }
         }
         return true;
     }
 
-    private boolean isV2BackgroundEntryAvailable(
+    private boolean isBackgroundEntryAvailable(
             String pluginId,
             RuntimePluginManifest.BackgroundEntry entry
     ) {
         if ("provider-task".equals(entry.type)) {
-            return v2BackgroundTaskRegistry.contains(pluginId, entry.entry);
+            return backgroundTaskRegistry.contains(pluginId, entry.entry);
         }
         if ("javascript-worker".equals(entry.type)) {
-            return V2JavaScriptWorkerEngine.isSupported();
+            return JavaScriptWorkerEngine.isSupported();
         }
         return false;
     }
 
     private static boolean isVersionRequirementSatisfied(String actual, String requirement) {
-        return V2CapabilityRouter.versionSatisfied(actual, requirement);
+        return CapabilityRouter.versionSatisfied(actual, requirement);
     }
 
     private void applyPluginState(JSONObject root, DatasetRestoreMode mode) throws IOException {
@@ -3387,11 +3387,11 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 );
             }
         }
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             String pluginId = installed.manifest.plugin.id;
             if (mode == DatasetRestoreMode.REPLACE || incomingExternal.containsKey(pluginId)) {
-                v2PackageStore.setEnabled(pluginId, incomingExternal.getOrDefault(pluginId, false));
-                v2SchedulerService.syncPluginAsync(pluginId);
+                pluginPackageStore.setEnabled(pluginId, incomingExternal.getOrDefault(pluginId, false));
+                schedulerService.syncPluginAsync(pluginId);
             }
         }
     }
@@ -3411,7 +3411,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
     ) throws IOException {
         Set<String> enabledBuiltIns = new LinkedHashSet<>(builtInPluginStateStore.enabledIds());
         Set<String> enabledExternal = new LinkedHashSet<>(externalPluginStore.enabledIds());
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             if (installed.enabled) enabledExternal.add(installed.manifest.plugin.id);
         }
         if (pluginState != null) {
@@ -3438,7 +3438,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             resultingExternal.put(pluginImport.descriptor.id, pluginImport.descriptor);
         }
         Set<String> resultingExternalIds = new LinkedHashSet<>(resultingExternal.keySet());
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             resultingExternalIds.add(installed.manifest.plugin.id);
         }
         enabledExternal.retainAll(resultingExternalIds);
@@ -3457,7 +3457,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                     activeVersions.put(pluginId, descriptor.version);
                     continue;
                 }
-                V2PackageStore.InstalledPlugin installed = v2PackageStore.find(pluginId);
+                PluginPackageStore.InstalledPlugin installed = pluginPackageStore.find(pluginId);
                 if (installed != null) activeVersions.put(pluginId, installed.manifest.plugin.version);
             }
             for (ToolPlugin plugin : builtIns) {
@@ -3478,7 +3478,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                     }
                 }
             }
-            for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+            for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
                 if (!enabledExternal.contains(installed.manifest.plugin.id)) continue;
                 for (RuntimePluginManifest.Requirement requirement : installed.manifest.pluginRequirements) {
                     if (!requirement.optional
@@ -3531,14 +3531,14 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 ownedPlugins.add(plugin);
             }
         }
-        addRuntimeV2MigrationPlugins(candidates, ownedPlugins);
+        addRuntimeMigrationPlugins(candidates, ownedPlugins);
         return MigrationBridgeManager.resolveDataPackageImportBridges(this, candidates, selected);
     }
 
-    private void addRuntimeV2MigrationPlugins(List<ToolPlugin> candidates, List<ToolPlugin> ownedPlugins) {
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+    private void addRuntimeMigrationPlugins(List<ToolPlugin> candidates, List<ToolPlugin> ownedPlugins) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             if (installed.manifest.datasets.isEmpty()) continue;
-            ToolPlugin adapter = new V2MigrationToolPlugin(installed, v2DatasetService);
+            ToolPlugin adapter = new MigrationToolPlugin(installed, datasetService);
             candidates.add(adapter);
             ownedPlugins.add(adapter);
         }
@@ -3546,23 +3546,23 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
 
     @Override
     public boolean isImportedPluginEnabled(String pluginId) {
-        return findRuntimeV2Plugin(pluginId) != null
-                ? v2PackageStore.isEnabled(pluginId)
+        return findRuntimePlugin(pluginId) != null
+                ? pluginPackageStore.isEnabled(pluginId)
                 : externalPluginStore.isEnabled(pluginId);
     }
 
     @Override
     public void setImportedPluginEnabled(String pluginId, boolean enabled) {
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
-        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
-        if (descriptor == null && runtimeV2 == null) {
+        PluginPackageStore.InstalledPlugin runtimePlugin = findRuntimePlugin(pluginId);
+        if (descriptor == null && runtimePlugin == null) {
             showToast("插件不存在");
             return;
         }
         if (enabled) {
-            List<String> missingDependencies = runtimeV2 == null
+            List<String> missingDependencies = runtimePlugin == null
                     ? findMissingDependencyTitles(descriptor.dependencies)
-                    : findMissingV2Requirements(runtimeV2.manifest);
+                    : findMissingRuntimeRequirements(runtimePlugin.manifest);
             if (!missingDependencies.isEmpty()) {
                 showToast("无法启用，依赖未满足：" + joinNames(missingDependencies));
                 return;
@@ -3574,26 +3574,26 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 return;
             }
         }
-        if (runtimeV2 != null) {
-            v2PackageStore.setEnabled(pluginId, enabled);
-            v2SchedulerService.syncPluginAsync(pluginId);
-            if (!enabled && !runtimeV2.manifest.providerEntries.isEmpty()) {
-                v2NativeProviderManager.deactivate(pluginId);
+        if (runtimePlugin != null) {
+            pluginPackageStore.setEnabled(pluginId, enabled);
+            schedulerService.syncPluginAsync(pluginId);
+            if (!enabled && !runtimePlugin.manifest.providerEntries.isEmpty()) {
+                nativeProviderManager.deactivate(pluginId);
             }
         } else {
             externalPluginStore.setEnabled(pluginId, enabled);
         }
         reloadPlugins(null);
-        V2PackageStore.InstalledPlugin reloadedV2 = findRuntimeV2Plugin(pluginId);
-        if (enabled && reloadedV2 != null && !reloadedV2.manifest.providerEntries.isEmpty()
-                && v2NativeProviderManager.isPendingRestart(reloadedV2)) {
+        PluginPackageStore.InstalledPlugin reloadedRuntime = findRuntimePlugin(pluginId);
+        if (enabled && reloadedRuntime != null && !reloadedRuntime.manifest.providerEntries.isEmpty()
+                && nativeProviderManager.isPendingRestart(reloadedRuntime)) {
             showToast("已启用插件，原生能力将在重启应用后激活");
             return;
         }
         if (enabled && !isPluginLoadedForUi(pluginId)) {
-            if (runtimeV2 != null) {
-                v2PackageStore.setEnabled(pluginId, false);
-                v2SchedulerService.syncPluginAsync(pluginId);
+            if (runtimePlugin != null) {
+                pluginPackageStore.setEnabled(pluginId, false);
+                schedulerService.syncPluginAsync(pluginId);
             }
             else externalPluginStore.setEnabled(pluginId, false);
             reloadPlugins(null);
@@ -3681,10 +3681,10 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         for (ToolPlugin plugin : plugins) {
             activeVersions.put(plugin.id(), plugin.version());
         }
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             if (installed.enabled
                     && "trusted-provider".equals(installed.manifest.plugin.kind)
-                    && v2NativeProviderManager.isActive(
+                    && nativeProviderManager.isActive(
                             installed.manifest.plugin.id,
                             installed.generationDirectory.getName())) {
                 activeVersions.put(installed.manifest.plugin.id, installed.manifest.plugin.version);
@@ -3692,7 +3692,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             if (installed.enabled
                     && installed.manifest.capabilityContributions.stream()
                     .anyMatch(item -> !item.workerEntry.isEmpty())
-                    && v2RuntimeProcess.workerProviders().isActive(
+                    && pluginRuntime.workerProviders().isActive(
                             installed.manifest.plugin.id,
                             installed.generationDirectory.getName())) {
                 activeVersions.put(installed.manifest.plugin.id, installed.manifest.plugin.version);
@@ -3708,8 +3708,8 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
         ImportedPluginDescriptor descriptor = findImportedDescriptor(pluginId);
         if (descriptor != null) return descriptor.title;
-        V2PackageStore.InstalledPlugin runtimeV2 = findRuntimeV2Plugin(pluginId);
-        return runtimeV2 == null ? pluginId : runtimeV2.manifest.plugin.title;
+        PluginPackageStore.InstalledPlugin runtimePlugin = findRuntimePlugin(pluginId);
+        return runtimePlugin == null ? pluginId : runtimePlugin.manifest.plugin.title;
     }
 
     private List<String> findDependentPluginTitles(String pluginId) {
@@ -3726,7 +3726,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 dependents.add(descriptor.title);
             }
         }
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             if (!installed.enabled || installed.manifest.plugin.id.equals(pluginId)) continue;
             for (RuntimePluginManifest.Requirement requirement : installed.manifest.pluginRequirements) {
                 if (!requirement.optional && requirement.id.equals(pluginId)) {
@@ -3762,15 +3762,15 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         return pluginId == null ? null : importedDescriptorCache.get(pluginId);
     }
 
-    private V2PackageStore.InstalledPlugin findRuntimeV2Plugin(String pluginId) {
-        return pluginId == null ? null : v2InstalledCache.get(pluginId);
+    private PluginPackageStore.InstalledPlugin findRuntimePlugin(String pluginId) {
+        return pluginId == null ? null : runtimeInstalledCache.get(pluginId);
     }
 
-    private ImportedPluginDescriptor toUiDescriptor(V2PackageStore.InstalledPlugin installed) {
+    private ImportedPluginDescriptor toUiDescriptor(PluginPackageStore.InstalledPlugin installed) {
         RuntimePluginManifest manifest = installed.manifest;
         LinkedHashSet<String> dependencies = new LinkedHashSet<>();
         for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
-            if (!requirement.optional) dependencies.add(v2DependencyLabel(requirement));
+            if (!requirement.optional) dependencies.add(runtimeDependencyLabel(requirement));
         }
         return new ImportedPluginDescriptor(
                 manifest.plugin.id,
@@ -3779,7 +3779,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                 manifest.plugin.version,
                 manifest.plugin.versionCode,
                 manifest.plugin.minHostVersionCode,
-                "runtime-v2",
+                "plugin-runtime",
                 manifest.plugin.publisher,
                 "3",
                 "",
@@ -3789,7 +3789,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         );
     }
 
-    private static String v2DependencyLabel(RuntimePluginManifest.Requirement requirement) {
+    private static String runtimeDependencyLabel(RuntimePluginManifest.Requirement requirement) {
         String version = requirement.version == null ? "" : requirement.version.trim();
         if (version.isEmpty() || "*".equals(version)) return requirement.id;
         if (version.startsWith(">") || version.startsWith("<") || version.startsWith("=")) {
@@ -3798,7 +3798,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         return requirement.id + "=" + version;
     }
 
-    private List<String> findMissingV2Requirements(RuntimePluginManifest manifest) {
+    private List<String> findMissingRuntimeRequirements(RuntimePluginManifest manifest) {
         Map<String, String> activeVersions = activePluginVersions();
         List<String> missing = new ArrayList<>();
         if (manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
@@ -3809,7 +3809,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             missing.add("当前版本需要 Web 或声明式工具入口");
         }
         for (RuntimePluginManifest.BackgroundEntry entry : manifest.backgroundEntries) {
-            if (entry.required && !isV2BackgroundEntryAvailable(manifest.plugin.id, entry)) {
+            if (entry.required && !isBackgroundEntryAvailable(manifest.plugin.id, entry)) {
                 missing.add("后台运行时 " + entry.type);
             }
         }
@@ -3817,12 +3817,12 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
             if (!requirement.optional
                     && !isVersionRequirementSatisfied(activeVersions.get(requirement.id), requirement.version)) {
                 missing.add(pluginTitleOrId(requirement.id) + "（需要 "
-                        + v2DependencyLabel(requirement) + "）");
+                        + runtimeDependencyLabel(requirement) + "）");
             }
         }
         for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
             if (!requirement.optional
-                    && !v2CapabilityRouter.canResolve(requirement.id, requirement.version)
+                    && !capabilityRouter.canResolve(requirement.id, requirement.version)
                     && !providesCompatibleCapability(manifest, requirement)) {
                 missing.add("能力 " + requirement.id + " " + requirement.version);
             }
@@ -3877,7 +3877,7 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
                     .put("id", descriptor.id)
                     .put("enabled", externalPluginStore.isEnabled(descriptor.id)));
         }
-        for (V2PackageStore.InstalledPlugin installed : v2PackageStore.load()) {
+        for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             external.put(new JSONObject()
                     .put("id", installed.manifest.plugin.id)
                     .put("enabled", installed.enabled));
@@ -4440,13 +4440,13 @@ public class MainActivity extends ComponentActivity implements PluginHost, V2Hos
         }
     }
 
-    private static final class PendingV2FilePick {
+    private static final class PendingRuntimeFilePick {
         final String pluginId;
         final String sessionId;
         final int maxBytes;
         final CompletableFuture<JSONObject> result;
 
-        PendingV2FilePick(
+        PendingRuntimeFilePick(
                 String pluginId,
                 String sessionId,
                 int maxBytes,

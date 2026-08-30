@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** Strict, platform-neutral parser for host-rendered Runtime v2 UI documents. */
+/** Strict, platform-neutral parser for host-rendered 插件运行时 UI documents. */
 public final class DeclarativeUiDocument {
     public static final int FORMAT_VERSION = 1;
     private static final int MAX_DOCUMENT_BYTES = 256 * 1024;

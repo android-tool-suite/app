@@ -14,8 +14,8 @@ param(
         'set-widget-visible',
         'navigate',
         'reset-state',
-        'set-v2-dev-server',
-        'clear-v2-dev-server'
+        'set-dev-server',
+        'clear-dev-server'
     )]
     [string]$Command,
 
@@ -180,12 +180,12 @@ switch ($Command) {
         }
         $extras += @('--es', 'widget', $Widget, '--ez', 'visible', (Boolean-Text $Visible))
     }
-    'set-v2-dev-server' {
+    'set-dev-server' {
         Require-Value 'Plugin' $Plugin
         Require-Value 'DevUrl' $DevUrl
         $extras += @('--es', 'plugin', $Plugin, '--es', 'url', $DevUrl)
     }
-    'clear-v2-dev-server' {
+    'clear-dev-server' {
         Require-Value 'Plugin' $Plugin
         $extras += @('--es', 'plugin', $Plugin)
     }

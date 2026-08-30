@@ -155,7 +155,7 @@ import com.androidtoolsuite.app.migration.MigrationBridgeManager
 import com.androidtoolsuite.app.plugin.migration.DatasetCategory
 import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor
-import com.androidtoolsuite.app.plugin.v2.V2PluginPermissionManager
+import com.androidtoolsuite.app.plugin.runtime.PluginPermissionManager
 import com.androidtoolsuite.app.ui.EmptyState
 import com.androidtoolsuite.app.ui.ErrorState
 import com.androidtoolsuite.app.ui.Notice
@@ -1354,7 +1354,7 @@ private fun PluginListCard(
 @Composable
 private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int, modifier: Modifier = Modifier) {
     hostRevision(activity)
-    val contentModifier = if (activity.isRuntimeV2ToolForUi(plugin)) {
+    val contentModifier = if (activity.isRuntimeToolForUi(plugin)) {
         modifier
     } else {
         modifier.padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.sm)
@@ -1411,10 +1411,10 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
                 onEnabledChange = { activity.setImportedPluginEnabled(descriptor.id, it) },
                 activity = activity,
                 removable = true,
-                activationPending = activity.isRuntimeV2ActivationPendingForUi(descriptor.id),
+                activationPending = activity.isRuntimeActivationPendingForUi(descriptor.id),
                 loadFailed = activity.isImportedPluginEnabled(descriptor.id) &&
                     !activity.isPluginLoadedForUi(descriptor.id) &&
-                    !activity.isRuntimeV2ActivationPendingForUi(descriptor.id),
+                    !activity.isRuntimeActivationPendingForUi(descriptor.id),
             )
         }
     }
@@ -1551,7 +1551,7 @@ private fun ManagedPluginCard(
                             warning = true,
                             modifier = Modifier.padding(bottom = SuiteSpacing.md),
                         )
-                    } else if (removable && !activity.isRuntimeV2PluginForUi(pluginId)) {
+                    } else if (removable && !activity.isRuntimePluginForUi(pluginId)) {
                         Notice(
                             "此旧版插件可以直接使用应用拥有的功能，无法逐项限制。请只安装来源可信的版本。",
                             warning = true,
@@ -2542,14 +2542,14 @@ private fun MigrationBridgeExportDialog(activity: MainActivity) {
 
 @Composable
 private fun PluginPermissionRow(
-    permission: V2PluginPermissionManager.Permission,
+    permission: PluginPermissionManager.Permission,
     scope: String,
     onGrantedChange: (Boolean) -> Unit,
 ) {
-    val granted = permission.state == V2PluginPermissionManager.State.GRANTED
+    val granted = permission.state == PluginPermissionManager.State.GRANTED
     val stateLabel = when {
-        permission.state == V2PluginPermissionManager.State.GRANTED -> "已允许"
-        permission.state == V2PluginPermissionManager.State.DENIED -> "已拒绝"
+        permission.state == PluginPermissionManager.State.GRANTED -> "已允许"
+        permission.state == PluginPermissionManager.State.DENIED -> "已拒绝"
         else -> "待决定"
     }
     val riskLabel = when (permission.risk) {
