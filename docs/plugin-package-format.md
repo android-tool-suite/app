@@ -5,7 +5,7 @@
 - **format v3**：插件运行时 的主格式，普通工具使用统一声明式 UI（Host 或 WebView renderer）、版本化 Capability、宿主存储和可选后台任务；
 - **format v1/v2**：旧 API1 Android AAR/Compose 插件的冻结兼容格式，只用于既有插件迁移和回滚。
 
-新插件必须使用 format v3。旧格式只为尚未迁移的 Phigros 与抽卡插件以及双稳定版本／90 天回滚窗口继续可用，不再增加 API。
+新插件必须使用 format v3。旧格式只为尚未迁移的 Phigros 与抽卡插件继续可用，不再增加 API；所有剩余插件完成迁移并通过迁移、恢复、业务与降级测试后即可退出，不附加版本数量或日历时间要求。
 
 ## 1. Format v3 目录结构
 
@@ -223,4 +223,4 @@ legacy.atsplugin
 
 `plugin.entryClass` 实现 `com.androidtoolsuite.app.plugin.api.ToolPlugin`，宿主通过 `DexClassLoader` 在同一进程加载。format v2 在 v1 基础上增加整数 `versionCode`、`minHostVersionCode` 和 `sdkVersion`。这条路径只接受兼容性、迁移和安全修复；新 Capability、任务、Dataset 与 Web UI 只进入 format v3。
 
-API1 的停止发布、Registry 拒绝和代码删除必须按外层 [插件运行时架构](../../docs/plugin-runtime-architecture.md) 的迁移窗口执行，不能因为 V3 包已经可安装就提前破坏旧数据回滚窗口。
+API1 的停止发布、Registry 拒绝和代码删除必须按外层 [插件运行时架构](../../docs/plugin-runtime-architecture.md) 的迁移验收执行；只有所有剩余插件完成迁移并通过迁移、恢复、业务与降级测试后才能删除。

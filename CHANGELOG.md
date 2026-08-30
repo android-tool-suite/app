@@ -33,7 +33,7 @@
 - Debug ADB 导入支持显式同版本开发替换，便于不占用正式版本号地复核 UI；正式安装入口仍拒绝同 `versionCode` 异包，替换过程不删除插件 Dataset。
 - 最低 Android 版本保持 API 24；JavaScript worker 在 API 26 与 WebView 能力双重检查后启用，不用隐藏 WebView 模拟后台执行。
 - 宿主 versionCode 仅从 22 提升到 23；Phigros 与抽卡分析继续保留 API1 兼容实现，本版本不提前迁移其业务 UI。
-- API1 与 Migration Bridge 按既定双稳定版本和 90 天回滚窗口保留，只接受迁移与兼容修复。
+- API1 与 Migration Bridge 在剩余插件完成迁移并通过迁移、恢复、业务与降级测试前继续保留，只接受迁移与兼容修复；退出不附加版本数量或日历时间要求。
 
 ## 1.6.1（2026-08-21）
 
