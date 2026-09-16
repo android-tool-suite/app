@@ -1,0 +1,66 @@
+{
+  "$schema": "https://android-tool-suite.test/contracts/declarative-ui-v1.schema.json",
+  "formatVersion": 1,
+  "queries": [
+    {
+      "id": "history",
+      "capability": "scheduler",
+      "method": "scheduler.lastRun",
+      "payload": { "taskId": "refresh-summary" },
+      "target": "history",
+      "required": true,
+      "deadlineMs": 10000
+    }
+  ],
+  "actions": [
+    {
+      "id": "run-now",
+      "capability": "scheduler",
+      "method": "scheduler.runNow",
+      "payload": { "taskId": "refresh-summary", "input": {} },
+      "target": "queued",
+      "refresh": ["history"],
+      "successMessage": "后台任务已加入队列",
+      "deadlineMs": 10000
+    },
+    {
+      "id": "refresh-history",
+      "capability": "scheduler",
+      "method": "scheduler.lastRun",
+      "payload": { "taskId": "refresh-summary" },
+      "target": "history",
+      "deadlineMs": 10000
+    }
+  ],
+  "body": {
+    "type": "column",
+    "gap": "large",
+    "children": [
+      {
+        "type": "section",
+        "title": "后台摘要",
+        "subtitle": "任务可在应用回到前台时运行，也会每 60 分钟按系统条件调度。",
+        "children": [
+          {
+            "type": "card",
+            "children": [
+              { "type": "text", "value": "最近状态", "style": "label", "tone": "muted" },
+              { "type": "status", "value": { "path": "history.status", "fallback": "尚未运行" }, "tone": "success" },
+              { "type": "divider" },
+              { "type": "text", "value": "触发来源", "style": "label", "tone": "muted" },
+              { "type": "text", "value": { "path": "history.source", "fallback": "暂无记录" }, "style": "body" },
+              { "type": "text", "value": "任务记录只保存状态、时间和汇总结果；示例不会提交账号、令牌或原始内容。", "style": "supporting", "tone": "muted" }
+            ]
+          },
+          {
+            "type": "row",
+            "children": [
+              { "type": "button", "label": "立即运行", "action": "run-now", "style": "primary" },
+              { "type": "button", "label": "刷新状态", "action": "refresh-history", "style": "secondary" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "$schema": "../../../runtime-contract/src/main/resources/contracts/manifest-v3.schema.json",
+  "format": "ats-plugin",
+  "formatVersion": 3,
+  "plugin": {
+    "id": "sample.background_summary",
+    "title": "后台任务示例",
+    "description": "演示普通插件的手动与周期任务、运行状态和最小化任务记录。",
+    "version": "1.0.0",
+    "versionCode": 1,
+    "minHostVersionCode": 23,
+    "publisher": "android_tool_suite.samples",
+    "kind": "tool"
+  },
+  "platforms": ["android"],
+  "runtime": {
+    "ui": [
+      { "id": "main", "type": "declarative", "entry": "ui/main.json" }
+    ],
+    "background": [
+      {
+        "id": "summary-worker",
+        "type": "javascript-worker",
+        "entry": "workers/summary.js",
+        "required": false,
+        "timeoutMs": 10000,
+        "maxHeapBytes": 8388608
+      },
+      {
+        "id": "timeout-worker",
+        "type": "javascript-worker",
+        "entry": "workers/timeout.js",
+        "required": false,
+        "timeoutMs": 1000,
+        "maxHeapBytes": 8388608
+      },
+      {
+        "id": "retry-worker",
+        "type": "javascript-worker",
+        "entry": "workers/retry.js",
+        "required": false,
+        "timeoutMs": 10000,
+        "maxHeapBytes": 8388608
+      },
+      {
+        "id": "heap-limit-worker",
+        "type": "javascript-worker",
+        "entry": "workers/heap-limit.js",
+        "required": false,
+        "timeoutMs": 10000,
+        "maxHeapBytes": 1048576
+      }
+    ],
+    "providers": []
+  },
+  "requires": {
+    "plugins": [],
+    "capabilities": [
+      { "id": "scheduler", "version": "^1.0.0", "optional": false, "scopes": {} }
+    ]
+  },
+  "provides": { "capabilities": [] },
+  "contributes": {
+    "tools": [{ "id": "main", "uiEntry": "main" }],
+    "homeWidgets": []
+  },
+  "datasets": [],
+  "tasks": [
+    {
+      "id": "refresh-summary",
+      "backgroundEntry": "summary-worker",
+      "triggers": [
+        { "type": "app-foreground" },
+        { "type": "periodic", "intervalMinutes": 60 }
+      ],
+      "constraints": {
+        "network": "none",
+        "charging": false,
+        "batteryNotLow": true,
+        "storageNotLow": true
+      },
+      "concurrency": { "policy": "forbid" },
+      "retry": { "maxAttempts": 2, "initialBackoffMs": 10000 }
+    },
+    {
+      "id": "manual-probe",
+      "backgroundEntry": "summary-worker",
+      "triggers": [{ "type": "manual" }],
+      "constraints": { "network": "none" },
+      "concurrency": { "policy": "replace" },
+      "retry": { "maxAttempts": 1, "initialBackoffMs": 10000 }
+    },
+    {
+      "id": "timeout-probe",
+      "backgroundEntry": "timeout-worker",
+      "triggers": [{ "type": "manual" }],
+      "constraints": { "network": "none" },
+      "concurrency": { "policy": "replace" },
+      "retry": { "maxAttempts": 1, "initialBackoffMs": 10000 }
+    },
+    {
+      "id": "retry-probe",
+      "backgroundEntry": "retry-worker",
+      "triggers": [{ "type": "manual" }],
+      "constraints": { "network": "none" },
+      "concurrency": { "policy": "forbid" },
+      "retry": { "maxAttempts": 2, "initialBackoffMs": 10000 }
+    },
+    {
+      "id": "heap-limit-probe",
+      "backgroundEntry": "heap-limit-worker",
+      "triggers": [{ "type": "manual" }],
+      "constraints": { "network": "none" },
+      "concurrency": { "policy": "replace" },
+      "retry": { "maxAttempts": 1, "initialBackoffMs": 10000 }
+    }
+  ]
+}

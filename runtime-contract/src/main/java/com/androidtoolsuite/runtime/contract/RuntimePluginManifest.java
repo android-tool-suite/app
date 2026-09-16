@@ -123,7 +123,11 @@ public final class RuntimePluginManifest {
             List<Task> tasks = parseTasks(root.optJSONArray("tasks"));
             validateReferences(uiEntries, backgroundEntries, providerEntries, capabilityContributions,
                     toolContributions, datasets, tasks);
-            validateHomeWidgetDataSources(homeWidgetContributions, capabilityRequirements);
+            validateHomeWidgetDataSources(
+                    homeWidgetContributions,
+                    capabilityRequirements,
+                    capabilityContributions
+            );
             validateTaskCapability(tasks, capabilityRequirements);
             validatePackageKind(plugin, uiEntries, providerEntries, capabilityContributions,
                     toolContributions, homeWidgetContributions);
@@ -171,7 +175,7 @@ public final class RuntimePluginManifest {
 
     private static Plugin parsePlugin(JSONObject json) throws ContractException, JSONException {
         JsonContract.requireOnlyKeys(json, "id", "title", "description", "version", "versionCode",
-                "minHostVersionCode", "publisher", "homepage", "kind");
+                "minHostVersionCode", "minAndroidApi", "publisher", "homepage", "kind");
         String id = ContractPatterns.requireId("plugin.id", json.optString("id", ""), 128);
         String title = ContractPatterns.requireText("plugin.title", json.optString("title", ""), 80);
         String description = ContractPatterns.requireText(
@@ -183,6 +187,11 @@ public final class RuntimePluginManifest {
         }
         int versionCode = JsonContract.requirePositiveInt(json, "versionCode");
         int minHostVersionCode = JsonContract.requirePositiveInt(json, "minHostVersionCode");
+        int minAndroidApi = json.has("minAndroidApi")
+                ? JsonContract.requirePositiveInt(json, "minAndroidApi") : 24;
+        if (minAndroidApi < 24 || minAndroidApi > 1000) {
+            throw new ContractException("plugin.minAndroidApi 超出范围");
+        }
         String publisher = ContractPatterns.requireId("plugin.publisher", json.optString("publisher", ""), 128);
         String kind = json.optString("kind", "tool").trim();
         if (!Set.of("tool", "trusted-provider").contains(kind)) {
@@ -192,7 +201,7 @@ public final class RuntimePluginManifest {
         if (homepage.length() > 512 || (!homepage.isEmpty() && !homepage.matches("https?://[^\\s]+"))) {
             throw new ContractException("plugin.homepage 超出长度限制");
         }
-        return new Plugin(id, title, description, version, versionCode, minHostVersionCode,
+        return new Plugin(id, title, description, version, versionCode, minHostVersionCode, minAndroidApi,
                 publisher, homepage, kind);
     }
 
@@ -708,12 +717,21 @@ public final class RuntimePluginManifest {
 
     private static void validateHomeWidgetDataSources(
             List<HomeWidgetContribution> widgets,
-            List<CapabilityRequirement> requirements
+            List<CapabilityRequirement> requirements,
+            List<CapabilityContribution> contributions
     ) throws ContractException {
         Set<String> declared = new HashSet<>();
         for (CapabilityRequirement requirement : requirements) declared.add(requirement.id);
         for (HomeWidgetContribution widget : widgets) {
             String capability = GeneratedContract.capabilityForMethod(widget.dataSource);
+            if (capability == null) {
+                for (CapabilityContribution contribution : contributions) {
+                    if (contribution.methods.contains(widget.dataSource)) {
+                        capability = contribution.id;
+                        break;
+                    }
+                }
+            }
             if (capability == null || !declared.contains(capability)) {
                 throw new ContractException("HomeWidget dataSource 未声明对应 Capability：" + widget.dataSource);
             }
@@ -807,18 +825,20 @@ public final class RuntimePluginManifest {
         public final String version;
         public final int versionCode;
         public final int minHostVersionCode;
+        public final int minAndroidApi;
         public final String publisher;
         public final String homepage;
         public final String kind;
 
         Plugin(String id, String title, String description, String version, int versionCode,
-               int minHostVersionCode, String publisher, String homepage, String kind) {
+               int minHostVersionCode, int minAndroidApi, String publisher, String homepage, String kind) {
             this.id = id;
             this.title = title;
             this.description = description;
             this.version = version;
             this.versionCode = versionCode;
             this.minHostVersionCode = minHostVersionCode;
+            this.minAndroidApi = minAndroidApi;
             this.publisher = publisher;
             this.homepage = homepage;
             this.kind = kind;

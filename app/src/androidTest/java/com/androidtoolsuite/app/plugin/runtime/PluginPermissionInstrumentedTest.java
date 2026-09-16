@@ -20,6 +20,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.lang.reflect.Method;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -74,6 +75,17 @@ public final class PluginPermissionInstrumentedTest {
         assertTrue(permissions.isGranted(manifest, "shizuku.control"));
         permissions.setGranted(manifest, "shizuku.control", false);
         assertTrue(permissions.isGranted(manifest, "shizuku.control"));
+    }
+
+    @Test
+    public void selfProvidedWorkerCapabilityIsInternalButDownstreamPermissionsRemainManaged() throws Exception {
+        RuntimePluginManifest manifest = RuntimePluginManifest.parse(selfProvidedManifest());
+        permissions.reconcile(manifest);
+
+        assertTrue(permissions.isGranted(manifest, "sample.summary"));
+        assertFalse(permissions.isGranted(manifest, "network.request"));
+        assertEquals(1, permissions.permissions(manifest).size());
+        assertEquals("network.request", permissions.permissions(manifest).get(0).capabilityId);
     }
 
     @Test
@@ -132,6 +144,23 @@ public final class PluginPermissionInstrumentedTest {
         ));
     }
 
+    @Test
+    public void credentialHeadersRequireAnExplicitNetworkScope() throws Exception {
+        Method blockedHeader = HostCapabilityProviders.class.getDeclaredMethod(
+                "blockedHeader", String.class, JSONObject.class
+        );
+        blockedHeader.setAccessible(true);
+        JSONObject scoped = new JSONObject("{\"headers\":[\"cookie\",\"authorization\"]}");
+        JSONObject unscoped = new JSONObject();
+
+        assertFalse((Boolean) blockedHeader.invoke(null, "Cookie", scoped));
+        assertFalse((Boolean) blockedHeader.invoke(null, "Authorization", scoped));
+        assertTrue((Boolean) blockedHeader.invoke(null, "Cookie", unscoped));
+        assertTrue((Boolean) blockedHeader.invoke(null, "Authorization", unscoped));
+        assertTrue((Boolean) blockedHeader.invoke(null, "Host", scoped));
+        assertTrue((Boolean) blockedHeader.invoke(null, "Proxy-Authorization", scoped));
+    }
+
     private static String manifest(String host) {
         return "{"
                 + "\"format\":\"ats-plugin\",\"formatVersion\":3,"
@@ -172,5 +201,26 @@ public final class PluginPermissionInstrumentedTest {
                 + "\"shizuku.connect\"]}]},"
                 + "\"contributes\":{\"tools\":[{\"id\":\"main\",\"uiEntry\":\"main\"}],"
                 + "\"homeWidgets\":[]},\"datasets\":[],\"tasks\":[]}";
+    }
+
+    private static String selfProvidedManifest() {
+        return "{"
+                + "\"format\":\"ats-plugin\",\"formatVersion\":3,"
+                + "\"plugin\":{\"id\":\"" + PLUGIN_ID + "\",\"title\":\"Worker\","
+                + "\"description\":\"Worker fixture\",\"version\":\"1.0.0\","
+                + "\"versionCode\":1,\"minHostVersionCode\":1,\"publisher\":\"sample\",\"kind\":\"tool\"},"
+                + "\"platforms\":[\"android\"],"
+                + "\"runtime\":{\"ui\":[{\"id\":\"main\",\"type\":\"declarative\",\"entry\":\"ui/main.json\"}],"
+                + "\"background\":[{\"id\":\"summary-worker\",\"type\":\"javascript-worker\","
+                + "\"entry\":\"workers/summary.js\",\"required\":true}],\"providers\":[]},"
+                + "\"requires\":{\"plugins\":[],\"capabilities\":["
+                + "{\"id\":\"sample.summary\",\"version\":\"^1.0.0\",\"optional\":false,\"scopes\":{}},"
+                + "{\"id\":\"network.request\",\"version\":\"^1.0.0\",\"optional\":false,"
+                + "\"scopes\":{\"hosts\":[\"example.test\"],\"methods\":[\"GET\"]}}]},"
+                + "\"provides\":{\"capabilities\":[{\"id\":\"sample.summary\",\"version\":\"1.0.0\","
+                + "\"workerEntry\":\"summary-worker\",\"methods\":[\"sample.summary.get\"]}]},"
+                + "\"contributes\":{\"tools\":[{\"id\":\"main\",\"uiEntry\":\"main\"}],\"homeWidgets\":[]},"
+                + "\"datasets\":[],\"tasks\":[]}"
+                ;
     }
 }

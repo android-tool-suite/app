@@ -2,7 +2,7 @@
 package com.androidtoolsuite.runtime.contract;
 
 public final class GeneratedContract {
-    public static final String CONTRACT_VERSION = "2.0.0";
+    public static final String CONTRACT_VERSION = "2.1.0";
     public static final int PACKAGE_FORMAT_VERSION = 3;
     public static final String RPC_PROTOCOL = "2.0";
 
@@ -15,6 +15,8 @@ public final class GeneratedContract {
         public static final String SCHEDULER = "scheduler";
         public static final String NETWORK_REQUEST = "network.request";
         public static final String FILE_IMPORT = "file.import";
+        public static final String FILE_EXPORT = "file.export";
+        public static final String SYSTEM_LOGS = "system.logs";
         public static final String CLIPBOARD = "clipboard";
         public static final String NOTIFICATION = "notification";
         public static final String ACCESSIBILITY_MANAGE = "accessibility.manage";
@@ -33,6 +35,7 @@ public final class GeneratedContract {
         public static final String APP_OPENEXTERNAL = "app.openExternal";
         public static final String CLIPBOARD_READ = "clipboard.read";
         public static final String CLIPBOARD_WRITE = "clipboard.write";
+        public static final String FILE_EXPORT_SAVE = "file.export.save";
         public static final String FILE_IMPORT_PICK = "file.import.pick";
         public static final String NETWORK_REQUEST = "network.request";
         public static final String NOTIFICATION_CANCEL = "notification.cancel";
@@ -63,6 +66,7 @@ public final class GeneratedContract {
         public static final String STORAGE_SECRET_DELETE = "storage.secret.delete";
         public static final String STORAGE_SECRET_GET = "storage.secret.get";
         public static final String STORAGE_SECRET_SET = "storage.secret.set";
+        public static final String SYSTEM_LOGS_SEARCH = "system.logs.search";
 
         private Methods() {
         }
@@ -113,6 +117,8 @@ public final class GeneratedContract {
             case "scheduler.runNow": return "scheduler";
             case "network.request": return "network.request";
             case "file.import.pick": return "file.import";
+            case "file.export.save": return "file.export";
+            case "system.logs.search": return "system.logs";
             case "clipboard.read": return "clipboard";
             case "clipboard.write": return "clipboard";
             case "notification.cancel": return "notification";
@@ -150,6 +156,8 @@ public final class GeneratedContract {
             case "scheduler": return "user";
             case "network.request": return "user";
             case "file.import": return "user";
+            case "file.export": return "user";
+            case "system.logs": return "user";
             case "clipboard": return "user";
             case "notification": return "user";
             case "accessibility.manage": return "user";
@@ -166,6 +174,8 @@ public final class GeneratedContract {
             case "scheduler": return "sensitive";
             case "network.request": return "sensitive";
             case "file.import": return "sensitive";
+            case "file.export": return "sensitive";
+            case "system.logs": return "restricted";
             case "clipboard": return "sensitive";
             case "notification": return "sensitive";
             case "accessibility.manage": return "restricted";
@@ -182,6 +192,8 @@ public final class GeneratedContract {
             case "scheduler": return "后台运行";
             case "network.request": return "网络访问";
             case "file.import": return "读取所选文件";
+            case "file.export": return "保存文件";
+            case "system.logs": return "读取近期系统日志";
             case "clipboard": return "剪贴板";
             case "notification": return "发送通知";
             case "accessibility.manage": return "管理无障碍服务";
@@ -198,6 +210,8 @@ public final class GeneratedContract {
             case "scheduler": return "允许插件按清单中的条件在后台执行任务。";
             case "network.request": return "访问插件声明的 HTTPS 域名和请求方式。";
             case "file.import": return "在你主动选择后读取符合类型和大小限制的文件。";
+            case "file.export": return "在你主动操作后，把插件生成的文件保存到你选择的位置。";
+            case "system.logs": return "在你主动操作后，按插件声明的检索词读取近期系统日志中的匹配行。";
             case "clipboard": return "在你操作工具时读取或写入剪贴板内容。";
             case "notification": return "使用插件声明的通知类别显示或取消通知。";
             case "accessibility.manage": return "查看并修改设备上已安装无障碍服务的启用状态。";

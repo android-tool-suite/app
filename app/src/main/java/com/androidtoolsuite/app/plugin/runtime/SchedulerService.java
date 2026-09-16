@@ -47,8 +47,6 @@ public final class SchedulerService implements CapabilityProvider {
 
     private static final String PREFS_NAME = "runtime_v2_scheduler";
     private static final String PREF_REGISTERED = "registered_tasks";
-    private static final long CONDITIONAL_POLL_MINUTES = 15L;
-
     private final Context context;
     private final PluginPackageStore packages;
     private final TaskRunStore runs;
@@ -125,9 +123,8 @@ public final class SchedulerService implements CapabilityProvider {
     public synchronized void syncEnabledPlugins() {
         LinkedHashSet<String> desired = new LinkedHashSet<>();
         for (PluginPackageStore.InstalledPlugin installed : packages.load()) {
-            if (!installed.enabled) continue;
-            workManager.cancelAllWorkByTag(pluginTag(installed.manifest.plugin.id));
-            if (!events.isPermissionGranted(installed.manifest, "scheduler")) continue;
+            boolean permissionGranted = events.isPermissionGranted(installed.manifest, "scheduler");
+            if (!SchedulerPolicy.canSchedule(installed.enabled, permissionGranted)) continue;
             for (RuntimePluginManifest.Task task : installed.manifest.tasks) {
                 String key = taskKey(installed.manifest.plugin.id, task.id);
                 desired.add(key);
@@ -153,7 +150,7 @@ public final class SchedulerService implements CapabilityProvider {
         }
         workManager.cancelAllWorkByTag(pluginTag(pluginId));
         for (RuntimePluginManifest.Task task : installed.manifest.tasks) runs.cancelActive(pluginId, task.id);
-        if (!events.isPermissionGranted(installed.manifest, "scheduler")) {
+        if (!SchedulerPolicy.canSchedule(true, events.isPermissionGranted(installed.manifest, "scheduler"))) {
             LinkedHashSet<String> registered = new LinkedHashSet<>(
                     preferences.getStringSet(PREF_REGISTERED, Collections.emptySet())
             );
@@ -178,8 +175,10 @@ public final class SchedulerService implements CapabilityProvider {
 
     public void onAppForeground() {
         for (PluginPackageStore.InstalledPlugin installed : packages.load()) {
-            if (!installed.enabled) continue;
-            if (!events.isPermissionGranted(installed.manifest, "scheduler")) continue;
+            if (!SchedulerPolicy.canSchedule(
+                    installed.enabled,
+                    events.isPermissionGranted(installed.manifest, "scheduler")
+            )) continue;
             for (RuntimePluginManifest.Task task : installed.manifest.tasks) {
                 if (hasTrigger(task, "app-foreground")) {
                     try {
@@ -204,13 +203,19 @@ public final class SchedulerService implements CapabilityProvider {
 
     public void onProviderEvent(String capability, String event, JSONObject input) {
         for (PluginPackageStore.InstalledPlugin installed : packages.load()) {
-            if (!installed.enabled) continue;
-            if (!events.isPermissionGranted(installed.manifest, "scheduler")) continue;
+            if (!SchedulerPolicy.canSchedule(
+                    installed.enabled,
+                    events.isPermissionGranted(installed.manifest, "scheduler")
+            )) continue;
             for (RuntimePluginManifest.Task task : installed.manifest.tasks) {
                 for (RuntimePluginManifest.Trigger trigger : task.triggers) {
                     if ("provider-event".equals(trigger.type)
-                            && trigger.capability.equals(capability)
-                            && trigger.event.equals(event)) {
+                            && SchedulerPolicy.matchesProviderEvent(
+                            trigger.capability,
+                            trigger.event,
+                            capability,
+                            event
+                    )) {
                         try {
                             enqueueNow(installed, task, input, "provider-event");
                         } catch (CapabilityFailure ignored) {
@@ -253,7 +258,7 @@ public final class SchedulerService implements CapabilityProvider {
             try {
                 JSONObject previous = runs.lastRun(pluginId, task.id);
                 String status = previous.optString("status", "never");
-                if ("queued".equals(status) || "running".equals(status) || "retrying".equals(status)) {
+                if (SchedulerPolicy.isActiveStatus(status)) {
                     RuntimePluginManifest.BackgroundEntry background = backgroundEntry(installed.manifest, task);
                     long since = previous.optLong("startedAt", previous.optLong("createdAt", 0L));
                     long lifetime = background == null ? 15 * 60_000L : background.timeoutMs + 60_000L;
@@ -304,11 +309,12 @@ public final class SchedulerService implements CapabilityProvider {
         int scheduled = 0;
         for (int index = 0; index < task.triggers.size(); index++) {
             RuntimePluginManifest.Trigger trigger = task.triggers.get(index);
-            if ("periodic".equals(trigger.type)) {
-                enqueuePeriodic(installed, task, trigger, index, trigger.intervalMinutes);
-                scheduled++;
-            } else if ("network-available".equals(trigger.type) || "charging".equals(trigger.type)) {
-                enqueuePeriodic(installed, task, trigger, index, CONDITIONAL_POLL_MINUTES);
+            long intervalMinutes = SchedulerPolicy.scheduledIntervalMinutes(
+                    trigger.type,
+                    trigger.intervalMinutes
+            );
+            if (intervalMinutes > 0L) {
+                enqueuePeriodic(installed, task, trigger, index, intervalMinutes);
                 scheduled++;
             }
         }
@@ -333,7 +339,7 @@ public final class SchedulerService implements CapabilityProvider {
         );
         PeriodicWorkRequest request = new PeriodicWorkRequest.Builder(
                 PluginTaskWorker.class,
-                Math.max(PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS / 60_000L, intervalMinutes),
+                intervalMinutes,
                 TimeUnit.MINUTES
         )
                 .setConstraints(constraints)
@@ -403,11 +409,10 @@ public final class SchedulerService implements CapabilityProvider {
 
     private static Constraints constraints(RuntimePluginManifest.Constraints declared, String triggerType) {
         Constraints.Builder builder = new Constraints.Builder();
-        String network = declared.network;
-        if ("network-available".equals(triggerType) && "none".equals(network)) network = "connected";
+        String network = SchedulerPolicy.effectiveNetwork(declared.network, triggerType);
         if ("unmetered".equals(network)) builder.setRequiredNetworkType(NetworkType.UNMETERED);
         else if ("connected".equals(network)) builder.setRequiredNetworkType(NetworkType.CONNECTED);
-        if (declared.charging || "charging".equals(triggerType)) builder.setRequiresCharging(true);
+        if (SchedulerPolicy.requiresCharging(declared.charging, triggerType)) builder.setRequiresCharging(true);
         if (declared.batteryNotLow) builder.setRequiresBatteryNotLow(true);
         if (declared.storageNotLow) builder.setRequiresStorageNotLow(true);
         return builder.build();

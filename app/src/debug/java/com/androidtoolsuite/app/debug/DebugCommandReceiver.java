@@ -12,11 +12,10 @@ import android.content.pm.PackageInfo;
 import android.os.Build;
 
 import com.androidtoolsuite.app.host.MainActivity;
-import com.androidtoolsuite.app.plugin.api.HomeWidget;
+import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget;
 import com.androidtoolsuite.app.plugin.api.PluginDependency;
-import com.androidtoolsuite.app.plugin.api.ToolPlugin;
+import com.androidtoolsuite.app.plugin.runtime.HostTool;
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor;
-import com.androidtoolsuite.app.plugin.runtime.ExternalToolFactory;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
@@ -25,6 +24,7 @@ import com.androidtoolsuite.app.plugin.runtime.CapabilityRouter;
 import com.androidtoolsuite.app.plugin.runtime.PluginPackageArchive;
 import com.androidtoolsuite.app.plugin.runtime.PluginPermissionManager;
 import com.androidtoolsuite.app.plugin.runtime.PluginRuntime;
+import com.androidtoolsuite.runtime.contract.GeneratedContract;
 import com.androidtoolsuite.runtime.contract.RuntimePluginManifest;
 
 import org.json.JSONArray;
@@ -46,6 +46,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -82,6 +84,36 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             throw new IllegalArgumentException("缺少 Intent");
         }
         switch (command) {
+            case "verify-datasets":
+                return DebugDataCommands.verify(context, requiredString(intent, "plugin"));
+            case "list-datasets":
+                return DebugDataCommands.datasets(context, clean(intent.getStringExtra("plugin")));
+            case "inspect-backup":
+            case "restore-datasets": {
+                File source = resolveInboxFile(context, requiredString(intent, "path"));
+                Set<String> keys = new LinkedHashSet<>();
+                String selection = clean(intent.getStringExtra("keys"));
+                if (!selection.isEmpty()) Collections.addAll(keys, selection.split(","));
+                char[] password = new char[0];
+                String passwordPath = clean(intent.getStringExtra("password_path"));
+                try {
+                    if (!passwordPath.isEmpty()) {
+                        File passwordFile = resolveInboxFile(context, passwordPath);
+                        if (passwordFile.length() > 4096) throw new IOException("密码文件过大");
+                        try (InputStream input = new FileInputStream(passwordFile)) {
+                            password = new String(readAll(input, 4096), StandardCharsets.UTF_8).toCharArray();
+                        } finally {
+                            if (!passwordFile.delete()) throw new IOException("无法删除临时密码文件");
+                        }
+                    }
+                    JSONObject result = DebugDataCommands.backup(context, source,
+                            "restore-datasets".equals(command), keys, password);
+                    if ("restore-datasets".equals(command)) notifyStateChanged(context);
+                    return result;
+                } finally {
+                    java.util.Arrays.fill(password, '\0');
+                }
+            }
             case "help":
                 return help(context);
             case "status":
@@ -131,6 +163,18 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                         requiredString(intent, "capability"),
                         requiredBoolean(intent, "enabled")
                 );
+            case "run-task":
+                return runTask(
+                        context,
+                        requiredString(intent, "plugin"),
+                        requiredString(intent, "task")
+                );
+            case "last-task-run":
+                return lastTaskRun(
+                        context,
+                        requiredString(intent, "plugin"),
+                        requiredString(intent, "task")
+                );
             case "clear-dev-server":
                 return clearDevServer(context, requiredString(intent, "plugin"));
             default:
@@ -146,6 +190,10 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         result.put("outbox", debugOutbox(context).getAbsolutePath());
         JSONArray commands = new JSONArray();
         commands.put(command("help"));
+        commands.put(command("list-datasets", "plugin:optional"));
+        commands.put(command("verify-datasets", "plugin"));
+        commands.put(command("inspect-backup", "path"));
+        commands.put(command("restore-datasets", "path", "keys:comma-separated", "password_path:optional"));
         commands.put(command("status"));
         commands.put(command("list-plugins"));
         commands.put(command("import-plugin", "path"));
@@ -154,6 +202,8 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         commands.put(command("set-plugin-enabled", "plugin", "enabled:boolean"));
         commands.put(command("list-permissions", "plugin"));
         commands.put(command("set-permission", "plugin", "capability", "enabled:boolean"));
+        commands.put(command("run-task", "plugin", "task"));
+        commands.put(command("last-task-run", "plugin", "task"));
         commands.put(command("set-widget-visible", "widget", "visible:boolean"));
         commands.put(command("reset-state"));
         commands.put(command("set-dev-server", "plugin", "url"));
@@ -181,6 +231,32 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                 context.getSharedPreferences("runtime_v2_dev_servers", Context.MODE_PRIVATE).getAll()
         ));
         return result;
+    }
+
+    private JSONObject runTask(Context context, String pluginId, String taskId) throws Exception {
+        PluginRuntime runtime = PluginRuntime.get(context);
+        PluginPackageStore.InstalledPlugin installed = runtime.packages().find(pluginId);
+        if (installed == null) throw new IllegalArgumentException("插件不存在：" + pluginId);
+        JSONObject payload = new JSONObject()
+                .put("taskId", taskId)
+                .put("input", new JSONObject());
+        return runtime.capabilities().invoke(
+                installed.manifest,
+                pluginId,
+                "adb-debug-" + UUID.randomUUID(),
+                GeneratedContract.Methods.SCHEDULER_RUNNOW,
+                payload,
+                true,
+                10_000
+        ).get(15, TimeUnit.SECONDS);
+    }
+
+    private JSONObject lastTaskRun(Context context, String pluginId, String taskId) throws Exception {
+        PluginRuntime runtime = PluginRuntime.get(context);
+        if (runtime.packages().find(pluginId) == null) {
+            throw new IllegalArgumentException("插件不存在：" + pluginId);
+        }
+        return runtime.taskRuns().lastRun(pluginId, taskId);
     }
 
     private JSONObject setDevServer(Context context, String pluginId, String rawUrl) throws Exception {
@@ -217,11 +293,11 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         Set<String> activeIds = activePluginVersions(context).keySet();
         JSONArray plugins = new JSONArray();
 
-        for (ToolPlugin plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
             plugins.put(pluginJson(plugin, true, true, true));
             plugin.onDestroy();
         }
-        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
             plugins.put(pluginJson(
                     plugin,
                     true,
@@ -330,25 +406,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             }
         }
 
-        PluginPackage pluginPackage = readPluginPackage(packageFile);
-        ImportedPluginDescriptor descriptor = pluginPackage.descriptor;
-        if (isReservedPluginId(descriptor.id)) {
-            throw new IllegalArgumentException("插件 ID 与内置插件冲突：" + descriptor.id);
-        }
-
-        ExternalPluginStore store = new ExternalPluginStore(context);
-        boolean updating = findExternal(store, descriptor.id) != null;
-        store.savePluginCode(descriptor.id, pluginPackage.codeBytes);
-        if (!updating) store.setEnabled(descriptor.id, false);
-        store.save(descriptor);
-        notifyStateChanged(context);
-
-        JSONObject result = new JSONObject();
-        result.put("plugin", descriptor.id);
-        result.put("title", descriptor.title);
-        result.put("updated", updating);
-        result.put("enabled", store.isEnabled(descriptor.id));
-        return result;
+        throw new IllegalArgumentException("旧版 API1 插件已停止安装，请使用 format v3 插件包");
     }
 
     private JSONObject deletePlugin(Context context, String pluginId) throws Exception {
@@ -410,7 +468,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
         ExternalPluginStore externalStore = new ExternalPluginStore(context);
 
-        ToolPlugin required = findPlugin(ToolRegistry.createRequiredBuiltInPlugins(), pluginId);
+        HostTool required = findPlugin(ToolRegistry.createRequiredBuiltInPlugins(), pluginId);
         if (required != null) {
             required.onDestroy();
             if (!enabled) {
@@ -419,7 +477,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             return changed("plugin", pluginId, "enabled", true);
         }
 
-        ToolPlugin optional = findPlugin(ToolRegistry.createOptionalBuiltInPlugins(), pluginId);
+        HostTool optional = findPlugin(ToolRegistry.createOptionalBuiltInPlugins(), pluginId);
         ImportedPluginDescriptor external = findExternal(externalStore, pluginId);
         PluginRuntime runtime = PluginRuntime.get(context);
         PluginPackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
@@ -468,6 +526,9 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         RuntimePluginManifest manifest = installed.manifest;
         if (manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
             missing.add("host>=" + manifest.plugin.minHostVersionCode);
+        }
+        if (manifest.plugin.minAndroidApi > Build.VERSION.SDK_INT) {
+            missing.add("android>=" + manifest.plugin.minAndroidApi);
         }
         for (RuntimePluginManifest.Requirement requirement : manifest.pluginRequirements) {
             if (!requirement.optional
@@ -572,7 +633,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         }
         runtime.workerProviders().sync(runtime.packages().load());
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
-        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
             builtInStore.setEnabled(plugin.id(), false);
             plugin.onDestroy();
         }
@@ -593,13 +654,13 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
         ExternalPluginStore externalStore = new ExternalPluginStore(context);
         LinkedHashMap<String, String> active = new LinkedHashMap<>();
-        for (ToolPlugin plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
             if (dependenciesSatisfied(plugin.dependencies(), active)) {
                 active.put(plugin.id(), plugin.version());
             }
             plugin.onDestroy();
         }
-        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
             if (builtInStore.isEnabled(plugin.id()) && dependenciesSatisfied(plugin.dependencies(), active)) {
                 active.put(plugin.id(), plugin.version());
             }
@@ -622,24 +683,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                 active.put(installed.manifest.plugin.id, installed.manifest.plugin.version);
             }
         }
-        List<ImportedPluginDescriptor> pending = new ArrayList<>(externalStore.load());
-        pending.removeIf(plugin -> !externalStore.isEnabled(plugin.id));
-        boolean loaded;
-        do {
-            loaded = false;
-            for (int index = pending.size() - 1; index >= 0; index--) {
-                ImportedPluginDescriptor descriptor = pending.get(index);
-                if (dependenciesSatisfied(descriptor.dependencies, active)) {
-                    ToolPlugin plugin = ExternalToolFactory.create(context, descriptor);
-                    if (plugin != null) {
-                        active.put(plugin.id(), plugin.version());
-                        plugin.onDestroy();
-                        loaded = true;
-                    }
-                    pending.remove(index);
-                }
-            }
-        } while (loaded);
         return active;
     }
 
@@ -662,7 +705,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
         ExternalPluginStore externalStore = new ExternalPluginStore(context);
         List<String> dependents = new ArrayList<>();
-        for (ToolPlugin plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
             if (builtInStore.isEnabled(plugin.id()) && dependsOn(plugin.dependencies(), pluginId)) {
                 dependents.add(plugin.id());
             }
@@ -694,7 +737,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         return false;
     }
 
-    private JSONObject pluginJson(ToolPlugin plugin, boolean builtIn, boolean required, boolean active)
+    private JSONObject pluginJson(HostTool plugin, boolean builtIn, boolean required, boolean active)
             throws JSONException {
         JSONObject json = new JSONObject();
         json.put("id", plugin.id());
@@ -706,7 +749,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         json.put("active", active);
         json.put("dependencies", new JSONArray(plugin.dependencies()));
         JSONArray widgets = new JSONArray();
-        for (HomeWidget widget : plugin.createHomeWidgets(null, null)) {
+        for (HostHomeWidget widget : plugin.createHomeWidgets(null, null)) {
             widgets.put(plugin.id() + ":" + widget.id());
         }
         json.put("widgets", widgets);
@@ -838,9 +881,9 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         return null;
     }
 
-    private ToolPlugin findPlugin(List<ToolPlugin> plugins, String id) {
-        ToolPlugin match = null;
-        for (ToolPlugin plugin : plugins) {
+    private HostTool findPlugin(List<HostTool> plugins, String id) {
+        HostTool match = null;
+        for (HostTool plugin : plugins) {
             if (plugin.id().equals(id)) {
                 match = plugin;
             } else {
@@ -854,7 +897,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         if ("plugin_manager".equals(id)) {
             return true;
         }
-        for (ToolPlugin plugin : ToolRegistry.createBuiltInPlugins()) {
+        for (HostTool plugin : ToolRegistry.createBuiltInPlugins()) {
             boolean matches = plugin.id().equals(id);
             plugin.onDestroy();
             if (matches) {

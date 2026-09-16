@@ -25,6 +25,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -75,15 +76,15 @@ public final class DatasetServiceInstrumentedTest {
                 runtime.packages().find(PLUGIN_ID), service
         );
         ByteArrayOutputStream exported = new ByteArrayOutputStream();
-        migration.legacyDataBridge().exportDataset(null, "settings", exported);
+        migration.datasetBridge().exportDataset(null, "settings", exported);
         assertArrayEquals(first, exported.toByteArray());
-        migration.legacyDataBridge().deleteDataset(null, "settings");
-        assertTrue(!migration.legacyDataBridge().hasData(null, "settings"));
-        migration.legacyDataBridge().importDataset(
+        migration.datasetBridge().deleteDataset(null, "settings");
+        assertTrue(!migration.datasetBridge().hasData(null, "settings"));
+        migration.datasetBridge().importDataset(
                 null,
                 "settings",
                 1,
-                com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode.REPLACE,
+                com.androidtoolsuite.app.migration.DatasetRestoreMode.REPLACE,
                 new ByteArrayInputStream(exported.toByteArray())
         );
         assertArrayEquals(first, read(service, session, "settings"));
@@ -93,6 +94,31 @@ public final class DatasetServiceInstrumentedTest {
         assertTrue(secret.getBoolean("found"));
         assertEquals("secret-value", secret.getJSONObject("value").getString("value"));
         assertTrue(service.secretDelete(PLUGIN_ID, "credentials", "token").getBoolean("deleted"));
+    }
+
+    @Test
+    public void multiChunkDatasetReadAppliesOffsets() throws Exception {
+        DatasetService service = runtime.datasets();
+        String session = "instrumented-chunked";
+        StringBuilder content = new StringBuilder("{\"formatVersion\":1,\"items\":[");
+        for (int index = 0; index < 10000; index++) {
+            if (index > 0) content.append(',');
+            content.append('"').append(String.format(Locale.ROOT, "%05d", index)).append('"');
+        }
+        content.append("]}");
+        byte[] payload = content.toString().getBytes(StandardCharsets.UTF_8);
+        assertTrue(payload.length > 64 * 1024);
+
+        JSONObject opened = service.openWrite(PLUGIN_ID, session, "settings");
+        String handle = opened.getString("handle");
+        int midpoint = payload.length / 2;
+        service.write(PLUGIN_ID, session, handle,
+                Base64.encodeToString(Arrays.copyOfRange(payload, 0, midpoint), Base64.NO_WRAP));
+        service.write(PLUGIN_ID, session, handle,
+                Base64.encodeToString(Arrays.copyOfRange(payload, midpoint, payload.length), Base64.NO_WRAP));
+        service.commit(PLUGIN_ID, session, handle);
+
+        assertArrayEquals(payload, read(service, session, "settings"));
     }
 
     @Test
@@ -129,7 +155,11 @@ public final class DatasetServiceInstrumentedTest {
         }
     }
 
-    private static byte[] packageBytes() throws Exception {
+    static byte[] packageBytes() throws Exception {
+        return packageBytes(1);
+    }
+
+    static byte[] packageBytes(int versionCode) throws Exception {
         JSONObject manifest = new JSONObject()
                 .put("format", "ats-plugin")
                 .put("formatVersion", 3)
@@ -138,7 +168,7 @@ public final class DatasetServiceInstrumentedTest {
                         .put("title", "插件运行时 data test")
                         .put("description", "Instrumentation fixture")
                         .put("version", "1.0.0")
-                        .put("versionCode", 1)
+                        .put("versionCode", versionCode)
                         .put("minHostVersionCode", 1)
                         .put("publisher", "android_tool_suite.tests"))
                 .put("platforms", new JSONArray().put("android"))

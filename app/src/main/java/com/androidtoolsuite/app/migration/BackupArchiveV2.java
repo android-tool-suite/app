@@ -1,8 +1,8 @@
 package com.androidtoolsuite.app.migration;
 
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -70,10 +70,10 @@ public final class BackupArchiveV2 {
 
     public static final class DatasetSource {
         public final String pluginId;
-        public final LegacyDatasetDescriptor descriptor;
+        public final DatasetDescriptor descriptor;
         public final DatasetWriter writer;
 
-        public DatasetSource(String pluginId, LegacyDatasetDescriptor descriptor, DatasetWriter writer) {
+        public DatasetSource(String pluginId, DatasetDescriptor descriptor, DatasetWriter writer) {
             this.pluginId = requireId(pluginId, "plugin id");
             this.descriptor = descriptor;
             this.writer = writer;
@@ -82,9 +82,9 @@ public final class BackupArchiveV2 {
 
     public static final class DatasetRecord {
         public final String pluginId;
-        public final LegacyDatasetDescriptor descriptor;
+        public final DatasetDescriptor descriptor;
 
-        private DatasetRecord(String pluginId, LegacyDatasetDescriptor descriptor) {
+        private DatasetRecord(String pluginId, DatasetDescriptor descriptor) {
             this.pluginId = pluginId;
             this.descriptor = descriptor;
         }
@@ -421,7 +421,7 @@ public final class BackupArchiveV2 {
         try {
             JSONArray array = new JSONArray();
             for (DatasetSource source : sources) {
-                LegacyDatasetDescriptor item = source.descriptor;
+                DatasetDescriptor item = source.descriptor;
                 array.put(new JSONObject()
                         .put("pluginId", source.pluginId)
                         .put("id", item.id)
@@ -470,7 +470,7 @@ public final class BackupArchiveV2 {
                     dependencies.add(dependencyArray.getString(dependencyIndex));
                 }
             }
-            LegacyDatasetDescriptor descriptor = new LegacyDatasetDescriptor(
+            DatasetDescriptor descriptor = new DatasetDescriptor(
                     id,
                     item.getString("name"),
                     DatasetCategory.valueOf(item.getString("category")),

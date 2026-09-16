@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-本文记录宿主应用后续的性能测量与优化方向。当前观察是 Release 版明显比 Debug 版流畅，但在应用打开后的一段时间内，以及一级页面左右切换时，实机仍能感知到卡顿。本轮只整理路线，不据此改动性能实现。
+本文记录宿主应用后续的性能测量与优化方向。当前观察是 Release 版明显比 Debug 版流畅，但在应用打开后的一段时间内，以及一级页面左右切换时，实机仍能感知到卡顿。P0.4 已于 2026-09-08 按用户要求暂缓，当前不创建 Macrobenchmark/Baseline Profile 模块，也不把性能工作作为 API1 退出门槛。
 
 性能验收必须以正式签名 Release 或至少 `profileable`、不可调试的构建为主。Debug 构建会启用调试支持并失去部分运行时优化，只用于功能定位，不能把它显示的帧率直接当成发布质量结论。
 
@@ -55,8 +55,8 @@
 
 ### 主线程与插件生命周期
 
-- 对 `loadPlugins`、V3 清单／权限恢复、声明式文档解析、WebView 首建、API1 DexClassLoader、Native Provider、`createHomeWidgets`、仓库 JSON 和签名校验分别打点。
-- 把磁盘读取、哈希和 JSON 解析等可移出的工作放到后台；声明式 Compose 节点、WebView 和 API1 View 的最终创建仍遵守主线程要求。API1/Provider 的同进程信任边界与 Web/声明式 Capability 权限要分别标注。
+- 对 `loadPlugins`、V3 清单／权限恢复、声明式文档解析、WebView 首建、Native Provider、主页组件、仓库 JSON 和签名校验分别打点。
+- 把磁盘读取、哈希和 JSON 解析等可移出的工作放到后台；声明式 Compose 节点、WebView 和 Provider 激活的最终创建仍遵守主线程要求。Provider 的同进程信任边界与 Web/声明式 Capability 权限要分别标注。
 - 插件安装后当前实现会完整销毁并重建插件集合。测量后再决定是否能安全地做增量替换；在依赖关系、回滚和插件生命周期没有明确契约前，不先做局部热更新。
 
 ### Pager、列表与绘制

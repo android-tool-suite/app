@@ -7,12 +7,12 @@ import static org.junit.Assert.assertTrue;
 import android.app.Activity;
 import android.view.View;
 
-import com.androidtoolsuite.app.plugin.api.PluginHost;
-import com.androidtoolsuite.app.plugin.api.ToolPlugin;
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.plugin.runtime.HostServices;
+import com.androidtoolsuite.app.plugin.runtime.HostTool;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetBridge;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import org.junit.Test;
 
@@ -82,10 +82,10 @@ public final class MigrationBridgeManagerTest {
     public void hostMigrationInstallsAndRestoresMissingPluginDataInOnePass() throws Exception {
         AtomicBoolean hostRestored = new AtomicBoolean();
         List<String> imported = new ArrayList<>();
-        LegacyDatasetDescriptor dataset = descriptor("parent", List.of());
-        LegacyDataBridge restoredBridge = new LegacyDataBridge() {
+        DatasetDescriptor dataset = descriptor("parent", List.of());
+        DatasetBridge restoredBridge = new DatasetBridge() {
             @Override
-            public List<LegacyDatasetDescriptor> datasets(Activity activity) {
+            public List<DatasetDescriptor> datasets(Activity activity) {
                 return List.of(dataset);
             }
 
@@ -195,7 +195,7 @@ public final class MigrationBridgeManagerTest {
 
     @Test
     public void importUsesTargetModesAndReportsExistingData() throws Exception {
-        LegacyDatasetDescriptor descriptor = new LegacyDatasetDescriptor(
+        DatasetDescriptor descriptor = new DatasetDescriptor(
                 "records",
                 "Records",
                 DatasetCategory.DATA,
@@ -205,8 +205,8 @@ public final class MigrationBridgeManagerTest {
                 List.of(DatasetRestoreMode.REPLACE, DatasetRestoreMode.MERGE)
         );
         byte[] archive = writePackageItem(descriptor);
-        LegacyDataBridge bridge = new LegacyDataBridge() {
-            @Override public List<LegacyDatasetDescriptor> datasets(Activity activity) { return List.of(descriptor); }
+        DatasetBridge bridge = new DatasetBridge() {
+            @Override public List<DatasetDescriptor> datasets(Activity activity) { return List.of(descriptor); }
             @Override public void exportDataset(Activity activity, String id, OutputStream output) { }
             @Override public boolean supportsImport(String id, int version) { return true; }
             @Override public boolean hasData(Activity activity, String id) { return true; }
@@ -236,7 +236,7 @@ public final class MigrationBridgeManagerTest {
         assertEquals(List.of(DatasetRestoreMode.MERGE), options.get(0).descriptor.restoreModes);
     }
 
-    private static byte[] writePackageItem(LegacyDatasetDescriptor descriptor) throws Exception {
+    private static byte[] writePackageItem(DatasetDescriptor descriptor) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         DataPackageArchive.write(output, new DataPackageArchive.WriteRequest(
                 "test.host",
@@ -255,10 +255,10 @@ public final class MigrationBridgeManagerTest {
         return output.toByteArray();
     }
 
-    private static ToolPlugin plugin(List<String> deleted) {
-        LegacyDataBridge bridge = new LegacyDataBridge() {
+    private static HostTool plugin(List<String> deleted) {
+        DatasetBridge bridge = new DatasetBridge() {
             @Override
-            public List<LegacyDatasetDescriptor> datasets(Activity activity) {
+            public List<DatasetDescriptor> datasets(Activity activity) {
                 return List.of(
                         descriptor("parent", List.of()),
                         descriptor("child", List.of("parent"))
@@ -282,22 +282,22 @@ public final class MigrationBridgeManagerTest {
         return plugin(bridge);
     }
 
-    private static ToolPlugin plugin(LegacyDataBridge bridge) {
-        return new ToolPlugin() {
+    private static HostTool plugin(DatasetBridge bridge) {
+        return new HostTool() {
             @Override public String id() { return "sample"; }
             @Override public String title() { return "Sample"; }
             @Override public String description() { return "Sample"; }
             @Override public boolean removable() { return true; }
-            @Override public LegacyDataBridge legacyDataBridge() { return bridge; }
-            @Override public View createView(Activity activity, PluginHost host) { return null; }
+            @Override public DatasetBridge datasetBridge() { return bridge; }
+            @Override public View createView(Activity activity, HostServices host) { return null; }
             @Override public void onSelected() { }
             @Override public void onHostStateChanged() { }
             @Override public void onDestroy() { }
         };
     }
 
-    private static LegacyDatasetDescriptor descriptor(String id, List<String> dependencies) {
-        return new LegacyDatasetDescriptor(
+    private static DatasetDescriptor descriptor(String id, List<String> dependencies) {
+        return new DatasetDescriptor(
                 id,
                 id,
                 DatasetCategory.DATA,

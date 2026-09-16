@@ -4,6 +4,7 @@
 /app/build/
 /plugin-sdk/build/
 /runtime-contract/build/
+/macrobenchmark/build/
 /web-sdk/node_modules/
 __pycache__/
 /dist/

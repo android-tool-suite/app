@@ -73,6 +73,7 @@ public final class HostCapabilityProviders {
         registrations.add(router.register(new AppProvider(actions), "host-activity:app", 100));
         registrations.add(router.register(new ClipboardProvider(context), "host-bundled:clipboard", 100));
         registrations.add(router.register(new FileImportProvider(actions), "host-bundled:file-import", 100));
+        registrations.add(router.register(new FileExportProvider(actions), "host-bundled:file-export", 100));
         registrations.add(router.register(new NotificationProvider(context, actions), "host-bundled:notification", 100));
         return Collections.unmodifiableList(registrations);
     }
@@ -333,6 +334,59 @@ public final class HostCapabilityProviders {
         }
     }
 
+    private static final class FileExportProvider extends Provider {
+        private final HostActions actions;
+
+        FileExportProvider(HostActions actions) {
+            super(GeneratedContract.Capabilities.FILE_EXPORT, GeneratedContract.Methods.FILE_EXPORT_SAVE);
+            this.actions = actions;
+        }
+
+        @Override
+        public JSONObject call(CapabilityCall call) throws CapabilityFailure {
+            requireGesture(call);
+            String blobId = requiredString(call.payload, "blobId", 128);
+            String fileName = requiredString(call.payload, "fileName", 120);
+            if (fileName.equals(".") || fileName.equals("..")
+                    || fileName.indexOf('/') >= 0 || fileName.indexOf('\\') >= 0) {
+                throw CapabilityFailure.invalid("fileName must be a plain file name");
+            }
+            String mimeType = requiredString(call.payload, "mimeType", 128).toLowerCase(Locale.ROOT);
+            if (!allowedMimeType(call.scopes.optJSONArray("mimeTypes"), mimeType)) {
+                throw new CapabilityFailure(
+                        "CAPABILITY_UNDECLARED",
+                        "MIME type is outside declared scope",
+                        false
+                );
+            }
+            int maxBytes = Math.min(
+                    call.scopes.optInt("maxBytes", (int) StorageService.MAX_BLOB_BYTES),
+                    (int) StorageService.MAX_BLOB_BYTES
+            );
+            if (maxBytes < 1) throw CapabilityFailure.invalid("maxBytes must be positive");
+            long remaining = Math.max(1L, call.deadlineEpochMillis - System.currentTimeMillis());
+            try {
+                return actions.saveFile(
+                        call.pluginId,
+                        call.sessionId,
+                        blobId,
+                        fileName,
+                        mimeType,
+                        maxBytes
+                ).get(remaining, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException error) {
+                throw new CapabilityFailure("TIMEOUT", "File export timed out", true);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new CapabilityFailure("CANCELLED", "File export interrupted", true);
+            } catch (ExecutionException error) {
+                Throwable cause = error.getCause();
+                if (cause instanceof CapabilityFailure) throw (CapabilityFailure) cause;
+                throw internal(cause == null ? error : cause);
+            }
+        }
+    }
+
     private static final class NotificationProvider extends Provider {
         private final Context context;
         private final HostActions actions;
@@ -410,7 +464,11 @@ public final class HostCapabilityProviders {
                 throw CapabilityFailure.invalid("network.request only supports HTTPS URLs without user info");
             }
             if (!allowedHost(call.scopes.optJSONArray("hosts"), uri.getHost())) {
-                throw new CapabilityFailure("CAPABILITY_UNDECLARED", "Network host is outside declared scope", false);
+                throw new CapabilityFailure(
+                        "CAPABILITY_UNDECLARED",
+                        "Network host is outside declared scope: " + uri.getHost(),
+                        false
+                );
             }
             if (!allowedString(call.scopes.optJSONArray("methods"), method)) {
                 throw new CapabilityFailure("CAPABILITY_UNDECLARED", "HTTP method is outside declared scope", false);
@@ -432,10 +490,9 @@ public final class HostCapabilityProviders {
                     java.util.Iterator<String> names = headers.keys();
                     while (names.hasNext()) {
                         String name = names.next();
-                        if (!name.matches("[A-Za-z0-9-]{1,64}") || blockedHeader(name)) {
-                            throw CapabilityFailure.invalid("Unsafe request header: " + name);
-                        }
-                        connection.setRequestProperty(name, requiredString(headers, name, 4_096));
+                        String value = requiredString(headers, name, 4_096);
+                        validateRequestHeader(name, value, call.scopes);
+                        connection.setRequestProperty(name, value);
                     }
                 }
                 String body = call.payload.optString("bodyBase64", "");
@@ -566,8 +623,22 @@ public final class HostCapabilityProviders {
         return false;
     }
 
-    private static boolean blockedHeader(String name) {
+    static void validateRequestHeader(String name, String value, JSONObject scopes) throws CapabilityFailure {
+        // RFC 9110 sections 5.1 and 5.6.2: field names are tokens, including underscores.
+        if (name == null || !name.matches("[!#$%&'*+.^_`|~A-Za-z0-9-]{1,64}") || blockedHeader(name, scopes)) {
+            throw CapabilityFailure.invalid("Unsafe request header: " + name);
+        }
+        if (value == null || value.chars().anyMatch(c -> (c < 32 && c != '\t') || c == 127)) {
+            throw CapabilityFailure.invalid("Unsafe request header value");
+        }
+    }
+
+    private static boolean blockedHeader(String name, JSONObject scopes) {
         String lower = name.toLowerCase(Locale.ROOT);
+        if (Set.of("authorization", "cookie").contains(lower)
+                && allowedString(scopes.optJSONArray("headers"), lower)) {
+            return false;
+        }
         return Set.of("host", "connection", "content-length", "cookie", "authorization", "proxy-authorization")
                 .contains(lower);
     }

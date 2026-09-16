@@ -52,6 +52,52 @@ public final class DatasetService implements AutoCloseable {
     private final File root;
     private final Map<String, PayloadHandle> handles = new HashMap<>();
 
+    @FunctionalInterface
+    public interface RestoreOperation { void run() throws IOException; }
+
+    /** Host-only archive transaction. Preserves generation files without decrypting their secrets. */
+    public synchronized void withRestoreRollback(Set<String> pluginIds, RestoreOperation operation) throws IOException {
+        synchronized (storage) {
+            Map<String, File> snapshots = new java.util.LinkedHashMap<>();
+            Set<File> retained = new HashSet<>();
+            try {
+                for (String id : pluginIds) {
+                    if (storage.hasOpenHandles(id) || hasOpenPayloadHandles(id)) {
+                        throw new IOException("请关闭插件页面中的文件操作后再恢复数据：" + id);
+                    }
+                    File snapshot = new File(pluginRoot(id), "restore-checkpoint-" + UUID.randomUUID());
+                    snapshots.put(id, snapshot);
+                    ensureDirectory(snapshot);
+                    copyDirectory(activeGeneration(id), snapshot);
+                }
+                try {
+                    operation.run();
+                } catch (IOException | RuntimeException failure) {
+                    for (Map.Entry<String, File> entry : snapshots.entrySet()) {
+                        try {
+                            File plugin = pluginRoot(entry.getKey());
+                            File generations = new File(plugin, "generations");
+                            String name = nextGenerationName(generations);
+                            File restored = new File(generations, name);
+                            ensureDirectory(restored);
+                            copyDirectory(entry.getValue(), restored);
+                            writePointer(new File(plugin, ACTIVE_GENERATION), name);
+                        } catch (IOException | CapabilityFailure rollbackFailure) {
+                            retained.add(entry.getValue());
+                            failure.addSuppressed(rollbackFailure);
+                        }
+                    }
+                    if (!retained.isEmpty()) throw new IOException("数据回滚未完成，已保留加密恢复检查点", failure);
+                    throw failure;
+                }
+            } catch (CapabilityFailure error) {
+                throw new IOException(error.getMessage(), error);
+            } finally {
+                for (File snapshot : snapshots.values()) if (!retained.contains(snapshot)) deleteRecursively(snapshot);
+            }
+        }
+    }
+
     public DatasetService(
             Context context,
             PluginPackageStore packages,
@@ -257,6 +303,7 @@ public final class DatasetService implements AutoCloseable {
         }
         try (RandomAccessFile input = new RandomAccessFile(handle.file, "r")) {
             if (offset > input.length()) throw CapabilityFailure.invalid("Dataset offset is beyond end of file");
+            input.seek(offset);
             int count = (int) Math.min((long) maxBytes, input.length() - offset);
             byte[] bytes = new byte[count];
             input.readFully(bytes);

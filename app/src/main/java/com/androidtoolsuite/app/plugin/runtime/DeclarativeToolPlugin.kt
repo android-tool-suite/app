@@ -45,9 +45,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudOff
-import com.androidtoolsuite.app.plugin.api.PluginHost
-import com.androidtoolsuite.app.plugin.api.HomeWidget
-import com.androidtoolsuite.app.plugin.api.ToolPlugin
+import com.androidtoolsuite.app.plugin.runtime.HostServices
+import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget
+import com.androidtoolsuite.app.plugin.runtime.HostTool
 import com.androidtoolsuite.app.ui.EmptyState
 import com.androidtoolsuite.app.ui.ErrorState
 import com.androidtoolsuite.app.ui.LoadingState
@@ -77,7 +77,7 @@ import kotlin.coroutines.resumeWithException
 class DeclarativeToolPlugin(
     val installed: PluginPackageStore.InstalledPlugin,
     private val actions: HostActions,
-) : ToolPlugin {
+) : HostTool {
     private var activeView = WeakReference<ComposeView>(null)
     @Volatile private var activeWebSession: WebSession? = null
     private val hostRevision: MutableIntState = mutableIntStateOf(0)
@@ -93,7 +93,7 @@ class DeclarativeToolPlugin(
         .map { it.id }
         .toCollection(linkedSetOf())
 
-    override fun createView(activity: android.app.Activity, host: PluginHost): View {
+    override fun createView(activity: android.app.Activity, host: HostServices): View {
         val view = composePluginView(activity) {
             DeclarativeToolScreen(installed, actions, hostRevision.intValue) { session ->
                 activeWebSession = session
@@ -103,7 +103,7 @@ class DeclarativeToolPlugin(
         return view
     }
 
-    override fun createHomeWidgets(activity: android.app.Activity, host: PluginHost): List<HomeWidget> =
+    override fun createHomeWidgets(activity: android.app.Activity, host: HostServices): List<HostHomeWidget> =
         RuntimeHomeWidgets.create(installed, actions, hostRevision)
 
     override fun onHostStateChanged() {

@@ -1,0 +1,24 @@
+{
+  "id": "file.export",
+  "version": "1.0.0",
+  "description": "将插件自身隔离 Blob 通过系统另存为界面导出。",
+  "permission": {
+    "mode": "user",
+    "risk": "sensitive",
+    "title": "保存文件",
+    "description": "在你主动操作后，把插件生成的文件保存到你选择的位置。"
+  },
+  "methods": {
+    "file.export.save": {
+      "params": {
+        "type": "object",
+        "required": ["blobId", "fileName", "mimeType"]
+      },
+      "result": {
+        "type": "object",
+        "required": ["saved", "size", "sha256"]
+      }
+    }
+  },
+  "events": []
+}

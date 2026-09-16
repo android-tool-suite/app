@@ -20,9 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
-import com.androidtoolsuite.app.plugin.api.HomeWidget
+import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget
 import com.androidtoolsuite.app.plugin.api.HomeWidgetSize
-import com.androidtoolsuite.app.plugin.api.PluginHost
+import com.androidtoolsuite.app.plugin.runtime.HostServices
 import com.androidtoolsuite.app.ui.LoadingState
 import com.androidtoolsuite.app.ui.SuiteCard
 import com.androidtoolsuite.app.ui.SuiteSpacing
@@ -42,7 +42,7 @@ internal object RuntimeHomeWidgets {
         installed: PluginPackageStore.InstalledPlugin,
         actions: HostActions,
         revision: MutableIntState,
-    ): List<HomeWidget> = installed.manifest.homeWidgetContributions.map { contribution ->
+    ): List<HostHomeWidget> = installed.manifest.homeWidgetContributions.map { contribution ->
         RuntimeHomeWidget(installed, contribution, actions, revision)
     }
 }
@@ -52,13 +52,13 @@ private class RuntimeHomeWidget(
     private val contribution: RuntimePluginManifest.HomeWidgetContribution,
     private val actions: HostActions,
     private val revision: MutableIntState,
-) : HomeWidget {
+) : HostHomeWidget {
     override fun id(): String = contribution.id
     override fun title(): String = contribution.title
     override fun pluginId(): String = installed.manifest.plugin.id
     override fun supportedSizes(): List<HomeWidgetSize> = contribution.sizes.mapNotNull(::parseSize)
 
-    override fun createView(activity: Activity, host: PluginHost): View = composePluginView(activity) {
+    override fun createView(activity: Activity, host: HostServices): View = composePluginView(activity) {
         RuntimeWidgetContent(installed, contribution, actions, revision.intValue)
     }
 }
@@ -86,6 +86,9 @@ private fun RuntimeWidgetContent(
     LaunchedEffect(sessionId, revision) {
         state = try {
             val capability = GeneratedContract.capabilityForMethod(contribution.dataSource)
+                ?: installed.manifest.capabilityContributions
+                    .firstOrNull { provided -> contribution.dataSource in provided.methods }
+                    ?.id
                 ?: throw IllegalStateException("主页组件数据源无效")
             if (installed.manifest.capabilityRequirements.none { it.id == capability }) {
                 throw IllegalStateException("主页组件未声明所需能力")

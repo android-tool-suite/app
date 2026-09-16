@@ -197,7 +197,14 @@ public final class TaskRunStore {
             ensureDirectory(directory);
             for (int slot = 0; slot < maxConcurrency; slot++) {
                 File file = new File(directory, "slot-" + slot);
-                if (file.isFile() && now - file.lastModified() > staleAfterMillis) file.delete();
+                if (file.isFile() && canReclaimLease(
+                        file,
+                        taskDirectory(pluginId, taskId),
+                        now,
+                        staleAfterMillis
+                ) && !file.delete()) {
+                    throw new IOException("Cannot reclaim terminated task lease");
+                }
                 if (!file.createNewFile()) continue;
                 try (FileOutputStream output = new FileOutputStream(file)) {
                     output.write(runId.getBytes(StandardCharsets.UTF_8));
@@ -210,6 +217,33 @@ public final class TaskRunStore {
             }
         }
         return null;
+    }
+
+    private static boolean canReclaimLease(
+            File lease,
+            File taskDirectory,
+            long now,
+            long staleAfterMillis
+    ) {
+        try (FileInputStream input = new FileInputStream(lease);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[128];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                if (output.size() + read > 64) return true;
+                output.write(buffer, 0, read);
+            }
+            String owner = output.toString(StandardCharsets.UTF_8.name());
+            if (!owner.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) {
+                return true;
+            }
+            File record = new File(taskDirectory, owner + ".json");
+            if (!record.isFile()) return true;
+            String status = readRecord(record).optString("status", "");
+            return !SchedulerPolicy.isActiveStatus(status);
+        } catch (IOException error) {
+            return now - lease.lastModified() > staleAfterMillis;
+        }
     }
 
     private void update(String pluginId, String taskId, String runId, Mutator mutator) throws IOException {

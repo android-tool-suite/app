@@ -1,8 +1,8 @@
 package com.androidtoolsuite.app.migration;
 
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -97,7 +97,7 @@ public final class DataPackageArchive {
         public final String ownerId;
         public final String ownerName;
         public final ItemKind kind;
-        public final LegacyDatasetDescriptor descriptor;
+        public final DatasetDescriptor descriptor;
         public final Protection protection;
         public final ItemWriter writer;
 
@@ -105,7 +105,7 @@ public final class DataPackageArchive {
                 String ownerId,
                 String ownerName,
                 ItemKind kind,
-                LegacyDatasetDescriptor descriptor,
+                DatasetDescriptor descriptor,
                 Protection protection,
                 ItemWriter writer
         ) {
@@ -126,14 +126,14 @@ public final class DataPackageArchive {
         public final String ownerId;
         public final String ownerName;
         public final ItemKind kind;
-        public final LegacyDatasetDescriptor descriptor;
+        public final DatasetDescriptor descriptor;
         public final Protection protection;
 
         private ItemRecord(
                 String ownerId,
                 String ownerName,
                 ItemKind kind,
-                LegacyDatasetDescriptor descriptor,
+                DatasetDescriptor descriptor,
                 Protection protection
         ) {
             this.ownerId = ownerId;
@@ -517,7 +517,7 @@ public final class DataPackageArchive {
         try {
             JSONArray array = new JSONArray();
             for (ItemSource source : sources) {
-                LegacyDatasetDescriptor item = source.descriptor;
+                DatasetDescriptor item = source.descriptor;
                 array.put(new JSONObject()
                         .put("ownerId", source.ownerId)
                         .put("ownerName", source.ownerName)
@@ -559,7 +559,7 @@ public final class DataPackageArchive {
                     dependencies.add(dependencyArray.getString(dependencyIndex));
                 }
             }
-            LegacyDatasetDescriptor descriptor;
+            DatasetDescriptor descriptor;
             try {
                 JSONArray restoreModeArray = item.optJSONArray("restoreModes");
                 List<DatasetRestoreMode> restoreModes = new ArrayList<>();
@@ -572,7 +572,7 @@ public final class DataPackageArchive {
                 } else {
                     restoreModes.add(DatasetRestoreMode.valueOf(item.getString("restoreMode")));
                 }
-                descriptor = new LegacyDatasetDescriptor(
+                descriptor = new DatasetDescriptor(
                         id,
                         item.getString("name"),
                         DatasetCategory.valueOf(item.getString("category")),

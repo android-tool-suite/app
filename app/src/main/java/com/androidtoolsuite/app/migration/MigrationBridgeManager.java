@@ -2,11 +2,11 @@ package com.androidtoolsuite.app.migration;
 
 import android.app.Activity;
 
-import com.androidtoolsuite.app.plugin.api.ToolPlugin;
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.plugin.runtime.HostTool;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetBridge;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -36,8 +36,8 @@ public final class MigrationBridgeManager {
     public static final class DatasetOption {
         public final String pluginId;
         public final String pluginTitle;
-        public final LegacyDatasetDescriptor descriptor;
-        private final LegacyDataBridge bridge;
+        public final DatasetDescriptor descriptor;
+        private final DatasetBridge bridge;
         public final DataPackageArchive.ItemKind kind;
         public final DataPackageArchive.Protection archiveProtection;
         public final boolean hasExistingData;
@@ -45,8 +45,8 @@ public final class MigrationBridgeManager {
         private DatasetOption(
                 String pluginId,
                 String pluginTitle,
-                LegacyDatasetDescriptor descriptor,
-                LegacyDataBridge bridge,
+                DatasetDescriptor descriptor,
+                DatasetBridge bridge,
                 DataPackageArchive.ItemKind kind,
                 DataPackageArchive.Protection archiveProtection,
                 boolean hasExistingData
@@ -120,14 +120,14 @@ public final class MigrationBridgeManager {
         }
     }
 
-    public static List<DatasetOption> discover(Activity activity, List<ToolPlugin> plugins)
+    public static List<DatasetOption> discover(Activity activity, List<HostTool> plugins)
             throws IOException {
         Map<String, DatasetOption> options = new LinkedHashMap<>();
-        for (ToolPlugin plugin : plugins) {
-            LegacyDataBridge bridge;
-            List<LegacyDatasetDescriptor> datasets;
+        for (HostTool plugin : plugins) {
+            DatasetBridge bridge;
+            List<DatasetDescriptor> datasets;
             try {
-                bridge = plugin.legacyDataBridge();
+                bridge = plugin.datasetBridge();
                 if (bridge == null) continue;
                 datasets = bridge.datasets(activity);
             } catch (RuntimeException error) {
@@ -136,7 +136,7 @@ public final class MigrationBridgeManager {
             if (datasets == null) {
                 throw new IOException(plugin.title() + " 返回了空迁移清单");
             }
-            for (LegacyDatasetDescriptor descriptor : datasets) {
+            for (DatasetDescriptor descriptor : datasets) {
                 if (descriptor == null) {
                     throw new IOException(plugin.title() + " 包含无效 Dataset");
                 }
@@ -167,14 +167,14 @@ public final class MigrationBridgeManager {
     /** Matches archive records to installed legacy bridges without requiring data to exist yet. */
     public static List<DatasetOption> matchForImport(
             Activity activity,
-            List<ToolPlugin> plugins,
+            List<HostTool> plugins,
             List<BackupArchiveV2.DatasetRecord> datasets
     ) throws IOException {
         Map<String, PluginBridge> bridges = new LinkedHashMap<>();
-        for (ToolPlugin plugin : plugins) {
-            LegacyDataBridge bridge;
+        for (HostTool plugin : plugins) {
+            DatasetBridge bridge;
             try {
-                bridge = plugin.legacyDataBridge();
+                bridge = plugin.datasetBridge();
             } catch (RuntimeException error) {
                 throw new IOException("无法读取 " + plugin.title() + " 的迁移接口", error);
             }
@@ -227,7 +227,7 @@ public final class MigrationBridgeManager {
         return new DatasetOption(
                 HOST_OWNER_ID,
                 "Android Tool Suite",
-                new LegacyDatasetDescriptor(
+                new DatasetDescriptor(
                         HOST_SETTINGS_ITEM_ID,
                         "应用设置",
                         DatasetCategory.SETTINGS,
@@ -247,7 +247,7 @@ public final class MigrationBridgeManager {
         return new DatasetOption(
                 HOST_OWNER_ID,
                 "Android Tool Suite",
-                new LegacyDatasetDescriptor(
+                new DatasetDescriptor(
                         HOST_PLUGIN_STATE_ITEM_ID,
                         "插件启用状态",
                         DatasetCategory.SETTINGS,
@@ -271,7 +271,7 @@ public final class MigrationBridgeManager {
         return new DatasetOption(
                 HOST_OWNER_ID,
                 "Android Tool Suite",
-                new LegacyDatasetDescriptor(
+                new DatasetDescriptor(
                         HOST_PLUGIN_PACKAGE_PREFIX + pluginId,
                         "插件包 · " + pluginTitle,
                         DatasetCategory.DATA,
@@ -290,7 +290,7 @@ public final class MigrationBridgeManager {
     /** Matches a v3 package to Host items and currently installed plugin bridges. */
     public static List<DatasetOption> matchDataPackageForImport(
             Activity activity,
-            List<ToolPlugin> plugins,
+            List<HostTool> plugins,
             List<DataPackageArchive.ItemRecord> items,
             boolean includeDeferredPluginData,
             Set<String> installedPluginIds
@@ -368,7 +368,7 @@ public final class MigrationBridgeManager {
     /** Rebinds selected plugin items after their package items have been installed. */
     public static List<ImportSelection> resolveDataPackageImportBridges(
             Activity activity,
-            List<ToolPlugin> plugins,
+            List<HostTool> plugins,
             List<ImportSelection> selected
     ) throws IOException {
         Map<String, PluginBridge> bridges = pluginBridges(plugins);
@@ -464,8 +464,8 @@ public final class MigrationBridgeManager {
     }
 
     private static List<DatasetRestoreMode> supportedModes(
-            LegacyDataBridge bridge,
-            LegacyDatasetDescriptor descriptor
+            DatasetBridge bridge,
+            DatasetDescriptor descriptor
     ) {
         List<DatasetRestoreMode> result = new ArrayList<>();
         for (DatasetRestoreMode mode : descriptor.restoreModes) {
@@ -485,11 +485,11 @@ public final class MigrationBridgeManager {
         return result;
     }
 
-    private static LegacyDatasetDescriptor descriptorWithModes(
-            LegacyDatasetDescriptor descriptor,
+    private static DatasetDescriptor descriptorWithModes(
+            DatasetDescriptor descriptor,
             List<DatasetRestoreMode> modes
     ) {
-        return new LegacyDatasetDescriptor(
+        return new DatasetDescriptor(
                 descriptor.id,
                 descriptor.name,
                 descriptor.category,
@@ -501,13 +501,13 @@ public final class MigrationBridgeManager {
         );
     }
 
-    private static Map<String, PluginBridge> pluginBridges(List<ToolPlugin> plugins)
+    private static Map<String, PluginBridge> pluginBridges(List<HostTool> plugins)
             throws IOException {
         Map<String, PluginBridge> bridges = new LinkedHashMap<>();
-        for (ToolPlugin plugin : plugins) {
-            LegacyDataBridge bridge;
+        for (HostTool plugin : plugins) {
+            DatasetBridge bridge;
             try {
-                bridge = plugin.legacyDataBridge();
+                bridge = plugin.datasetBridge();
             } catch (RuntimeException error) {
                 throw new IOException("无法读取 " + plugin.title() + " 的数据接口", error);
             }
@@ -926,9 +926,9 @@ public final class MigrationBridgeManager {
 
     private static final class PluginBridge {
         final String title;
-        final LegacyDataBridge bridge;
+        final DatasetBridge bridge;
 
-        PluginBridge(String title, LegacyDataBridge bridge) {
+        PluginBridge(String title, DatasetBridge bridge) {
             this.title = title;
             this.bridge = bridge;
         }

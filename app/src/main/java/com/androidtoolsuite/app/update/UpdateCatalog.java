@@ -221,6 +221,7 @@ public final class UpdateCatalog {
         public final String author;
         public final String repositoryUrl;
         public final int minHostVersionCode;
+        public final int minAndroidApi;
         public final String sdkVersion;
         public final Set<String> dependencies;
         public final int dataFormatVersion;
@@ -235,6 +236,7 @@ public final class UpdateCatalog {
             author = clean(json.optString("author"));
             repositoryUrl = required(json, "repositoryUrl");
             minHostVersionCode = Math.max(0, json.optInt("minHostVersionCode", 0));
+            minAndroidApi = Math.max(24, json.optInt("minAndroidApi", 24));
             sdkVersion = clean(json.optString("sdkVersion"));
             dependencies = Collections.unmodifiableSet(readStrings(json.optJSONArray("dependencies")));
             JSONObject compatibility = json.optJSONObject("dataCompatibility");

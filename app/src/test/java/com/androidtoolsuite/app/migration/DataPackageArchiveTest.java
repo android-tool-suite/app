@@ -6,9 +6,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import org.junit.Test;
 
@@ -122,7 +122,7 @@ public final class DataPackageArchiveTest {
                 "android_tool_suite",
                 "Android Tool Suite",
                 DataPackageArchive.ItemKind.HOST_SETTINGS,
-                new LegacyDatasetDescriptor(
+                new DatasetDescriptor(
                         "app-settings",
                         "应用设置",
                         DatasetCategory.SETTINGS,
@@ -200,12 +200,12 @@ public final class DataPackageArchiveTest {
         );
     }
 
-    private static LegacyDatasetDescriptor descriptor(
+    private static DatasetDescriptor descriptor(
             String id,
             DatasetCategory category,
             boolean sensitive
     ) {
-        return new LegacyDatasetDescriptor(
+        return new DatasetDescriptor(
                 id,
                 id,
                 category,

@@ -149,11 +149,11 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.viewinterop.AndroidView
-import com.androidtoolsuite.app.plugin.api.HomeWidget
-import com.androidtoolsuite.app.plugin.api.ToolPlugin
+import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget
+import com.androidtoolsuite.app.plugin.runtime.HostTool
 import com.androidtoolsuite.app.migration.MigrationBridgeManager
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode
+import com.androidtoolsuite.app.migration.DatasetCategory
+import com.androidtoolsuite.app.migration.DatasetRestoreMode
 import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor
 import com.androidtoolsuite.app.plugin.runtime.PluginPermissionManager
 import com.androidtoolsuite.app.ui.EmptyState
@@ -420,7 +420,7 @@ private fun HostApp(activity: MainActivity) {
 private fun AppTopBar(
     activity: MainActivity,
     section: Int,
-    plugin: ToolPlugin?,
+    plugin: HostTool?,
 ) {
     var menuExpanded by remember(plugin?.id(), section) { mutableStateOf(false) }
     when {
@@ -705,7 +705,7 @@ private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifie
     }
 }
 
-private fun widgetKey(widget: HomeWidget) = widget.pluginId() + ":" + widget.id()
+private fun widgetKey(widget: HostHomeWidget) = widget.pluginId() + ":" + widget.id()
 
 private data class ReorderSlot(
     val key: String,
@@ -794,7 +794,7 @@ private fun DropPreview(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun WidgetGrid(widgets: List<HomeWidget>, activity: MainActivity, modifier: Modifier = Modifier) {
+private fun WidgetGrid(widgets: List<HostHomeWidget>, activity: MainActivity, modifier: Modifier = Modifier) {
     val gap = 12.dp
     val orderKey = widgets.joinToString("\n") { widgetKey(it) }
     val dragState = remember(orderKey) { DropPreviewState() }
@@ -934,7 +934,7 @@ private fun WidgetGrid(widgets: List<HomeWidget>, activity: MainActivity, modifi
 @Composable
 private fun WidgetTile(
     activity: MainActivity,
-    widget: HomeWidget,
+    widget: HostHomeWidget,
     modifier: Modifier,
     onClick: () -> Unit,
     dragState: DropPreviewState,
@@ -1013,7 +1013,7 @@ private fun WidgetTile(
 }
 
 @Composable
-private fun AddWidgetSheet(activity: MainActivity, hidden: List<HomeWidget>, onDismiss: () -> Unit) {
+private fun AddWidgetSheet(activity: MainActivity, hidden: List<HostHomeWidget>, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text("添加小部件", modifier = Modifier.padding(horizontal = SuiteSpacing.xl), style = MaterialTheme.typography.titleLarge)
         if (hidden.isEmpty()) {
@@ -1138,11 +1138,11 @@ private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifi
 @Composable
 private fun ToolReorderList(
     activity: MainActivity,
-    plugins: List<ToolPlugin>,
+    plugins: List<HostTool>,
     modifier: Modifier = Modifier,
 ) {
     val gap = 12.dp
-    val orderKey = plugins.joinToString("\n", transform = ToolPlugin::id)
+    val orderKey = plugins.joinToString("\n", transform = HostTool::id)
     val dragState = remember(orderKey) { DropPreviewState() }
     val draggedIndex = plugins.indexOfFirst { it.id() == dragState.draggedKey }
     val targetIndex = dragState.targetIndex.coerceIn(0, (plugins.size - 1).coerceAtLeast(0))
@@ -1151,7 +1151,7 @@ private fun ToolReorderList(
         content = {
             plugins.forEachIndexed { index, plugin ->
                 key(plugin.id()) {
-                    fun moveTo(target: ToolPlugin?) {
+                    fun moveTo(target: HostTool?) {
                         target?.takeIf { it !== plugin }?.let { activity.moveToolToUi(plugin.id(), it.id()) }
                     }
                     PluginListCard(
@@ -1290,7 +1290,7 @@ private fun IconBox(
 @Composable
 private fun PluginListCard(
     activity: MainActivity,
-    plugin: ToolPlugin,
+    plugin: HostTool,
     interaction: @Composable (onLongPress: () -> Unit) -> Modifier,
     modifier: Modifier = Modifier,
 ) {
@@ -1352,7 +1352,7 @@ private fun PluginListCard(
 }
 
 @Composable
-private fun PluginDetailScreen(activity: MainActivity, plugin: ToolPlugin, refreshVersion: Int, modifier: Modifier = Modifier) {
+private fun PluginDetailScreen(activity: MainActivity, plugin: HostTool, refreshVersion: Int, modifier: Modifier = Modifier) {
     hostRevision(activity)
     val contentModifier = if (activity.isRuntimeToolForUi(plugin)) {
         modifier
@@ -1383,7 +1383,7 @@ private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier:
         }
         if (optionalBuiltIns.isNotEmpty()) {
             item { SectionHeader("系统工具") }
-            items(optionalBuiltIns, key = ToolPlugin::id) { plugin ->
+            items(optionalBuiltIns, key = HostTool::id) { plugin ->
                 ManagedPluginCard(
                     pluginId = plugin.id(),
                     title = plugin.title(),
@@ -1428,7 +1428,7 @@ private fun ManagedPluginCard(
     version: String,
     icon: ImageVector,
     enabled: Boolean,
-    loadedPlugin: ToolPlugin?,
+    loadedPlugin: HostTool?,
     refreshVersion: Int,
     onEnabledChange: (Boolean) -> Unit,
     removable: Boolean = false,
@@ -1648,7 +1648,7 @@ private fun PluginRepositoryScreen(
         AlertDialog(
             onDismissRequest = { showRisk = false; activity.acknowledgeStoreRiskForUi() },
             title = { Text("安装可信插件") },
-            text = { Text("新版插件只能使用你允许的功能；旧版插件和完全信任的系统插件仍需确认来源可靠。") },
+            text = { Text("普通插件只能使用你允许的功能；完全信任的系统插件会以应用身份运行，安装前请确认来源可靠。") },
             confirmButton = {
                 TextButton(onClick = { showRisk = false; activity.acknowledgeStoreRiskForUi() }) { Text("知道了") }
             },
@@ -2441,6 +2441,13 @@ private fun MigrationBridgeExportDialog(activity: MainActivity) {
                                                 ),
                                         ) {
                                             Text(option.descriptor.name, style = MaterialTheme.typography.bodyMedium)
+                                            if (option.isPluginPackage()) {
+                                                Text(
+                                                    "包含插件安装包，便于迁移未发布的本地插件。恢复时仍会检查兼容性与来源。",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
                                             Text(
                                                 "${bridgeCategoryLabel(option.descriptor.category)} · " +
                                                     bridgeDatasetSize(option.descriptor.estimatedSize) +
@@ -2719,7 +2726,7 @@ private fun MigrationBridgeImportDialog(activity: MainActivity) {
                                         ) {
                                             Text(option.descriptor.name, style = MaterialTheme.typography.bodyMedium)
                                             Text(
-                                                (if (option.hasExistingData) "已有数据" else "当前没有数据") +
+                                                (if (option.isPluginPackage()) "安装包将按本地导入规则检查；新装插件保持停用，可信 Provider 需确认完全信任后启用。" else if (option.hasExistingData) "已有数据" else "当前没有数据") +
                                                     " · $protection · ${bridgeCategoryLabel(option.descriptor.category)}",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3001,7 +3008,7 @@ private fun bridgeDatasetSize(bytes: Long): String = when {
 }
 
 @Composable
-private fun PluginMetadata(plugin: ToolPlugin) {
+private fun PluginMetadata(plugin: HostTool) {
     val text = buildList {
         add("v${plugin.version()}")
         if (plugin.dependencies().isNotEmpty()) add("${plugin.dependencies().size} 项依赖")
@@ -3009,7 +3016,7 @@ private fun PluginMetadata(plugin: ToolPlugin) {
     Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
 }
 
-private fun pluginIcon(plugin: ToolPlugin): ImageVector = when {
+private fun pluginIcon(plugin: HostTool): ImageVector = when {
     plugin.id().contains("shizuku") -> Icons.Rounded.Security
     plugin.id().contains("host") -> Icons.Rounded.Settings
     else -> Icons.Rounded.Extension

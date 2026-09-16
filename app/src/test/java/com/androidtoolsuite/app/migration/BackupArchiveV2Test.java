@@ -6,10 +6,10 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetBridge;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import org.junit.Test;
 
@@ -111,9 +111,9 @@ public class BackupArchiveV2Test {
 
     @Test
     public void legacyBridgeImportDefaultsRemainDisabled() {
-        LegacyDataBridge bridge = new LegacyDataBridge() {
+        DatasetBridge bridge = new DatasetBridge() {
             @Override
-            public List<LegacyDatasetDescriptor> datasets(android.app.Activity activity) {
+            public List<DatasetDescriptor> datasets(android.app.Activity activity) {
                 return List.of();
             }
 
@@ -152,7 +152,7 @@ public class BackupArchiveV2Test {
 
     private static BackupArchiveV2.DatasetSource source(
             String pluginId,
-            LegacyDatasetDescriptor descriptor,
+            DatasetDescriptor descriptor,
             byte[] bytes
     ) {
         return new BackupArchiveV2.DatasetSource(pluginId, descriptor, output -> {
@@ -165,12 +165,12 @@ public class BackupArchiveV2Test {
         });
     }
 
-    private static LegacyDatasetDescriptor descriptor(
+    private static DatasetDescriptor descriptor(
             String id,
             DatasetCategory category,
             boolean sensitive
     ) {
-        return new LegacyDatasetDescriptor(
+        return new DatasetDescriptor(
                 id,
                 id,
                 category,

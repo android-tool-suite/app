@@ -166,7 +166,7 @@ def validate_manifest(value: Any) -> dict[str, Any]:
     plugin = require_type(value.get("plugin"), dict, "plugin")
     require_keys(
         plugin,
-        {"id", "title", "description", "version", "versionCode", "minHostVersionCode", "publisher", "homepage", "kind"},
+        {"id", "title", "description", "version", "versionCode", "minHostVersionCode", "minAndroidApi", "publisher", "homepage", "kind"},
         "plugin",
     )
     require_id(plugin.get("id"), "plugin.id")
@@ -177,6 +177,10 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         raise AtsError("plugin.version 必须是 SemVer")
     require_positive_int(plugin.get("versionCode"), "plugin.versionCode")
     require_positive_int(plugin.get("minHostVersionCode"), "plugin.minHostVersionCode")
+    if "minAndroidApi" in plugin:
+        min_android_api = require_positive_int(plugin.get("minAndroidApi"), "plugin.minAndroidApi")
+        if not 24 <= min_android_api <= 1000:
+            raise AtsError("plugin.minAndroidApi 超出范围")
     require_id(plugin.get("publisher"), "plugin.publisher")
     plugin_kind = plugin.get("kind", "tool")
     if plugin_kind not in {"tool", "trusted-provider"}:
@@ -346,6 +350,12 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         for capability in capability_contracts
         for method in capability["methods"]
     }
+    for capability in provided_capabilities:
+        for method in capability["methods"]:
+            existing = method_capability.get(method)
+            if existing is not None and existing != capability["id"]:
+                raise AtsError("HomeWidget dataSource method 对应多个 Capability")
+            method_capability[method] = capability["id"]
     for item in home_widgets:
         require_keys(item, {"id", "title", "template", "dataSource", "sizes"}, "contributes.homeWidgets")
         require_text(item.get("title"), "contributes.homeWidgets.title", 80)

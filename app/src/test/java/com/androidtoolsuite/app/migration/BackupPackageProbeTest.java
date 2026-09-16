@@ -2,9 +2,9 @@ package com.androidtoolsuite.app.migration;
 
 import static org.junit.Assert.assertEquals;
 
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -69,8 +69,8 @@ public final class BackupPackageProbeTest {
         );
     }
 
-    private static LegacyDatasetDescriptor descriptor(String id) {
-        return new LegacyDatasetDescriptor(
+    private static DatasetDescriptor descriptor(String id) {
+        return new DatasetDescriptor(
                 id,
                 id,
                 DatasetCategory.DATA,

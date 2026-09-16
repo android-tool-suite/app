@@ -39,9 +39,9 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.androidtoolsuite.app.BuildConfig
-import com.androidtoolsuite.app.plugin.api.PluginHost
-import com.androidtoolsuite.app.plugin.api.HomeWidget
-import com.androidtoolsuite.app.plugin.api.ToolPlugin
+import com.androidtoolsuite.app.plugin.runtime.HostServices
+import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget
+import com.androidtoolsuite.app.plugin.runtime.HostTool
 import com.androidtoolsuite.app.plugin.runtime.CapabilityFailure
 import com.androidtoolsuite.app.ui.ErrorState
 import com.androidtoolsuite.app.ui.LoadingState
@@ -73,12 +73,11 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.delay
 
 class WebToolPlugin(
     val installed: PluginPackageStore.InstalledPlugin,
     private val actions: HostActions,
-) : ToolPlugin {
+) : HostTool {
     private var activeView = WeakReference<androidx.compose.ui.platform.ComposeView>(null)
     @Volatile private var activeSession: WebSession? = null
     private val widgetRevision = mutableIntStateOf(0)
@@ -102,7 +101,7 @@ class WebToolPlugin(
         }
         .toCollection(linkedSetOf())
 
-    override fun createView(activity: android.app.Activity, host: PluginHost): View {
+    override fun createView(activity: android.app.Activity, host: HostServices): View {
         val view = composePluginView(activity) {
             WebToolScreen(
                 installed = installed,
@@ -114,7 +113,7 @@ class WebToolPlugin(
         return view
     }
 
-    override fun createHomeWidgets(activity: android.app.Activity, host: PluginHost): List<HomeWidget> =
+    override fun createHomeWidgets(activity: android.app.Activity, host: HostServices): List<HostHomeWidget> =
         RuntimeHomeWidgets.create(installed, actions, widgetRevision)
 
     override fun onSelected() = Unit
@@ -161,7 +160,6 @@ internal fun WebToolScreen(
         LaunchedEffect(session) {
             // Commit the shared loading shell before WebView's platform initialization runs on main.
             withFrameNanos { }
-            delay(1_000)
             backendRequested = true
         }
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -208,6 +206,7 @@ internal class WebSession(
     private val onError: (String) -> Unit,
 ) {
     private val sessionId = randomSessionId()
+    private val createdAt = SystemClock.elapsedRealtime()
     private val packageOrigin = OriginKey.virtualOrigin(installed.manifest.plugin.id)
     private val developmentUri = if (BuildConfig.DEBUG) developmentUri() else null
     private val origin = packageOrigin
@@ -366,6 +365,7 @@ internal class WebSession(
 
         override fun onPageFinished(view: WebView, url: String) {
             if (!rendererGone && isAllowedOrigin(Uri.parse(url))) {
+                if (BuildConfig.DEBUG) Log.d("AtsRuntimeWeb", "Page ready plugin=${installed.manifest.plugin.id} elapsedMs=${SystemClock.elapsedRealtime() - createdAt}")
                 onReady()
             }
         }

@@ -25,6 +25,15 @@ public interface HostActions {
             int maxBytes
     );
 
+    CompletableFuture<JSONObject> saveFile(
+            String pluginId,
+            String sessionId,
+            String blobId,
+            String fileName,
+            String mimeType,
+            int maxBytes
+    );
+
     void requestNotificationPermission();
 
 }

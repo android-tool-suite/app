@@ -1,11 +1,15 @@
 # ATS Plugin Package Format
 
+可信 Provider 与宿主同进程、同 UID，可以自行使用 Android/Binder 和宿主共享的 `rikka.shizuku.*` 客户端（当前 13.1.5，插件 compileOnly）。SDK 用于 Provider 注册与 Capability 契约，不要求将底层操作逐项实现为宿主桥；旧 `TrustedPlatformBridge` 仅作按需兼容。普通插件没有此原生装载路径，仍使用 Capability Router。
+
+`.atsbackup` 可携带已安装 format v3 原始包，包括未发布的本地项目。恢复复用本地安装校验，不自动授予权限或启用新插件；历史 API1 载荷仍拒绝执行。详见聚合工作区 `docs/data-management.md`。
+
 插件包使用 `.atsplugin` 扩展名，本质是一个受限 ZIP。宿主当前同时读取两代格式：
 
 - **format v3**：插件运行时 的主格式，普通工具使用统一声明式 UI（Host 或 WebView renderer）、版本化 Capability、宿主存储和可选后台任务；
-- **format v1/v2**：旧 API1 Android AAR/Compose 插件的冻结兼容格式，只用于既有插件迁移和回滚。
+- **format v1/v2**：已退出的 API1 Android AAR/Compose 格式，只保留历史归档识别，不再安装或执行。
 
-新插件必须使用 format v3。旧格式只为尚未迁移的 Phigros 与抽卡插件继续可用，不再增加 API；所有剩余插件完成迁移并通过迁移、恢复、业务与降级测试后即可退出，不附加版本数量或日历时间要求。
+所有插件必须使用 format v3。Phigros 与抽卡插件已完成迁移、恢复、业务和降级验证，公开 SDK 与宿主均不再提供 API1 创建或装载入口。
 
 ## 1. Format v3 目录结构
 
@@ -54,6 +58,7 @@ format v3 不包含根级 `plugin.apk`，也不允许 ZIP 目录占位项、未�
     "version": "1.0.0",
     "versionCode": 1,
     "minHostVersionCode": 23,
+    "minAndroidApi": 26,
     "publisher": "example.publisher",
     "kind": "tool"
   },
@@ -84,6 +89,7 @@ format v3 不包含根级 `plugin.apk`，也不允许 ZIP 目录占位项、未�
 重要规则：
 
 - 插件、入口、Capability、Dataset 和任务 ID 使用稳定的小写 ID；版本使用 SemVer；
+- `plugin.minAndroidApi` 可选，省略时按 API 24；依赖必需 JavaScript Worker 的插件至少声明 26，宿主在安装和启用前检查；
 - 新包的 `runtime.ui` 统一使用 `declarative` 与 `ui/*.json`；文档根节点选择 Host 组件树或 `webview` renderer。旧 `type: web` 仅保留读取兼容；
 - `requires.capabilities` 同时声明版本范围、是否可选和最小 scope；未声明的能力不可调用；
 - `runtime.background` 可声明 `javascript-worker`、`provider-task` 和预留的 `wasm-worker`；后台任务不能依赖常驻 WebView；
@@ -172,12 +178,16 @@ WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号�
 `requires.capabilities` 既是最小能力声明，也是权限请求上限。应用管理页按插件逐项展示权限说明、风险和 scope：
 
 - `app` 与只访问本插件命名空间的 `storage` 是运行基础，始终允许且不列入面向用户的权限管理；
-- 网络、所选文件、剪贴板、通知和后台任务由用户允许；
+- 网络、所选文件、保存文件、剪贴板、通知和后台任务由用户允许；
 - 无障碍管理与 Shizuku 连接属于敏感操作，默认不允许；
 - 授权绑定规范化 scope 的 SHA-256 指纹，升级时扩大或改变范围会重新进入待决定状态；
 - 撤销后新调用和事件立即被拒绝，在途调用会取消，后台任务停止调度；权限决定和拒绝只记录时间、插件、Capability 与结果，不记录请求载荷。
 
-普通 V3 插件的 Host Action、WebView RPC、Worker、事件和后台任务都只能经过 Capability Router：未声明或未授权的调用在 Provider 执行前被拒绝，撤销还会取消在途调用和插件持有的临时 handle。普通插件提供 Capability 时，Worker 的下游调用以提供者自身身份再次检查权限，不能继承消费者授权。`trusted-provider` 与 API1 `plugin.apk` 仍是同进程可信代码，逐项 Capability 开关不能约束其原生代码，因此完全信任包自身不显示权限列表；管理页会明确区分这条边界。
+普通 V3 插件的 Host Action、WebView RPC、Worker、事件和后台任务都只能经过 Capability Router：未声明或未授权的调用在 Provider 执行前被拒绝，撤销还会取消在途调用和插件持有的临时 handle。普通插件提供 Capability 时，Worker 的下游调用以提供者自身身份再次检查权限，不能继承消费者授权。`trusted-provider` 是唯一仍会装载原生代码的格式，逐项 Capability 开关不能约束其原生代码，因此完全信任包自身不显示权限列表；管理页会明确区分这条边界。
+
+`file.export` 不接受宿主路径或大块内联字节。插件先通过 `storage.blob.*` 将内容分块写入自身命名空间，再在用户手势中调用 `file.export.save`；宿主校验 Blob 摘要、大小和声明的 MIME scope 后打开系统“另存为”界面。选择器打开期间 Blob 若发生变化，导出失败且不会把新旧内容混写到目标文件。
+
+`network.request` 默认拒绝 `Authorization`、Cookie、Host、代理和连接级请求头。确需认证头的登录协议必须在网络 scope 的 `headers` 中逐项声明 `authorization` 或 `cookie`；声明参与权限指纹并显示在管理页。Host、`Proxy-Authorization` 与连接级请求头始终不可开放。
 
 ## 8. 安装、更新与回滚
 
@@ -208,9 +218,9 @@ WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号�
 - 降级目标无法读取当前格式时，宿主必须阻止安装；同一格式内可以提示后继续；
 - 代码 generation 回滚只恢复插件包，不代表回滚业务 Dataset。降级前应导出 `.atsbackup` Dataset 或插件领域标准格式。
 
-format v3 Dataset 的格式、恢复模式和依赖由 manifest 声明；API1 的物理路径、删除能力和迁移验收统一由外层 [数据管理文档](../../docs/data-management.md) 约束。
+format v3 Dataset 的格式、恢复模式和依赖由 manifest 声明；历史归档的只读兼容范围由外层 [数据管理文档](../../docs/data-management.md) 约束。
 
-## 10. Legacy format v1/v2
+## 10. 历史 format v1/v2
 
 旧包结构仍为：
 
@@ -221,6 +231,4 @@ legacy.atsplugin
 └─ assets/
 ```
 
-`plugin.entryClass` 实现 `com.androidtoolsuite.app.plugin.api.ToolPlugin`，宿主通过 `DexClassLoader` 在同一进程加载。format v2 在 v1 基础上增加整数 `versionCode`、`minHostVersionCode` 和 `sdkVersion`。这条路径只接受兼容性、迁移和安全修复；新 Capability、任务、Dataset 与 Web UI 只进入 format v3。
-
-API1 的停止发布、Registry 拒绝和代码删除必须按外层 [插件运行时架构](../../docs/plugin-runtime-architecture.md) 的迁移验收执行；只有所有剩余插件完成迁移并通过迁移、恢复、业务与降级测试后才能删除。
+这类包曾包含 `plugin.entryClass` 和 `plugin.apk`。当前宿主只在历史归档探测器中识别这些字段，以给出明确的不兼容说明；本地导入、Debug ADB、仓库安装和归档恢复均不会重新装载或执行其代码。需要继续使用的数据必须由已经完成迁移的 format v3 插件读取宿主管理的 Dataset。

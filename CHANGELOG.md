@@ -1,5 +1,31 @@
 # 更新日志
 
+## 1.8.0（2026-09-08）
+
+### 新增特性
+
+- Runtime Contract 提升到 2.1.0，新增受权限、MIME、大小和用户手势约束的 `file.export`；插件先写入自身隔离 Blob，再通过系统“另存为”界面导出，宿主不接受任意路径。
+- 新增独立后台任务示例、任务运行／历史 ADB 命令和 Runtime 生命周期回归脚本，覆盖 Host/WebView、旋转、前后台、错误外壳、权限撤销、超时、重试及 Provider 重连。
+
+### 优化与修复
+
+- 补充 `system.logs.search` 可选时间范围与 Provider 回执的契约说明；不改变网络／日志授权范围。
+- 网络 Capability 按 HTTP token 语法接收下划线请求头，修复米游社 `x-rpc-device_id` 等合法字段被拒绝的问题；保留敏感 Header scope 与危险字段限制，并拒绝控制字符注入。
+- 修复 Dataset 分块读取未应用 offset 导致大文件重复读取文件头的问题，避免插件 ZIP 目录解析和 JSON 解析失败；增加跨块读取设备回归测试。
+- Debug 新增归档检查、显式选择 Dataset 恢复与数据状态查询接口，复用正式归档校验和暂存恢复流程，诊断仅返回元数据。
+- 移除 WebView 创建前固定的一秒等待，保留首帧加载外壳；Debug 日志增加页面就绪耗时，便于区分页面启动与业务数据加载。
+- 普通插件可把自提供 Worker Capability 用作主页组件数据源；包内自调用不显示无意义权限，但 Worker 的网络、文件、调度等下游调用仍以插件自身授权检查。
+- `network.request` 只在 scope 显式声明后允许标准 `Authorization` 或 `Cookie` 请求头；Host、代理与连接级请求头仍始终禁止，声明会进入权限指纹并显示在管理页。
+- 插件 SDK 2.0.0 移除已退出的 API1 Tool、Host、主页组件和 Migration Bridge 接口；可信 Provider 可直接使用共享 Shizuku 客户端，取消待发布的 `readSystemLog` 平台桥，旧桥仅按需兼容。Runtime Contract 提供通用 `system.logs` 权限定义，普通插件不能获得完整日志或通用 Shell。
+- 数据备份包含已安装 format v3 原始插件包，可恢复未发布的本地项目；与本地导入共用校验，失败回滚包版本，新装插件保持停用并重新检查权限/完全信任。
+- 宿主停止装载或安装旧 `plugin.apk`；历史归档仍可识别，但不会重新执行其中的 API1 代码。
+- Scheduler 的触发、约束、撤权、重试与租约决策抽为可测试策略，并补齐持久历史、并发租约和宿主生命周期 instrumentation 用例。
+- Debug 文件导入与导出选择器在权限撤销、会话关闭和 Activity 销毁时会取消，不留下继续运行的宿主操作。
+
+### 兼容性
+
+- versionCode 提升到 24，为迁移后的 format v3 插件提供 `file.export`、自提供 Worker 主页能力和通用受限系统日志 Provider；插件 SDK 提升到 2.0.0。
+
 ## 1.7.0（2026-08-28）
 
 ### 新增特性

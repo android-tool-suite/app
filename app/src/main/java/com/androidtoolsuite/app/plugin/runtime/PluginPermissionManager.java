@@ -35,6 +35,7 @@ public final class PluginPermissionManager {
     private final SharedPreferences preferences;
     private final Map<String, Request> requested = new LinkedHashMap<>();
     private final Set<String> trustedPluginIds = new LinkedHashSet<>();
+    private final Set<String> selfProvidedCapabilities = new LinkedHashSet<>();
     private final Map<String, Long> lastDenial = new LinkedHashMap<>();
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
 
@@ -45,6 +46,7 @@ public final class PluginPermissionManager {
     public synchronized void reconcile(List<PluginPackageStore.InstalledPlugin> plugins) {
         requested.clear();
         trustedPluginIds.clear();
+        selfProvidedCapabilities.clear();
         for (PluginPackageStore.InstalledPlugin installed : plugins) reconcileLocked(installed.manifest);
         Set<String> valid = new LinkedHashSet<>(requested.keySet());
         SharedPreferences.Editor editor = preferences.edit();
@@ -58,6 +60,12 @@ public final class PluginPermissionManager {
         String prefix = manifest.plugin.id + "|";
         if (isFullyTrusted(manifest)) trustedPluginIds.add(manifest.plugin.id);
         else trustedPluginIds.remove(manifest.plugin.id);
+        selfProvidedCapabilities.removeIf(value -> value.startsWith(prefix));
+        for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
+            if (isSelfProvided(manifest, requirement.id)) {
+                selfProvidedCapabilities.add(key(manifest.plugin.id, requirement.id));
+            }
+        }
         Set<String> valid = new LinkedHashSet<>();
         for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
             if (!isManaged(manifest, requirement.id)) continue;
@@ -74,6 +82,11 @@ public final class PluginPermissionManager {
 
     private void reconcileLocked(RuntimePluginManifest manifest) {
         if (isFullyTrusted(manifest)) trustedPluginIds.add(manifest.plugin.id);
+        for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
+            if (isSelfProvided(manifest, requirement.id)) {
+                selfProvidedCapabilities.add(key(manifest.plugin.id, requirement.id));
+            }
+        }
         for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
             if (!isManaged(manifest, requirement.id)) continue;
             Request request = request(manifest.plugin.id, requirement);
@@ -103,6 +116,7 @@ public final class PluginPermissionManager {
 
     public synchronized boolean isGranted(RuntimePluginManifest manifest, String capabilityId) {
         if (isFullyTrusted(manifest)) return true;
+        if (isSelfProvided(manifest, capabilityId)) return true;
         for (RuntimePluginManifest.CapabilityRequirement requirement : manifest.capabilityRequirements) {
             if (!requirement.id.equals(capabilityId)) continue;
             Request request = request(manifest.plugin.id, requirement);
@@ -114,6 +128,7 @@ public final class PluginPermissionManager {
 
     public synchronized boolean isGranted(String pluginId, String capabilityId) {
         if (trustedPluginIds.contains(pluginId)) return true;
+        if (selfProvidedCapabilities.contains(key(pluginId, capabilityId))) return true;
         if ("implicit".equals(GeneratedContract.permissionMode(capabilityId))) return true;
         Request request = requested.get(key(pluginId, capabilityId));
         return request != null && state(request) == State.GRANTED;
@@ -155,6 +170,7 @@ public final class PluginPermissionManager {
         requested.keySet().removeIf(key -> key.startsWith(prefix));
         lastDenial.keySet().removeIf(key -> key.startsWith(prefix));
         trustedPluginIds.remove(pluginId);
+        selfProvidedCapabilities.removeIf(value -> value.startsWith(prefix));
     }
 
     public synchronized JSONArray audit(String pluginId) {
@@ -285,7 +301,15 @@ public final class PluginPermissionManager {
 
     private static boolean isManaged(RuntimePluginManifest manifest, String capabilityId) {
         return !isFullyTrusted(manifest)
+                && !isSelfProvided(manifest, capabilityId)
                 && !"implicit".equals(GeneratedContract.permissionMode(capabilityId));
+    }
+
+    private static boolean isSelfProvided(RuntimePluginManifest manifest, String capabilityId) {
+        for (RuntimePluginManifest.CapabilityContribution contribution : manifest.capabilityContributions) {
+            if (contribution.id.equals(capabilityId)) return true;
+        }
+        return false;
     }
 
     public enum State { GRANTED, PENDING, DENIED }

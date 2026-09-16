@@ -28,6 +28,7 @@ public final class ShizukuService {
     private final Context context;
     private volatile IShellService shellService;
     private volatile boolean binding;
+    private volatile boolean compatibilityRequested;
     private Shizuku.UserServiceArgs serviceArgs;
     private final List<Runnable> stateListeners = new CopyOnWriteArrayList<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -84,7 +85,7 @@ public final class ShizukuService {
     };
     private final Shizuku.OnRequestPermissionResultListener permissionResult = (requestCode, grantResult) -> {
         if (requestCode == REQUEST_PERMISSION) {
-            if (grantResult == PackageManager.PERMISSION_GRANTED) ensure();
+            if (grantResult == PackageManager.PERMISSION_GRANTED) ensureIfAuthorized();
             notifyStateChanged();
         }
     };
@@ -138,6 +139,7 @@ public final class ShizukuService {
     }
 
     public synchronized void ensure() {
+        compatibilityRequested = true;
         if (binding || shellService != null || !hasPermission()) return;
         binding = true;
         ComponentName component = new ComponentName(context.getPackageName(), ShellUserService.class.getName());
@@ -157,7 +159,7 @@ public final class ShizukuService {
     }
 
     public void ensureIfAuthorized() {
-        if (isReady() && hasPermission()) ensure();
+        if (compatibilityRequested && isReady() && hasPermission()) ensure();
     }
 
     public String run(String... command) throws IOException {

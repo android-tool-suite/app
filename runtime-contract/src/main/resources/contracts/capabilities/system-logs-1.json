@@ -1,0 +1,28 @@
+{
+  "id": "system.logs",
+  "version": "1.0.0",
+  "description": "通过全信任系统 Provider 在近期系统日志中检索受 scope 限制的文本。",
+  "permission": {
+    "mode": "user",
+    "risk": "restricted",
+    "title": "读取近期系统日志",
+    "description": "在你主动操作后，按插件声明的检索词读取近期系统日志中的匹配行。"
+  },
+  "methods": {
+    "system.logs.search": {
+      "params": {
+        "type": "object", "required": ["terms"],
+        "properties": {
+          "lookbackMinutes": { "type": "integer", "minimum": 0, "maximum": 10080, "default": 0, "description": "0 搜索系统仍保留的全部日志；正数只搜索最近指定分钟，不能恢复被系统清除的日志。" }
+        }
+      },
+      "result": {
+        "type": "object", "required": ["lines", "truncated"],
+        "properties": {
+          "lookbackMinutes": { "type": "integer", "description": "提供者实际使用的时间范围；消费者请求非零范围时应检查该回执，避免旧提供者忽略参数。" }
+        }
+      }
+    }
+  },
+  "events": []
+}

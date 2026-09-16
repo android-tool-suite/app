@@ -82,6 +82,23 @@ public final class JavaScriptWorkerEngine {
                 CapabilityRouter router,
                 String sessionId
         ) throws WorkerFailure {
+            try {
+                return runOnce(context, installed, entry, input, router, sessionId);
+            } catch (WorkerFailure first) {
+                if (!first.retryable || !"PROVIDER_OFFLINE".equals(first.code)) throw first;
+                return runOnce(context, installed, entry, input, router, sessionId);
+            }
+        }
+
+        @SuppressLint("RequiresFeature")
+        private static JSONObject runOnce(
+                Context context,
+                PluginPackageStore.InstalledPlugin installed,
+                RuntimePluginManifest.BackgroundEntry entry,
+                JSONObject input,
+                CapabilityRouter router,
+                String sessionId
+        ) throws WorkerFailure {
             if (!isSupported()) {
                 throw new WorkerFailure("NOT_SUPPORTED", "The installed WebView does not provide JavaScriptSandbox", true);
             }
@@ -217,11 +234,9 @@ public final class JavaScriptWorkerEngine {
                 throw new WorkerFailure("TIMEOUT", "JavaScript worker timed out", true);
             } catch (ExecutionException error) {
                 Throwable cause = error.getCause() == null ? error : error.getCause();
-                resetSandboxIfDead(cause);
-                throw new WorkerFailure("WORKER_FAILED", safeMessage(cause), false);
+                throw workerFailureAfterReset(current, cause);
             } catch (IOException | JSONException | RuntimeException error) {
-                resetSandboxIfDead(error);
-                throw new WorkerFailure("WORKER_FAILED", safeMessage(error), false);
+                throw workerFailureAfterReset(current, error);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
                 throw new WorkerFailure("CANCELLED", "JavaScript worker was interrupted", true);
@@ -309,13 +324,30 @@ public final class JavaScriptWorkerEngine {
             port.postMessage(Message.createStringMessage(raw));
         }
 
-        private static void resetSandboxIfDead(Throwable error) {
+        private static WorkerFailure workerFailureAfterReset(JavaScriptSandbox current, Throwable error) {
             String name = error.getClass().getName();
-            if (!name.contains("Sandbox") && !name.contains("IsolateTerminated")) return;
-            synchronized (SANDBOX_LOCK) {
-                if (sandbox != null) sandbox.close();
-                sandbox = null;
+            String message = safeMessage(error).toLowerCase(java.util.Locale.ROOT);
+            boolean memoryLimit = name.contains("MemoryLimit") || message.contains("heap memory limit");
+            boolean sandboxDead = name.contains("SandboxDead")
+                    || (message.contains("sandbox") && message.contains("dead"));
+            boolean terminated = name.contains("IsolateTerminated");
+            if (!memoryLimit && !sandboxDead && !terminated) {
+                return new WorkerFailure("WORKER_FAILED", safeMessage(error), false);
             }
+            synchronized (SANDBOX_LOCK) {
+                if (sandbox == current) {
+                    sandbox.close();
+                    sandbox = null;
+                }
+            }
+            if (memoryLimit) {
+                return new WorkerFailure("RESOURCE_LIMIT", "JavaScript worker exceeded its heap limit", false);
+            }
+            return new WorkerFailure(
+                    sandboxDead ? "PROVIDER_OFFLINE" : "WORKER_FAILED",
+                    safeMessage(error),
+                    sandboxDead
+            );
         }
     }
 

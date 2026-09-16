@@ -68,6 +68,7 @@
         "version": { "$ref": "#/$defs/version" },
         "versionCode": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
         "minHostVersionCode": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "minAndroidApi": { "type": "integer", "minimum": 24, "maximum": 1000 },
         "publisher": { "$ref": "#/$defs/id" },
         "kind": { "enum": ["tool", "trusted-provider"] },
         "homepage": { "type": "string", "format": "uri", "maxLength": 512 }

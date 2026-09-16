@@ -90,7 +90,7 @@ public final class PluginTaskWorker extends Worker {
                     taskId,
                     runId,
                     maxConcurrency,
-                    Math.max(15 * 60_000L, entry.timeoutMs + 60_000L)
+                    SchedulerPolicy.leaseStaleAfterMillis(entry.timeoutMs)
             );
             if (lease == null) {
                 if ("forbid".equals(task.concurrencyPolicy)) {
@@ -99,7 +99,7 @@ public final class PluginTaskWorker extends Worker {
                     return terminalResult(scheduled, runId, "coalesced");
                 }
                 int attempt = getRunAttemptCount() + 1;
-                if (attempt < task.maxAttempts) {
+                if (SchedulerPolicy.shouldRetry(true, attempt, task.maxAttempts, isStopped())) {
                     store.markRetrying(pluginId, taskId, runId, attempt, "CONCURRENCY_LIMIT",
                             "Task concurrency limit is busy");
                     emit(runtime, pluginId, taskId, runId, "retrying");
@@ -123,7 +123,12 @@ public final class PluginTaskWorker extends Worker {
                     emit(runtime, pluginId, taskId, runId, "succeeded");
                     return terminalResult(scheduled, runId, "succeeded");
                 } catch (TaskFailure failure) {
-                    if (failure.retryable && attempt < task.maxAttempts && !isStopped()) {
+                    if (SchedulerPolicy.shouldRetry(
+                            failure.retryable,
+                            attempt,
+                            task.maxAttempts,
+                            isStopped()
+                    )) {
                         store.markRetrying(pluginId, taskId, runId, attempt, failure.code, failure.getMessage());
                         emit(runtime, pluginId, taskId, runId, "retrying");
                         return Result.retry();

@@ -1,5 +1,5 @@
 {
-  "contractVersion": "2.0.0",
+  "contractVersion": "2.1.0",
   "packageFormatVersion": 3,
   "rpcProtocol": "2.0",
   "schemas": {
@@ -13,6 +13,8 @@
     "capabilities/scheduler-1.json",
     "capabilities/network-request-1.json",
     "capabilities/file-import-1.json",
+    "capabilities/file-export-1.json",
+    "capabilities/system-logs-1.json",
     "capabilities/clipboard-1.json",
     "capabilities/notification-1.json",
     "capabilities/accessibility-manage-1.json",

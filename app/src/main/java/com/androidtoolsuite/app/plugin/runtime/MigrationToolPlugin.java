@@ -3,12 +3,12 @@ package com.androidtoolsuite.app.plugin.runtime;
 import android.app.Activity;
 import android.view.View;
 
-import com.androidtoolsuite.app.plugin.api.PluginHost;
-import com.androidtoolsuite.app.plugin.api.ToolPlugin;
-import com.androidtoolsuite.app.plugin.migration.DatasetCategory;
-import com.androidtoolsuite.app.plugin.migration.DatasetRestoreMode;
-import com.androidtoolsuite.app.plugin.migration.LegacyDataBridge;
-import com.androidtoolsuite.app.plugin.migration.LegacyDatasetDescriptor;
+import com.androidtoolsuite.app.plugin.runtime.HostServices;
+import com.androidtoolsuite.app.plugin.runtime.HostTool;
+import com.androidtoolsuite.app.migration.DatasetCategory;
+import com.androidtoolsuite.app.migration.DatasetRestoreMode;
+import com.androidtoolsuite.app.migration.DatasetBridge;
+import com.androidtoolsuite.app.migration.DatasetDescriptor;
 import com.androidtoolsuite.runtime.contract.RuntimePluginManifest;
 
 import java.io.IOException;
@@ -19,10 +19,10 @@ import java.util.Collections;
 import java.util.List;
 
 /** Temporary adapter that lets the existing .atsbackup v3 UI manage 插件运行时 Datasets. */
-public final class MigrationToolPlugin implements ToolPlugin {
+public final class MigrationToolPlugin implements HostTool {
     private final PluginPackageStore.InstalledPlugin installed;
     private final DatasetService datasets;
-    private final LegacyDataBridge bridge = new Bridge();
+    private final DatasetBridge bridge = new Bridge();
 
     public MigrationToolPlugin(PluginPackageStore.InstalledPlugin installed, DatasetService datasets) {
         this.installed = installed;
@@ -34,8 +34,8 @@ public final class MigrationToolPlugin implements ToolPlugin {
     @Override public String description() { return installed.manifest.plugin.description; }
     @Override public String version() { return installed.manifest.plugin.version; }
     @Override public boolean removable() { return true; }
-    @Override public LegacyDataBridge legacyDataBridge() { return bridge; }
-    @Override public View createView(Activity activity, PluginHost host) { return new View(activity); }
+    @Override public DatasetBridge datasetBridge() { return bridge; }
+    @Override public View createView(Activity activity, HostServices host) { return new View(activity); }
     @Override public void onSelected() { }
     @Override public void onHostStateChanged() { }
     @Override public void onDestroy() { }
@@ -47,13 +47,13 @@ public final class MigrationToolPlugin implements ToolPlugin {
         return null;
     }
 
-    private final class Bridge implements LegacyDataBridge {
+    private final class Bridge implements DatasetBridge {
         @Override
-        public List<LegacyDatasetDescriptor> datasets(Activity activity) throws IOException {
-            List<LegacyDatasetDescriptor> result = new ArrayList<>();
+        public List<DatasetDescriptor> datasets(Activity activity) throws IOException {
+            List<DatasetDescriptor> result = new ArrayList<>();
             for (RuntimePluginManifest.Dataset dataset : installed.manifest.datasets) {
                 if (!dataset.restoreModes.contains("replace") || !datasets.hasDataset(id(), dataset.id)) continue;
-                result.add(new LegacyDatasetDescriptor(
+                result.add(new DatasetDescriptor(
                         dataset.id,
                         dataset.title,
                         category(dataset.category),

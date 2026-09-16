@@ -109,6 +109,13 @@ class AtsCliTest(unittest.TestCase):
             "workerEntry": "echo-provider",
             "methods": ["sample.echo.call"],
         }]
+        manifest["requires"]["capabilities"] = [{
+            "id": "sample.echo", "version": "^1.0.0", "optional": False, "scopes": {},
+        }]
+        manifest["contributes"]["homeWidgets"] = [{
+            "id": "echo", "title": "Echo", "template": "status",
+            "dataSource": "sample.echo.call", "sizes": ["2x1"],
+        }]
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
         (project / "workers").mkdir()
         (project / "workers" / "echo.js").write_text(
@@ -243,6 +250,19 @@ class AtsCliTest(unittest.TestCase):
         ).decode("utf-8")
         self.assertIn('content="device-session"', native)
         self.assertNotIn("/__ats_dev/transport.js", native)
+
+    def test_repository_examples_are_packable(self):
+        examples = SCRIPT.parents[2] / "examples" / "plugins"
+        projects = sorted(path.parent for path in examples.glob("*/manifest.json"))
+        self.assertGreaterEqual(len(projects), 3)
+        for project in projects:
+            with self.subTest(example=project.name):
+                package = self.root / f"{project.name}.atsplugin"
+                ats.pack(str(project), str(package), None)
+                self.assertEqual(
+                    json.loads((project / "manifest.json").read_text(encoding="utf-8"))["plugin"]["id"],
+                    ats.verify(str(package), None, False)["pluginId"],
+                )
 
 
 if __name__ == "__main__":

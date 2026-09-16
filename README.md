@@ -21,14 +21,13 @@ Android Tool Suite 的主体应用仓库。宿主负责插件安装、统一声�
 
 ## 插件结构
 
-插件运行时 插件使用 format v3 清单。普通 Tool 统一声明 `ui/*.json`，由文档选择宿主组件树或隔离 WebView renderer，并且只能通过 Capability Router 使用获授权的能力。API1 `ToolPlugin`／`plugin.apk` 仅在迁移窗口内兼容。
+插件运行时 插件使用 format v3 清单。普通 Tool 统一声明 `ui/*.json`，由文档选择宿主组件树或隔离 WebView renderer，并且只能通过 Capability Router 使用获授权的能力。API1 `ToolPlugin`／`plugin.apk` 已停止安装与执行。
 
 ```text
 app/src/main/java/com/androidtoolsuite/app/
   host/                 主程序壳、Activity、Shizuku UserService、插件管理界面
   plugin/runtime/       插件运行时、V3 包、UI renderer、权限、数据与调度
-  plugin/api/           冻结的 API1 ToolPlugin 兼容接口
-  plugin/store/         API1 插件状态与清单存储
+  plugin/runtime/       format v3 运行时与宿主私有 Tool/数据管理适配
 plugin-sdk/
   src/main/java/...     可发布的插件 API、Native Provider 接口和共享 UI
 
@@ -57,11 +56,11 @@ tools/plugin/
 
 主体与各插件仓库之间没有 Gradle project 依赖：主体仓库发布版本化 SDK AAR，每个插件仓库按 Maven 坐标消费它。新增插件时应创建新的仓库，不加入主体仓库或其他插件仓库。
 
-普通插件既能消费 Capability，也能通过受限 JavaScript Worker 提供自定义 Capability；Worker 的下游调用以提供者插件自己的身份重新检查声明和权限，不会继承消费者权限。需要宿主身份的系统交互才使用 `trusted-provider`，但它仍可拥有普通插件的 UI、主页组件、Worker 和工具贡献。`shizuku_auth` 通过最小宿主 bridge 注册 `shizuku.control`、`accessibility.manage`，宿主本身不再注册这些业务能力。普通插件的未授权调用会在 Router 被阻断；API1 与 `trusted-provider` 仍是同进程全信任代码，权限开关不能替代来源审核。插件私有数据空间是运行基础，不列入权限页面；完全信任插件自身也不显示无法生效的权限开关。
+普通插件既能消费 Capability，也能通过受限 JavaScript Worker 提供自定义 Capability；Worker 的下游调用以提供者插件自己的身份重新检查声明和权限，不会继承消费者权限。需要宿主身份的系统交互才使用 `trusted-provider`，但它仍可拥有普通插件的 UI、主页组件、Worker 和工具贡献。`shizuku_auth` 通过最小宿主 bridge 注册 `shizuku.control`、`accessibility.manage` 与通用 `system.logs`，宿主本身不注册这些业务能力。普通插件的未授权调用会在 Router 被阻断；`trusted-provider` 是同进程全信任代码，权限开关不能替代来源审核。插件私有数据空间是运行基础，不列入权限页面；完全信任插件自身也不显示无法生效的权限开关。
 
 ## 导入插件
 
-format v3 包必须包含 `manifest.json`、`META-INF/ats-integrity.json` 以及清单引用的 `web/`、`ui/`、`workers/` 或可选 `android/provider.apk`；Provider 包还必须有受信 publisher 签名。旧 format v1/v2 包继续要求 `plugin.apk`。插件默认停用，依赖未满足时不能启用；敏感 Capability 默认待用户决定。
+format v3 包必须包含 `manifest.json`、`META-INF/ats-integrity.json` 以及清单引用的 `web/`、`ui/`、`workers/` 或可选 `android/provider.apk`；Provider 包还必须有受信 publisher 签名。旧 format v1/v2 包继续要求 `plugin.apk`。插件默认停用，宿主版本、可选 `minAndroidApi` 或依赖未满足时不能启用；敏感 Capability 默认待用户决定。
 
 完整包格式与 SDK 接入方式见 `docs/plugin-package-format.md`。
 
@@ -163,7 +162,7 @@ Release 使用包名 `com.androidtoolsuite.app`，Debug 使用 `com.androidtools
 
 设置页和插件管理页使用统一 `.atsbackup` v3：应用设置、插件启用状态、每个插件包和插件声明的 Dataset 都能独立选择。导出项可设为不导出、明文或密码加密；导入会根据目标是否已有数据和插件能力提供跳过、导入、替换或合并。
 
-Migration Bridge 只处理插件明确声明的 API1 Dataset，导入时先在应用私有缓存完成解密与完整性校验，随后由插件以事务或原子文件切换恢复。它不会直接操作宿主管理的插件运行时存储；在迁移完成并越过回滚窗口前，正式版与 Debug 使用相同的归档契约。
+数据管理现在只通过宿主私有 DatasetBridge 处理 format v3 Dataset，并使用 staging、完整性校验和 generation 原子切换。旧 `.atsbackup` v2/v3 与宿主迁移包仍可识别；其中携带的 API1 插件包不会被安装或执行。
 
 ## ADB 自动化调试
 

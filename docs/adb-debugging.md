@@ -1,6 +1,39 @@
 # Android 模拟器与 ADB 调试
 
-## 推荐环境
+## Dataset 恢复与诊断（仅 Debug）
+
+以下命令从聚合工作区根目录执行；独立 app 仓库中把 `app/tools` 改为 `tools`。
+无需系统文件选择器，可检查 v2/v3 归档和恢复已安装插件声明且兼容的 Dataset：
+
+```powershell
+.\app\tools\adb-debug.ps1 -Serial <serial> -Command list-datasets
+.\app\tools\adb-debug.ps1 -Serial <serial> -Command verify-datasets -Plugin gacha_analysis
+.\app\tools\adb-debug.ps1 -Serial <serial> -Command inspect-backup -BackupFile <本地归档路径>
+.\app\tools\adb-debug.ps1 -Serial <serial> -Command restore-datasets `
+  -BackupFile <本地归档路径> `
+  -DatasetKeys 'gacha_analysis/gacha-settings','gacha_analysis/genshin-records','gacha_analysis/starrail-records'
+```
+
+`list-datasets -Plugin <id>` 可筛选插件，只返回存在状态、敏感标记和字节数，不输出内容。
+`verify-datasets` 将普通 Dataset 的 128 KiB 分块读取结果与完整导出做摘要比较，仅返回是否一致、字节数与块数，跳过敏感 Dataset；适用于定位读取损坏，不代表业务内容语义验证。
+`inspect-backup` 的 `restorable` 表示本 Debug Dataset 接口可恢复性；宿主设置、插件启用状态和插件包需使用对应应用流程，并非整个产品不支持。
+`restore-datasets` 必须显式选择 keys，采用 REPLACE 语义，依赖项必须一起选择；未知、不兼容项目会在写入前报错。
+归档先校验并暂存，再复用 MigrationBridgeManager 恢复，结果 `restored` 列出成功项目；不调用 `pm clear` 或删除插件。
+加密归档可用 `-PasswordFile <本地 UTF-8 文件>`，文件内容为密码本身（无 BOM、无末尾换行）；设备临时密码文件读取后删除，密码不放在广播参数或响应中，本地密码文件由调用者保管。
+`-BackupFile` 自动上传并在命令结束后删除设备临时副本，也可用 `-Path <debug-inbox 内相对路径>` 复用已上传归档。
+原始 Download 备份不受影响。数据较大时应等待广播完成，勿并发执行恢复或插件更新。
+
+## 推荐环境与模拟器
+
+框架变更的设备回归（安装最新 Debug APK 和 `:app:assembleDebugAndroidTest` 产物后执行）：
+
+```powershell
+adb -s <serial> shell am instrument -w `
+  -e class com.androidtoolsuite.app.plugin.runtime.RuntimePackageBackupInstrumentedTest,com.androidtoolsuite.app.plugin.runtime.DatasetServiceInstrumentedTest `
+  com.androidtoolsuite.app.debug.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+`DirectShizukuProviderInstrumentedTest` 与 `BackupEnableConsentInstrumentedTest` 为需显式选择的设备集成测试：先安装已签名的新 Shizuku 插件、启动 Shizuku 并授权 Debug 宿主；前者验证不给 SDK 平台桥仍可读取设置与匹配日志，后者验证备份不能绕过可信 Provider 启用确认并在结束时还原启用状态。不要通过跳过断言掩盖未授权状态。业务数据恢复测试仅使用 `test.runtime_v2_data` 测试插件，不清除应用数据。
 
 使用 Android Studio 自带的 Android Emulator。它直接使用 Android SDK 系统镜像，ADB、权限模型、`am`、`pm`、`uiautomator` 等行为最接近标准 Android，也适合无窗口自动化测试。
 
@@ -143,9 +176,17 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | `set-plugin-enabled` | `-Plugin <id> -Enabled $true/$false` | 启停插件并校验依赖 |
 | `list-permissions` | `-Plugin <id>` | 列出 format v3 插件声明的权限、scope、当前状态和有限审计 |
 | `set-permission` | `-Plugin <id> -Capability <id> -Enabled $true/$false` | Debug 构建中允许或撤销普通插件 Capability |
+| `run-task` | `-Plugin <id> -Task <id>` | 用空输入立即运行清单中声明的后台任务；不接受任意载荷 |
+| `last-task-run` | `-Plugin <id> -Task <id>` | 读取最近一次任务状态、时间和有界结果 |
 | `set-widget-visible` | `-Widget <plugin:id> -Visible $true/$false` | 显示或隐藏主页组件 |
 | `navigate` | `-Destination dashboard/plugins/manager/store/settings/about/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
 | `reset-state` | 无 | 删除外部插件和权限状态，并恢复组件显示状态 |
+
+P0 Runtime 生命周期回归可用专用脚本执行。它会安装集中 Debug APK（可用 `-SkipInstall` 跳过）、临时导入后台任务示例，覆盖冷启动、前后台、旋转重建、权限撤销、任务状态和 Shizuku Provider 重连路径，并在结束时恢复旋转设置、删除示例插件：
+
+```powershell
+.\tools\adb-runtime-regression.ps1 -Serial <设备序列号>
+```
 
 完整例子：
 
@@ -256,5 +297,5 @@ adb exec-out screencap -p > screenshot.png
 - Receiver 位于 `app/src/debug`，不会进入 release 构建。
 - Receiver 要求系统 `android.permission.DUMP`；ADB shell 可调用，普通第三方应用不能调用。
 - 插件导入只接受应用私有 `files/debug-inbox` 下的相对路径，并限制为 64 MiB；导出只写应用专属外部目录。
-- 普通 V3 插件的 WebView／JavaScriptSandbox 代码不获得宿主对象，能力调用由 Router 强制授权；API1 与 `trusted-provider` 仍是同进程全信任原生代码，调试环境也只应导入可信来源。
+- 普通 V3 插件的 WebView／JavaScriptSandbox 代码不获得宿主对象，能力调用由 Router 强制授权；只有 `trusted-provider` 会作为同进程全信任原生代码装载，调试环境也只应导入可信来源。
 - 不提供任意命令执行接口；shell、文件和设备控制直接由 ADB 完成。

@@ -33,6 +33,7 @@ public final class UpdateCatalogTest {
                 + "\"versionName\":\"2.0.0\","
                 + "\"versionCode\":3,"
                 + "\"minHostVersionCode\":11,"
+                + "\"minAndroidApi\":26,"
                 + "\"sdkVersion\":\"1.1.0\","
                 + "\"dependencies\":[\"shizuku_auth\"],"
                 + "\"releaseUrl\":\"https://example.test/plugin/release\","
@@ -48,6 +49,7 @@ public final class UpdateCatalogTest {
         assertEquals(1, catalog.plugins.size());
         assertEquals("sample", catalog.plugins.get(0).id);
         assertEquals(11, catalog.plugins.get(0).minHostVersionCode);
+        assertEquals(26, catalog.plugins.get(0).minAndroidApi);
         assertEquals("shizuku_auth", catalog.plugins.get(0).dependencies.iterator().next());
     }
 

@@ -11,6 +11,12 @@ param(
         'set-plugin-enabled',
         'list-permissions',
         'set-permission',
+        'run-task',
+        'last-task-run',
+        'list-datasets',
+        'verify-datasets',
+        'inspect-backup',
+        'restore-datasets',
         'set-widget-visible',
         'navigate',
         'reset-state',
@@ -21,15 +27,20 @@ param(
 
     [string]$Plugin,
     [string]$Capability,
+    [string]$Task,
     [string]$Widget,
     [string]$Destination,
     [string]$Path,
     [string]$PluginFile,
+    [string]$BackupFile,
+    [string[]]$DatasetKeys,
+    [string]$PasswordFile,
     [string]$OutputFile,
     [string]$DevUrl,
     [bool]$Enabled,
     [bool]$Visible,
     [switch]$ReplaceSameVersion,
+    [switch]$AllowFailure,
     [string]$Serial
 )
 
@@ -40,6 +51,8 @@ $ErrorActionPreference = 'Stop'
 # 于是 data="{...}" 里的 JSON 变成非法，ConvertFrom-Json 直接失败。
 # 插件标题几乎都是中文，所以 status / list-plugins / import-plugin 全都会挂。
 $previousOutputEncoding = [Console]::OutputEncoding
+$uploadedBackupName = $null
+$uploadedPasswordName = $null
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 try {
 
@@ -107,11 +120,51 @@ if ($Command -eq 'navigate') {
         '-n', "$packageName/$mainActivity",
         '--es', 'debug_destination', $Destination
     )
-    exit 0
+    return
 }
 
 $extras = @()
 switch ($Command) {
+    'verify-datasets' {
+        Require-Value 'Plugin' $Plugin
+        $extras += @('--es', 'plugin', $Plugin)
+    }
+    'list-datasets' {
+        if ($Plugin) { $extras += @('--es', 'plugin', $Plugin) }
+    }
+    { $_ -in @('inspect-backup', 'restore-datasets') } {
+        if ($BackupFile) {
+            $resolvedBackup = (Resolve-Path -LiteralPath $BackupFile).Path
+            $inboxName = "backup-$([Guid]::NewGuid().ToString('N')).atsbackup"
+            Invoke-Adb @('push', $resolvedBackup, "/data/local/tmp/$inboxName") | Out-Null
+            try {
+                Invoke-Adb @('shell', 'run-as', $packageName, 'mkdir', '-p', 'files/debug-inbox') | Out-Null
+                Invoke-Adb @('shell', 'run-as', $packageName, 'cp', "/data/local/tmp/$inboxName", "files/debug-inbox/$inboxName") | Out-Null
+            } finally {
+                Invoke-Adb @('shell', 'rm', '-f', "/data/local/tmp/$inboxName") | Out-Null
+            }
+            $Path = $inboxName
+            $uploadedBackupName = $inboxName
+        }
+        Require-Value 'Path or -BackupFile' $Path
+        $extras += @('--es', 'path', $Path)
+        if ($Command -eq 'restore-datasets') {
+            if (-not $DatasetKeys -or $DatasetKeys.Count -eq 0) { throw 'restore-datasets 必须显式提供 -DatasetKeys' }
+            $extras += @('--es', 'keys', ($DatasetKeys -join ','))
+            if ($PasswordFile) {
+                $resolvedPassword = (Resolve-Path -LiteralPath $PasswordFile).Path
+                $passwordName = "password-$([Guid]::NewGuid().ToString('N'))"
+                Invoke-Adb @('push', $resolvedPassword, "/data/local/tmp/$passwordName") | Out-Null
+                try {
+                    Invoke-Adb @('shell', 'run-as', $packageName, 'cp', "/data/local/tmp/$passwordName", "files/debug-inbox/$passwordName") | Out-Null
+                } finally {
+                    Invoke-Adb @('shell', 'rm', '-f', "/data/local/tmp/$passwordName") | Out-Null
+                }
+                $extras += @('--es', 'password_path', $passwordName)
+                $uploadedPasswordName = $passwordName
+            }
+        }
+    }
     'import-plugin' {
         if ($PluginFile) {
             $resolvedPlugin = (Resolve-Path -LiteralPath $PluginFile).Path
@@ -173,6 +226,11 @@ switch ($Command) {
             '--ez', 'enabled', (Boolean-Text $Enabled)
         )
     }
+    { $_ -in @('run-task', 'last-task-run') } {
+        Require-Value 'Plugin' $Plugin
+        Require-Value 'Task' $Task
+        $extras += @('--es', 'plugin', $Plugin, '--es', 'task', $Task)
+    }
     'set-widget-visible' {
         Require-Value 'Widget' $Widget
         if (-not $PSBoundParameters.ContainsKey('Visible')) {
@@ -206,6 +264,9 @@ if (-not $completion -or $completion -notmatch 'data="(.*)"$') {
 $response = $Matches[1] | ConvertFrom-Json
 $response | ConvertTo-Json -Depth 20
 if (-not $response.ok) {
+    if ($AllowFailure) {
+        return
+    }
     exit 2
 }
 
@@ -220,6 +281,11 @@ if ($Command -eq 'export-plugin') {
 
 }
 finally {
+    foreach ($temporaryName in @($uploadedBackupName, $uploadedPasswordName)) {
+        if ($temporaryName) {
+            Invoke-Adb @('shell', 'run-as', $packageName, 'rm', '-f', "files/debug-inbox/$temporaryName") | Out-Null
+        }
+    }
     # 直接 .\adb-debug.ps1 在交互式会话里跑时，不要把改过的编码留给后续命令。
     [Console]::OutputEncoding = $previousOutputEncoding
 }

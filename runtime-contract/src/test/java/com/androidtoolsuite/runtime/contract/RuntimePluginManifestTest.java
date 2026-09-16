@@ -140,12 +140,32 @@ public class RuntimePluginManifestTest {
                         + "\"entry\":\"workers/echo.js\",\"required\":true}]")
                 .replace("\"provides\": { \"capabilities\": [] }", "\"provides\":{\"capabilities\":[{"
                         + "\"id\":\"sample.echo\",\"version\":\"1.0.0\","
-                        + "\"workerEntry\":\"echo-provider\",\"methods\":[\"sample.echo.call\"]}]}");
+                        + "\"workerEntry\":\"echo-provider\",\"methods\":[\"sample.echo.call\"]}]}"
+                )
+                .replace("\"requires\": { \"plugins\": [], \"capabilities\": [] }", "\"requires\":{"
+                        + "\"plugins\":[],\"capabilities\":[{\"id\":\"sample.echo\","
+                        + "\"version\":\"^1.0.0\",\"optional\":false,\"scopes\":{}}]}")
+                .replace("\"homeWidgets\": []", "\"homeWidgets\":[{\"id\":\"echo\","
+                        + "\"title\":\"Echo\",\"template\":\"status\","
+                        + "\"dataSource\":\"sample.echo.call\",\"sizes\":[\"2x1\"]}]");
 
         RuntimePluginManifest manifest = RuntimePluginManifest.parse(raw);
 
         assertEquals("echo-provider", manifest.capabilityContributions.get(0).workerEntry);
         assertEquals("sample.echo.call", manifest.capabilityContributions.get(0).methods.get(0));
+        assertEquals("sample.echo.call", manifest.homeWidgetContributions.get(0).dataSource);
+        assertEquals(24, manifest.plugin.minAndroidApi);
+    }
+
+    @Test
+    public void parsesExplicitMinimumAndroidApi() throws Exception {
+        RuntimePluginManifest manifest = RuntimePluginManifest.parse(
+                fixture("manifest-valid-web.json").replace(
+                        "\"minHostVersionCode\": 23,",
+                        "\"minHostVersionCode\": 23,\"minAndroidApi\":26,"
+                )
+        );
+        assertEquals(26, manifest.plugin.minAndroidApi);
     }
 
     private static String providerManifest(boolean mixedUi) {
