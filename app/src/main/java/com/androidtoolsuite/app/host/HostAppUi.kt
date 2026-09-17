@@ -14,6 +14,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -658,24 +660,17 @@ private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifie
             )
             Text("工具台", style = MaterialTheme.typography.headlineLarge)
             Text(
-                "集中查看运行状态，快速进入常用工具。",
+                "点击进入 · 长按编辑 · 拖动排序",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         item {
-            SuiteCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Icon(Icons.Rounded.Dashboard, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Column {
-                        Text("${plugins.size} 个工具已就绪", style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            "${widgets.size} 个主页组件",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-            }
+            Text(
+                "${plugins.size} 个工具可用 · ${widgets.size} 个主页小部件",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         item {
             // 隐藏项的入口跟着「有没有隐藏项」出现在分段标题右侧，而不是常驻一个空位。
@@ -1109,6 +1104,8 @@ private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifi
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            Text("全部工具", style = MaterialTheme.typography.headlineLarge)
+            Spacer(Modifier.height(SuiteSpacing.sm))
             Text(
                 "点击打开 · 长按拖动排序或调整",
                 style = MaterialTheme.typography.bodyMedium,
@@ -1462,20 +1459,16 @@ private fun ManagedPluginCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .graphicsLayer { alpha = if (enabled) 1f else 0.62f }
             .semantics { stateDescription = "managed-plugin-$title-$refreshVersion" },
         shape = SuiteShapes.Card,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        // 展开项用内描边标出来。多项可同时展开，没有描边时很难看出某个开关区属于上面哪张卡。
-        border = if (expanded) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Column {
-            // 内边距放在 Row 里而不是外层 Column 上：否则卡片左右各 16dp 是死区，
-            // 点在标题左侧或箭头右侧都展不开。
+            // 整行进入该插件的设置面板，保留列表滚动位置。
             Row(
                 Modifier
                     .fillMaxWidth()
-                    // 停用的插件也要能展开：删除和导出在展开区里，停用之后才更需要它们。
+                    // 停用后仍可管理权限、数据和插件包。
                     .clickable { expanded = !expanded }
                     .padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.md),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1488,14 +1481,34 @@ private fun ManagedPluginCard(
                 }
                 Switch(checked = enabled, onCheckedChange = onEnabledChange)
                 Icon(
-                    if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    if (expanded) "收起" else "展开",
-                    tint = if (expanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    Icons.Rounded.ChevronRight,
+                    "插件设置",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (expanded) {
+            if (loadFailed) {
+                Column(Modifier.padding(start = SuiteSpacing.lg, end = SuiteSpacing.lg, bottom = SuiteSpacing.md)) {
+                    ErrorState("插件无法加载", "请重新安装插件。", onRetry = activity::importPlugin)
+                }
+            }
+        }
+    }
+    if (expanded) {
+        ModalBottomSheet(
+            onDismissRequest = { expanded = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
+                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
+            ) {
+                SectionHeader(title, "v$version") {
+                    TextButton(onClick = { expanded = false }) { Text("关闭") }
+                }
+                VisibilitySwitch("启用插件", enabled, onEnabledChange)
                 HorizontalDivider()
-                Column(Modifier.padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.xs)) {
+
                     if (loadedPlugin != null) {
                         VisibilitySwitch(
                             "在工具页显示",
@@ -1570,11 +1583,11 @@ private fun ManagedPluginCard(
                             Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.sm),
                             horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
                         ) {
-                            OutlinedButton(onClick = { activity.exportPlugin(pluginId) }, modifier = Modifier.weight(1f)) {
+                            OutlinedButton(onClick = { expanded = false; activity.exportPlugin(pluginId) }, modifier = Modifier.weight(1f)) {
                                 Text("导出")
                             }
                             OutlinedButton(
-                                onClick = { activity.requestDeletePluginForUi(pluginId) },
+                                onClick = { expanded = false; activity.requestDeletePluginForUi(pluginId) },
                                 modifier = Modifier.weight(1f),
                             ) { Text("删除") }
                         }
@@ -1585,28 +1598,25 @@ private fun ManagedPluginCard(
                             horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
                         ) {
                             OutlinedButton(
-                                onClick = { activity.prepareMigrationBridgeExportForPluginUi(pluginId) },
+                                onClick = { expanded = false; activity.prepareMigrationBridgeExportForPluginUi(pluginId) },
                                 modifier = Modifier.weight(1f),
                             ) { Text("导出数据") }
                             OutlinedButton(
-                                onClick = { activity.importMigrationBridgeForPluginUi(pluginId) },
+                                onClick = { expanded = false; activity.importMigrationBridgeForPluginUi(pluginId) },
                                 modifier = Modifier.weight(1f),
                             ) { Text("导入数据") }
                             OutlinedButton(
-                                onClick = { activity.prepareMigrationBridgeDeleteForPluginUi(pluginId) },
+                                onClick = { expanded = false; activity.prepareMigrationBridgeDeleteForPluginUi(pluginId) },
                                 modifier = Modifier.weight(1f),
                             ) { Text("清除数据") }
                         }
                     }
-                }
-            }
-            if (loadFailed) {
-                Column(Modifier.padding(start = SuiteSpacing.lg, end = SuiteSpacing.lg, bottom = SuiteSpacing.md)) {
-                    ErrorState("插件无法加载", "请重新安装插件。", onRetry = activity::importPlugin)
-                }
+
+                Spacer(Modifier.height(SuiteSpacing.lg))
             }
         }
     }
+
 }
 
 @Composable
@@ -2270,281 +2280,118 @@ private fun MigrationBridgeExportDialog(activity: MainActivity) {
     val options = activity.migrationBridgeExportOptionsForUi()
     if (options.isEmpty()) return
     val grouped = options.groupBy { it.pluginId }
-    var expanded by remember(options) {
-        mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet())
+    var expanded by remember(options) { mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet()) }
+    val initialSelected = remember(options) {
+        closeRestoreSelection(options, options.filter {
+            it.isHostItem || it.descriptor.category == DatasetCategory.SETTINGS ||
+                (it.descriptor.category == DatasetCategory.DATA && it.descriptor.estimatedSize <= 32L * 1024L * 1024L)
+        }.map { it.key() })
     }
-    var selected by remember(options) {
-        mutableStateOf(
-            closeRestoreSelection(
-                options,
-                options.filter {
-                    it.isHostItem || it.descriptor.category == DatasetCategory.SETTINGS ||
-                        (it.descriptor.category == DatasetCategory.DATA &&
-                            it.descriptor.estimatedSize <= 32L * 1024L * 1024L)
-                }.mapTo(linkedSetOf()) { it.key() },
-            ),
-        )
+    val initialProtected: Set<String> = remember(options) {
+        options.filter { it.key() in initialSelected && exportDatasetIsSensitive(it) }.mapTo(linkedSetOf()) { it.key() }
     }
-    var passwordProtected by remember(options) {
-        mutableStateOf<Set<String>>(
-            options.filter {
-                it.key() in selected && exportDatasetIsSensitive(it)
-            }.mapTo(linkedSetOf()) { it.key() },
-        )
-    }
+    var selected by remember(options) { mutableStateOf(initialSelected) }
+    var passwordProtected by remember(options) { mutableStateOf(initialProtected) }
     var password by remember(options) { mutableStateOf("") }
-    val selectedCount = selected.size
     val encryptedCount = selected.count { it in passwordProtected }
-    val plainCount = selectedCount - encryptedCount
-    val plainSensitive = options.filter {
-        it.key() in selected && it.key() !in passwordProtected && exportDatasetIsSensitive(it)
-    }
-    val containsPlainSensitive = plainSensitive.isNotEmpty()
-    val passwordValid = passwordProtected.isEmpty() || password.length >= 8
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val plainCount = selected.size - encryptedCount
+    val plainSensitive = options.filter { it.key() in selected && it.key() !in passwordProtected && exportDatasetIsSensitive(it) }
 
-    ModalBottomSheet(
-        onDismissRequest = activity::dismissMigrationBridgeExportForUi,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = SuiteSpacing.xl),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs),
-            ) {
-                Text("导出数据包", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "每项数据都可以选择不导出、明文或加密。普通数据也可以加密，敏感数据选择明文时会提示后果。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Surface(
-                modifier = Modifier.padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
-                shape = SuiteShapes.Inner,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-                Column(Modifier.padding(SuiteSpacing.lg), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("已选择 $selectedCount 项", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "$plainCount 项明文 · $encryptedCount 项密码保护",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        TextButton(
-                            enabled = selected.isNotEmpty() && passwordProtected.isNotEmpty(),
-                            onClick = {
-                                passwordProtected = emptySet()
-                            },
-                        ) { Text("全部明文") }
-                        TextButton(
-                            enabled = selected.isNotEmpty() && passwordProtected != selected,
-                            onClick = {
-                                passwordProtected = selected.toSet()
-                            },
-                        ) { Text("全部加密") }
-                    }
-                    Text(
-                        "展开应用或插件，可单独调整每项数据及其保护方式。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+    fun updateSelection(updated: Set<String>) {
+        val addedSensitive = options.filter { it.key() in updated && it.key() !in selected && exportDatasetIsSensitive(it) }.map { it.key() }
+        passwordProtected = (passwordProtected + addedSensitive).intersect(updated)
+        selected = updated
+    }
+
+    DataOperationDialog(
+        sessionKey = options,
+        title = "导出数据包",
+        description = "选择要导出的内容，再确认保护方式和保存位置。敏感数据默认加密，关联项目会自动一并选择。",
+        selectedCount = selected.size,
+        summary = "已选择 ${selected.size} 项 · $plainCount 项明文 · $encryptedCount 项加密",
+        hasChanges = selected != initialSelected || passwordProtected != initialProtected || password.isNotEmpty(),
+        confirmLabel = "选择保存位置",
+        confirmEnabled = encryptedCount == 0 || password.length >= 8,
+        onDismiss = activity::dismissMigrationBridgeExportForUi,
+        onConfirm = { activity.confirmMigrationBridgeExportForUi(selected.toList(), passwordProtected.toList(), password) },
+        selection = {
+            item("export-protection") {
+                DataOperationChoices {
+                    OutlinedButton(enabled = selected.isNotEmpty(), onClick = { passwordProtected = selected.toSet() }) { Text("所选全部加密") }
+                    TextButton(enabled = selected.isNotEmpty(), onClick = { passwordProtected = emptySet() }) { Text("所选全部明文") }
                 }
             }
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f).heightIn(max = 420.dp),
-                contentPadding = PaddingValues(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.xs),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-            ) {
-                grouped.forEach { (ownerId, ownerOptions) ->
-                    item(key = "owner-$ownerId") {
-                        val ownerKeys = ownerOptions.mapTo(linkedSetOf()) { it.key() }
-                        val ownerSelected = ownerKeys.intersect(selected)
-                        val ownerEncrypted = ownerSelected.count { it in passwordProtected }
-                        val ownerPlain = ownerSelected.size - ownerEncrypted
-                        val selectionState = when (ownerSelected.size) {
-                            0 -> ToggleableState.Off
-                            ownerOptions.size -> ToggleableState.On
-                            else -> ToggleableState.Indeterminate
-                        }
-                        Surface(
-                            shape = SuiteShapes.Inner,
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column {
-                                Row(
-                                    Modifier.fillMaxWidth().clickable {
-                                        expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId
-                                    }.padding(start = SuiteSpacing.xs),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    TriStateCheckbox(
-                                        state = selectionState,
-                                        onClick = {
-                                            val previous = selected
-                                            val updated = if (selectionState == ToggleableState.On) {
-                                                pruneRestoreSelection(options, selected - ownerKeys)
-                                            } else {
-                                                closeRestoreSelection(options, selected + ownerKeys)
-                                            }
-                                            selected = updated
-                                            passwordProtected = (
-                                                passwordProtected + options.filter {
-                                                    it.key() in updated && it.key() !in previous && exportDatasetIsSensitive(it)
-                                                }.map { it.key() }
-                                                ).intersect(updated)
-                                        },
-                                    )
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(ownerOptions.first().pluginTitle, style = MaterialTheme.typography.titleSmall)
-                                        Text(
-                                            if (ownerSelected.isEmpty()) {
-                                                "未选择 · 共 ${ownerOptions.size} 项"
-                                            } else {
-                                                "${ownerSelected.size}/${ownerOptions.size} 已选 · $ownerPlain 明文 · $ownerEncrypted 加密"
-                                            },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    IconButton(onClick = {
-                                        expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId
-                                    }) {
-                                        Icon(
-                                            if (ownerId in expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                                            if (ownerId in expanded) "收起" else "展开",
-                                        )
-                                    }
-                                }
-                                if (ownerId in expanded) {
-                                    ownerOptions.forEach { option ->
-                                        val checked = option.key() in selected
-                                        val encrypted = option.key() in passwordProtected
-                                        val sensitive = exportDatasetIsSensitive(option)
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                                .padding(
-                                                    start = 48.dp,
-                                                    end = SuiteSpacing.md,
-                                                    top = SuiteSpacing.sm,
-                                                    bottom = SuiteSpacing.sm,
-                                                ),
-                                        ) {
-                                            Text(option.descriptor.name, style = MaterialTheme.typography.bodyMedium)
-                                            if (option.isPluginPackage()) {
-                                                Text(
-                                                    "包含插件安装包，便于迁移未发布的本地插件。恢复时仍会检查兼容性与来源。",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                            Text(
-                                                "${bridgeCategoryLabel(option.descriptor.category)} · " +
-                                                    bridgeDatasetSize(option.descriptor.estimatedSize) +
-                                                    if (sensitive) " · 敏感" else "",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                            Row(horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-                                                FilterChip(
-                                                    selected = !checked,
-                                                    onClick = {
-                                                        selected = pruneRestoreSelection(options, selected - option.key())
-                                                        passwordProtected = passwordProtected.intersect(selected)
-                                                    },
-                                                    label = { Text("不导出") },
-                                                )
-                                                FilterChip(
-                                                    selected = checked && !encrypted,
-                                                    onClick = {
-                                                        val previous = selected
-                                                        val updated = closeRestoreSelection(options, selected + option.key())
-                                                        selected = updated
-                                                        val addedSensitive = options.filter {
-                                                            it.key() in updated && it.key() !in previous && exportDatasetIsSensitive(it)
-                                                        }.map { it.key() }
-                                                        passwordProtected = ((passwordProtected + addedSensitive) - option.key())
-                                                            .intersect(updated)
-                                                    },
-                                                    label = { Text("明文") },
-                                                )
-                                                FilterChip(
-                                                    selected = checked && encrypted,
-                                                    onClick = {
-                                                        val updated = closeRestoreSelection(options, selected + option.key())
-                                                        selected = updated
-                                                        passwordProtected = (passwordProtected + option.key()).intersect(updated)
-                                                    },
-                                                    label = { Text("加密") },
-                                                )
-                                            }
-                                        }
-                                    }
+            grouped.forEach { (ownerId, ownerOptions) ->
+                item("export-$ownerId") {
+                    val ownerKeys = ownerOptions.mapTo(linkedSetOf()) { it.key() }
+                    val count = ownerKeys.count { it in selected }
+                    val selectionState = when (count) {
+                        0 -> ToggleableState.Off
+                        ownerKeys.size -> ToggleableState.On
+                        else -> ToggleableState.Indeterminate
+                    }
+                    DataOperationGroup(
+                        title = ownerOptions.first().pluginTitle,
+                        summary = "已选 $count / ${ownerOptions.size} 项",
+                        expanded = ownerId in expanded,
+                        onExpand = { expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId },
+                        selectionState = selectionState,
+                        onSelectGroup = {
+                            updateSelection(if (selectionState == ToggleableState.On) pruneRestoreSelection(options, selected - ownerKeys)
+                                else closeRestoreSelection(options, selected + ownerKeys))
+                        },
+                    ) {
+                        ownerOptions.forEach { option ->
+                            val checked = option.key() in selected
+                            val encrypted = option.key() in passwordProtected
+                            DataOperationEntry(
+                                option.descriptor.name,
+                                "${bridgeCategoryLabel(option.descriptor.category)} · ${bridgeDatasetSize(option.descriptor.estimatedSize)}" +
+                                    if (exportDatasetIsSensitive(option)) " · 敏感数据" else "",
+                            ) {
+                                if (option.isPluginPackage()) Text("恢复安装包时仍会检查兼容性与来源。", style = MaterialTheme.typography.bodySmall)
+                                DataOperationChoices {
+                                    FilterChip(selected = !checked, onClick = {
+                                        updateSelection(pruneRestoreSelection(options, selected - option.key()))
+                                    }, label = { Text("不导出") })
+                                    FilterChip(selected = checked && !encrypted, onClick = {
+                                        updateSelection(closeRestoreSelection(options, selected + option.key()))
+                                        passwordProtected = passwordProtected - option.key()
+                                    }, label = { Text("明文") })
+                                    FilterChip(selected = checked && encrypted, onClick = {
+                                        updateSelection(closeRestoreSelection(options, selected + option.key()))
+                                        passwordProtected = passwordProtected + option.key()
+                                    }, label = { Text("加密") })
                                 }
                             }
                         }
                     }
                 }
             }
-            Column(
-                modifier = Modifier.padding(horizontal = SuiteSpacing.xl),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-            ) {
-                if (passwordProtected.isNotEmpty()) {
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("密码保护区密码") },
-                        supportingText = { Text("至少 8 位；只用于本次数据包") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        isError = password.length in 1..7,
-                    )
-                }
-                if (containsPlainSensitive) {
-                    Notice(
-                        "${plainSensitive.size} 项敏感数据将写入未加密的明文区。任何能读取文件的人都可能看到其中的凭据或隐私数据。",
-                        warning = true,
-                    )
+        },
+        confirmation = {
+            item("export-review-description") { Text("确认导出范围", style = MaterialTheme.typography.titleLarge) }
+            grouped.forEach { (ownerId, ownerOptions) ->
+                val chosen = ownerOptions.filter { it.key() in selected }
+                if (chosen.isNotEmpty()) item("export-review-$ownerId") {
+                    DataOperationReviewGroup(ownerOptions.first().pluginTitle, chosen.map {
+                        it.descriptor.name to ((if (it.key() in passwordProtected) "密码加密" else "明文") + " · ${bridgeDatasetSize(it.descriptor.estimatedSize)}")
+                    })
                 }
             }
-            HorizontalDivider(Modifier.padding(top = SuiteSpacing.sm))
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
-                horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (selectedCount == 0) "尚未选择数据" else "将导出 $selectedCount 项",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (encryptedCount > 0) item("export-password") {
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("数据包密码") }, supportingText = { Text("至少 8 位；仅用于此次导出") },
+                    visualTransformation = PasswordVisualTransformation(), singleLine = true, isError = password.length in 1..7,
                 )
-                TextButton(onClick = activity::dismissMigrationBridgeExportForUi) { Text("取消") }
-                Button(
-                    onClick = {
-                        activity.confirmMigrationBridgeExportForUi(
-                            selected.toList(),
-                            passwordProtected.toList(),
-                            password,
-                        )
-                    },
-                    enabled = selected.isNotEmpty() && passwordValid,
-                ) { Text("选择保存位置") }
             }
-        }
-    }
+            if (plainSensitive.isNotEmpty()) item("export-sensitive-warning") {
+                Notice("${plainSensitive.size} 项敏感数据将以明文导出。能读取文件的人可能看到其中的凭据或隐私数据，可返回选择改为加密。", warning = true)
+            }
+            item("export-destination") { Notice("下一步选择保存位置；导出不会删除或替换本机数据。") }
+        },
+    )
 }
 
 @Composable
@@ -2603,33 +2450,20 @@ private fun MigrationBridgeImportDialog(activity: MainActivity) {
     hostRevision(activity)
     val options = activity.migrationBridgeImportOptionsForUi()
     if (options.isEmpty()) return
-
     val grouped = options.groupBy { it.pluginId }
-    var expanded by remember(options) { mutableStateOf(grouped.keys.toSet()) }
-    var actions by remember(options) {
-        mutableStateOf<Map<String, DatasetRestoreMode?>>(
-            options.associate { option ->
-                option.key() to if (option.hasExistingData &&
-                    DatasetRestoreMode.MERGE !in option.descriptor.restoreModes
-                ) null else preferredImportMode(option)
-            },
-        )
+    var expanded by remember(options) { mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet()) }
+    val initialActions: Map<String, DatasetRestoreMode?> = remember(options) {
+        options.associate { option -> option.key() to if (option.hasExistingData && DatasetRestoreMode.MERGE !in option.descriptor.restoreModes) null else preferredImportMode(option) }
     }
+    var actions by remember(options) { mutableStateOf(initialActions) }
     var password by remember(options) { mutableStateOf("") }
     val selected = actions.filterValues { it != null }.keys
-    val needsPassword = options.any {
-        it.key() in selected && activity.migrationBridgeImportProtectionForUi(it.key()) == "PASSWORD"
-    }
-    val passwordValid = !needsPassword || password.length >= 8
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val needsPassword = options.any { it.key() in selected && activity.migrationBridgeImportProtectionForUi(it.key()) == "PASSWORD" }
+    val replacing = options.count { it.hasExistingData && actions[it.key()] == DatasetRestoreMode.REPLACE }
 
     fun updateAction(option: MigrationBridgeManager.DatasetOption, mode: DatasetRestoreMode?) {
         val currentKeys = actions.filterValues { it != null }.keys
-        val nextKeys = if (mode == null) {
-            pruneRestoreSelection(options, currentKeys - option.key())
-        } else {
-            closeRestoreSelection(options, currentKeys + option.key())
-        }
+        val nextKeys = if (mode == null) pruneRestoreSelection(options, currentKeys - option.key()) else closeRestoreSelection(options, currentKeys + option.key())
         val next = actions.toMutableMap()
         options.forEach { candidate ->
             next[candidate.key()] = when {
@@ -2642,181 +2476,90 @@ private fun MigrationBridgeImportDialog(activity: MainActivity) {
         actions = next
     }
 
-    ModalBottomSheet(
-        onDismissRequest = activity::dismissMigrationBridgeImportForUi,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
-            Column(
-                modifier = Modifier.padding(horizontal = SuiteSpacing.xl),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs),
-            ) {
-                Text("导入数据包", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "来源：${activity.migrationBridgeImportSourceForUi()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "没有现有数据时可导入或跳过；已有数据时可选择跳过、替换或合并。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f).heightIn(max = 460.dp),
-                contentPadding = PaddingValues(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-            ) {
-                grouped.forEach { (ownerId, ownerOptions) ->
-                    item(key = "import-owner-$ownerId") {
-                        Surface(
-                            shape = SuiteShapes.Inner,
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column {
-                                Row(
-                                    Modifier.fillMaxWidth().clickable {
-                                        expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId
-                                    }.padding(start = SuiteSpacing.lg),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(ownerOptions.first().pluginTitle, style = MaterialTheme.typography.titleSmall)
-                                        Text(
-                                            "${ownerOptions.count { actions[it.key()] != null }}/${ownerOptions.size} 将导入",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+    DataOperationDialog(
+        sessionKey = options,
+        title = "导入数据包",
+        description = "来源：${activity.migrationBridgeImportSourceForUi()}\n选择恢复内容和处理方式，再确认操作。确认前不会更改本机数据。",
+        selectedCount = selected.size,
+        summary = "已选择 ${selected.size} 项 · $replacing 项替换现有数据",
+        hasChanges = actions != initialActions || password.isNotEmpty(),
+        confirmLabel = "开始导入",
+        confirmEnabled = !needsPassword || password.length >= 8,
+        onDismiss = activity::dismissMigrationBridgeImportForUi,
+        onConfirm = {
+            activity.confirmMigrationBridgeImportForUi(
+                actions.filterValues { it == DatasetRestoreMode.REPLACE }.keys.toList(),
+                actions.filterValues { it == DatasetRestoreMode.MERGE }.keys.toList(), password,
+            )
+        },
+        selection = {
+            grouped.forEach { (ownerId, ownerOptions) ->
+                item("import-$ownerId") {
+                    DataOperationGroup(
+                        title = ownerOptions.first().pluginTitle,
+                        summary = "已选 ${ownerOptions.count { actions[it.key()] != null }} / ${ownerOptions.size} 项",
+                        expanded = ownerId in expanded,
+                        onExpand = { expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId },
+                        onSkipGroup = {
+                            val base = pruneRestoreSelection(options, selected - ownerOptions.map { it.key() }.toSet())
+                            actions = actions.mapValues { (key, value) -> if (key in base) value else null }
+                        },
+                    ) {
+                        ownerOptions.forEach { option ->
+                            val mode = actions[option.key()]
+                            val protection = if (activity.migrationBridgeImportProtectionForUi(option.key()) == "PASSWORD") "加密" else "明文"
+                            DataOperationEntry(
+                                option.descriptor.name,
+                                "${if (option.hasExistingData) "已有数据" else "当前没有数据"} · $protection · ${bridgeCategoryLabel(option.descriptor.category)}",
+                            ) {
+                                if (option.isPluginPackage()) Text("安装包仍按本地导入规则校验；新装插件保持停用，完全信任仍需单独确认。", style = MaterialTheme.typography.bodySmall)
+                                DataOperationChoices {
+                                    FilterChip(selected = mode == null, onClick = { updateAction(option, null) }, label = { Text("跳过") })
+                                    if (!option.hasExistingData) {
+                                        FilterChip(selected = mode != null, onClick = { updateAction(option, preferredImportMode(option)) }, label = { Text("导入") })
+                                    } else {
+                                        if (DatasetRestoreMode.REPLACE in option.descriptor.restoreModes) FilterChip(
+                                            selected = mode == DatasetRestoreMode.REPLACE, onClick = { updateAction(option, DatasetRestoreMode.REPLACE) }, label = { Text("替换") },
+                                        )
+                                        if (DatasetRestoreMode.MERGE in option.descriptor.restoreModes) FilterChip(
+                                            selected = mode == DatasetRestoreMode.MERGE, onClick = { updateAction(option, DatasetRestoreMode.MERGE) }, label = { Text("合并") },
                                         )
                                     }
-                                    TextButton(onClick = {
-                                        val ownerKeys = ownerOptions.map { it.key() }.toSet()
-                                        val base = pruneRestoreSelection(options, selected - ownerKeys)
-                                        actions = actions.mapValues { (key, value) -> if (key in base) value else null }
-                                    }) { Text("全部跳过") }
-                                    IconButton(onClick = {
-                                        expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId
-                                    }) {
-                                        Icon(if (ownerId in expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
-                                    }
                                 }
-                                if (ownerId in expanded) {
-                                    ownerOptions.forEach { option ->
-                                        val mode = actions[option.key()]
-                                        val supportsReplace = DatasetRestoreMode.REPLACE in option.descriptor.restoreModes
-                                        val supportsMerge = DatasetRestoreMode.MERGE in option.descriptor.restoreModes
-                                        val protection = if (activity.migrationBridgeImportProtectionForUi(option.key()) == "PASSWORD") {
-                                            "加密"
-                                        } else {
-                                            "明文"
-                                        }
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                        Column(
-                                            Modifier.fillMaxWidth()
-                                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                                .padding(
-                                                    start = 48.dp,
-                                                    end = SuiteSpacing.md,
-                                                    top = SuiteSpacing.sm,
-                                                    bottom = SuiteSpacing.sm,
-                                                ),
-                                            verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs),
-                                        ) {
-                                            Text(option.descriptor.name, style = MaterialTheme.typography.bodyMedium)
-                                            Text(
-                                                (if (option.isPluginPackage()) "安装包将按本地导入规则检查；新装插件保持停用，可信 Provider 需确认完全信任后启用。" else if (option.hasExistingData) "已有数据" else "当前没有数据") +
-                                                    " · $protection · ${bridgeCategoryLabel(option.descriptor.category)}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                            Row(horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-                                                FilterChip(
-                                                    selected = mode == null,
-                                                    onClick = { updateAction(option, null) },
-                                                    label = { Text("跳过") },
-                                                )
-                                                if (!option.hasExistingData) {
-                                                    FilterChip(
-                                                        selected = mode != null,
-                                                        onClick = { updateAction(option, preferredImportMode(option)) },
-                                                        label = { Text("导入") },
-                                                    )
-                                                } else {
-                                                    FilterChip(
-                                                        selected = mode == DatasetRestoreMode.REPLACE,
-                                                        enabled = supportsReplace,
-                                                        onClick = { updateAction(option, DatasetRestoreMode.REPLACE) },
-                                                        label = { Text("替换") },
-                                                    )
-                                                    FilterChip(
-                                                        selected = mode == DatasetRestoreMode.MERGE,
-                                                        enabled = supportsMerge,
-                                                        onClick = { updateAction(option, DatasetRestoreMode.MERGE) },
-                                                        label = { Text("合并") },
-                                                    )
-                                                }
-                                            }
-                                            if (option.hasExistingData && !supportsMerge) {
-                                                Text(
-                                                    "已有数据 · 此项不能合并，只能跳过或替换。",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                if (option.hasExistingData && DatasetRestoreMode.MERGE !in option.descriptor.restoreModes) Text(
+                                    "此项不支持合并，替换会覆盖现有数据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                     }
                 }
             }
-            Column(
-                modifier = Modifier.padding(horizontal = SuiteSpacing.xl),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-            ) {
-                if (needsPassword) {
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("数据包密码") },
-                        supportingText = { if (password.isNotEmpty() && password.length < 8) Text("至少 8 位") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        isError = password.isNotEmpty() && password.length < 8,
-                    )
+        },
+        confirmation = {
+            item("import-review-description") { Text("确认恢复范围", style = MaterialTheme.typography.titleLarge) }
+            if (replacing > 0) item("import-replace-warning") { Notice("$replacing 项现有数据将被替换。请逐项核对，必要时返回选择改为跳过。", warning = true) }
+            grouped.forEach { (ownerId, ownerOptions) ->
+                val chosen = ownerOptions.filter { it.key() in selected }
+                if (chosen.isNotEmpty()) item("import-review-$ownerId") {
+                    DataOperationReviewGroup(ownerOptions.first().pluginTitle, chosen.map { option ->
+                        option.descriptor.name to when {
+                            !option.hasExistingData -> "导入新数据"
+                            actions[option.key()] == DatasetRestoreMode.MERGE -> "与现有数据合并"
+                            else -> "替换现有数据"
+                        }
+                    })
                 }
-                Notice("所有所选项目会先完成校验。带“已有数据”的项目将按这里选择的方式处理。")
             }
-            HorizontalDivider(Modifier.padding(top = SuiteSpacing.sm))
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
-                horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (selected.isEmpty()) "尚未选择数据" else "将导入 ${selected.size} 项",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (needsPassword) item("import-password") {
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("数据包密码") }, supportingText = { Text("输入导出时设置的密码，至少 8 位") },
+                    visualTransformation = PasswordVisualTransformation(), singleLine = true, isError = password.length in 1..7,
                 )
-                TextButton(onClick = activity::dismissMigrationBridgeImportForUi) { Text("取消") }
-                Button(
-                    onClick = {
-                        activity.confirmMigrationBridgeImportForUi(
-                            actions.filterValues { it == DatasetRestoreMode.REPLACE }.keys.toList(),
-                            actions.filterValues { it == DatasetRestoreMode.MERGE }.keys.toList(),
-                            password,
-                        )
-                    },
-                    enabled = selected.isNotEmpty() && passwordValid,
-                ) { Text("开始导入") }
             }
-        }
-    }
+            item("import-validation") { Notice("所有所选项目会先完成校验，再按确认的方式处理。插件包恢复不会跳过来源、兼容性和权限检查。") }
+        },
+    )
 }
 
 private fun preferredImportMode(option: MigrationBridgeManager.DatasetOption): DatasetRestoreMode = when {
@@ -2831,82 +2574,75 @@ private fun MigrationBridgeDeleteDialog(activity: MainActivity) {
     val options = activity.migrationBridgeDeleteOptionsForUi()
     if (options.isEmpty()) return
     val grouped = options.groupBy { it.pluginId }
-    var expanded by remember(options) { mutableStateOf(grouped.keys.toSet()) }
+    var expanded by remember(options) { mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet()) }
     var selected by remember(options) { mutableStateOf<Set<String>>(emptySet()) }
-    var confirmed by remember(options) { mutableStateOf(false) }
+    var confirmed by remember(options, selected) { mutableStateOf(false) }
 
-    AlertDialog(
-        onDismissRequest = activity::dismissMigrationBridgeDeleteForUi,
-        title = { Text("删除插件数据") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
-                Notice("删除不可撤销。选择被其他数据项目依赖的内容时，相关数据会自动一并选中。", warning = true)
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 350.dp)) {
-                    grouped.forEach { (ownerId, ownerOptions) ->
-                        item(key = "delete-owner-$ownerId") {
-                            val allSelected = ownerOptions.all { it.key() in selected }
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(
-                                    checked = allSelected,
-                                    onCheckedChange = {
-                                        selected = if (allSelected) {
-                                            pruneDeleteSelection(options, selected - ownerOptions.map { it.key() }.toSet())
-                                        } else {
-                                            closeDeleteSelection(options, selected + ownerOptions.map { it.key() })
-                                        }
-                                        confirmed = false
-                                    },
-                                )
-                                Text(ownerOptions.first().pluginTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                                Text("${ownerOptions.count { it.key() in selected }}/${ownerOptions.size}", style = MaterialTheme.typography.labelSmall)
-                                IconButton(onClick = {
-                                    expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId
-                                }) { Icon(if (ownerId in expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null) }
-                            }
-                        }
-                        if (ownerId in expanded) {
-                            items(ownerOptions, key = { it.key() }) { option ->
-                                val checked = option.key() in selected
-                                Row(
-                                    Modifier.fillMaxWidth().padding(start = SuiteSpacing.lg).clip(SuiteShapes.Inner)
-                                        .clickable {
-                                            selected = if (checked) {
-                                                pruneDeleteSelection(options, selected - option.key())
-                                            } else {
-                                                closeDeleteSelection(options, selected + option.key())
-                                            }
-                                            confirmed = false
-                                        }.padding(vertical = SuiteSpacing.xs),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Checkbox(checked = checked, onCheckedChange = null)
-                                    Column(Modifier.weight(1f)) {
-                                        Text(option.descriptor.name, style = MaterialTheme.typography.bodyMedium)
-                                        Text(
-                                            bridgeCategoryLabel(option.descriptor.category) +
-                                                if (option.descriptor.dependencies.isEmpty()) "" else
-                                                    " · 依赖 ${option.descriptor.dependencies.joinToString()}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
+    fun toggle(keys: Set<String>, remove: Boolean) {
+        selected = if (remove) pruneDeleteSelection(options, selected - keys) else closeDeleteSelection(options, selected + keys)
+    }
+
+    DataOperationDialog(
+        sessionKey = options,
+        title = "删除插件数据",
+        description = "先选择数据，再核对删除范围。删除不可撤销；存在依赖关系时会自动选择相关项目。插件包不会因此被卸载。",
+        selectedCount = selected.size,
+        summary = "已选择 ${selected.size} 项 · 尚未删除任何数据",
+        hasChanges = selected.isNotEmpty(),
+        confirmLabel = "永久删除",
+        confirmEnabled = confirmed,
+        onDismiss = activity::dismissMigrationBridgeDeleteForUi,
+        onConfirm = { activity.confirmMigrationBridgeDeleteForUi(selected.toList()) },
+        destructive = true,
+        selection = {
+            grouped.forEach { (ownerId, ownerOptions) ->
+                item("delete-$ownerId") {
+                    val ownerKeys = ownerOptions.mapTo(linkedSetOf()) { it.key() }
+                    val count = ownerKeys.count { it in selected }
+                    DataOperationGroup(
+                        title = ownerOptions.first().pluginTitle,
+                        summary = "已选 $count / ${ownerOptions.size} 项",
+                        expanded = ownerId in expanded,
+                        onExpand = { expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId },
+                        selectionState = when (count) { 0 -> ToggleableState.Off; ownerKeys.size -> ToggleableState.On; else -> ToggleableState.Indeterminate },
+                        onSelectGroup = { toggle(ownerKeys, count == ownerKeys.size) },
+                    ) {
+                        ownerOptions.forEach { option ->
+                            val checked = option.key() in selected
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Row(
+                                Modifier.fillMaxWidth().clickable { toggle(setOf(option.key()), checked) }.padding(SuiteSpacing.md),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null)
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                                    Text(option.descriptor.name, style = MaterialTheme.typography.bodyLarge)
+                                    Text(
+                                        "${bridgeCategoryLabel(option.descriptor.category)} · ${bridgeDatasetSize(option.descriptor.estimatedSize)}" +
+                                            if (option.descriptor.dependencies.isNotEmpty()) " · 含关联数据" else "",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = confirmed, onCheckedChange = { confirmed = it })
-                    Text("我确认永久删除所选数据", style = MaterialTheme.typography.bodySmall)
-                }
             }
         },
-        dismissButton = { TextButton(onClick = activity::dismissMigrationBridgeDeleteForUi) { Text("取消") } },
-        confirmButton = {
-            Button(
-                onClick = { activity.confirmMigrationBridgeDeleteForUi(selected.toList()) },
-                enabled = selected.isNotEmpty() && confirmed,
-            ) { Text("永久删除") }
+        confirmation = {
+            item("delete-review-warning") { Notice("将永久删除下面 ${selected.size} 项数据，无法撤销。请确认已导出需要保留的内容。", warning = true) }
+            grouped.forEach { (ownerId, ownerOptions) ->
+                val chosen = ownerOptions.filter { it.key() in selected }
+                if (chosen.isNotEmpty()) item("delete-review-$ownerId") {
+                    DataOperationReviewGroup(ownerOptions.first().pluginTitle, chosen.map { it.descriptor.name to "永久删除 · ${bridgeCategoryLabel(it.descriptor.category)}" })
+                }
+            }
+            item("delete-acknowledgement") {
+                Row(Modifier.fillMaxWidth().clickable { confirmed = !confirmed }, verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = confirmed, onCheckedChange = null)
+                    Text("我确认永久删除所选数据", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                }
+            }
         },
     )
 }
