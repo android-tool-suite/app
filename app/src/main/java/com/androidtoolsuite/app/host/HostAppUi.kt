@@ -1513,6 +1513,12 @@ private fun ManagedPluginCard(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (activationPending) {
+                TextButton(
+                    onClick = { activity.requestPluginRestartForUi(pluginId) },
+                    modifier = Modifier.padding(horizontal = SuiteSpacing.md),
+                ) { Text("重启以激活") }
+            }
             if (loadFailed) {
                 Column(Modifier.padding(start = SuiteSpacing.lg, end = SuiteSpacing.lg, bottom = SuiteSpacing.md)) {
                     ErrorState("插件无法加载", "请重新安装插件。", onRetry = activity::importPlugin)
@@ -2288,7 +2294,11 @@ private fun ComposeDialog(activity: MainActivity) {
     hostRevision(activity)
     val dialog = activity.composeDialogForUi() ?: return
     AlertDialog(
-        onDismissRequest = activity::dismissComposeDialogForUi,
+        onDismissRequest = { if (dialog.dismissible) activity.dismissComposeDialogForUi() },
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = dialog.dismissible,
+            dismissOnClickOutside = dialog.dismissible,
+        ),
         title = { Text(dialog.title) },
         text = { Text(dialog.message) },
         dismissButton = {
@@ -2297,7 +2307,11 @@ private fun ComposeDialog(activity: MainActivity) {
             }
         },
         confirmButton = {
-            TextButton(onClick = activity::confirmComposeDialogForUi) { Text(dialog.confirmLabel) }
+            if (dialog.dismissible) {
+                TextButton(onClick = activity::confirmComposeDialogForUi) { Text(dialog.confirmLabel) }
+            } else {
+                Button(onClick = activity::confirmComposeDialogForUi) { Text(dialog.confirmLabel) }
+            }
         },
     )
 }

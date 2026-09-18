@@ -54,6 +54,15 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".host.AppRestartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:process=":restart"
+            android:taskAffinity="${applicationId}.restart"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.updates"

@@ -1,6 +1,8 @@
 package com.androidtoolsuite.app.host;
 
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -27,6 +29,32 @@ public final class RepositoryRuntimeInstallInstrumentedTest {
     private static final String PLUGIN_ID = "test.repository_runtime";
 
     @Test
+    public void uninstalledRepositoryEntryStaysInstallableButIsNotAnUpdate() throws Exception {
+        UpdateCatalog repository = catalog("a".repeat(64), 1);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                try {
+                    java.lang.reflect.Field field = MainActivity.class.getDeclaredField("updateCatalog");
+                    field.setAccessible(true);
+                    Object previous = field.get(activity);
+                    try {
+                        assertTrue(PluginRuntime.get(activity).packages().find(PLUGIN_ID) == null);
+                        field.set(activity, repository);
+                        UpdateCatalog.PluginRelease release = repository.findPlugin(PLUGIN_ID);
+                        assertTrue(activity.isRepositoryPluginVersionSelectableForUi(release));
+                        assertEquals(1, activity.repositoryPluginsForUi().size());
+                        assertFalse(activity.isRepositoryPluginUpdateAvailableForUi(release));
+                        assertTrue(activity.availablePluginUpdatesForUi().isEmpty());
+                        assertEquals(0, activity.availableUpdateCountForUi());
+                    } finally {
+                        field.set(activity, previous);
+                    }
+                } catch (Exception error) { throw new AssertionError(error); }
+            });
+        }
+    }
+
+    @Test
     public void repositoryRuntimePackageIsVerifiedInstalledAndRecognizedAsCurrent() throws Exception {
         byte[] packageBytes = packageBytes();
         String digest = sha256(packageBytes);
@@ -47,6 +75,12 @@ public final class RepositoryRuntimeInstallInstrumentedTest {
                     PluginRuntime.get(activity).permissions().reconcile(runtime.packages().load());
                     assertTrue(runtime.packages().find(PLUGIN_ID).repositoryVerified);
                     assertTrue(activity.isRepositoryPluginVersionInstalledForUi(release));
+                    assertFalse(activity.isRepositoryPluginUpdateAvailableForUi(release));
+                    UpdateCatalog.PluginRelease newer = catalog("f".repeat(64), packageBytes.length, 2).findPlugin(PLUGIN_ID);
+                    assertTrue(activity.isRepositoryPluginUpdateAvailableForUi(newer));
+                    activity.setPluginUpdateCheckEnabledForUi(PLUGIN_ID, false);
+                    assertFalse(activity.isRepositoryPluginUpdateAvailableForUi(newer));
+                    activity.setPluginUpdateCheckEnabledForUi(PLUGIN_ID, true);
                 } catch (Exception error) {
                     throw new AssertionError(error);
                 } finally {
@@ -103,11 +137,15 @@ public final class RepositoryRuntimeInstallInstrumentedTest {
     }
 
     private static UpdateCatalog catalog(String digest, int size) throws Exception {
+        return catalog(digest, size, 1);
+    }
+
+    private static UpdateCatalog catalog(String digest, int size, int versionCode) throws Exception {
         return UpdateCatalog.parse("{\"schemaVersion\":1,\"plugins\":[{"
                 + "\"id\":\"" + PLUGIN_ID + "\",\"title\":\"Repository Runtime\","
                 + "\"description\":\"Repository fixture\",\"author\":\"test.publisher\","
                 + "\"repositoryUrl\":\"https://example.test/repository\",\"versionName\":\"1.0.0\","
-                + "\"versionCode\":1,\"minHostVersionCode\":24,\"minAndroidApi\":26,\"sdkVersion\":\"\","
+                + "\"versionCode\":" + versionCode + ",\"minHostVersionCode\":24,\"minAndroidApi\":26,\"sdkVersion\":\"\","
                 + "\"dependencies\":[],\"dataCompatibility\":{\"schemaVersion\":1,\"dataFormatVersion\":1,"
                 + "\"minReadableDataFormatVersion\":0,\"maxReadableDataFormatVersion\":1},"
                 + "\"releaseUrl\":\"https://example.test/release\",\"downloadUrl\":\"https://example.test/plugin.atsplugin\","

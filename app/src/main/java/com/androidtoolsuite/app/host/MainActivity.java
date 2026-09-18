@@ -214,6 +214,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         public final String message;
         public final String dismissLabel;
         public final String confirmLabel;
+        public final boolean dismissible;
         private final Runnable onConfirm;
 
         private ComposeDialogState(
@@ -221,13 +222,15 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 String message,
                 String dismissLabel,
                 String confirmLabel,
-                Runnable onConfirm
+                Runnable onConfirm,
+                boolean dismissible
         ) {
             this.title = title;
             this.message = message;
             this.dismissLabel = dismissLabel;
             this.confirmLabel = confirmLabel;
             this.onConfirm = onConfirm;
+            this.dismissible = dismissible;
         }
     }
 
@@ -1155,7 +1158,21 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             String confirmLabel,
             Runnable onConfirm
     ) {
-        composeDialog = new ComposeDialogState(title, message, dismissLabel, confirmLabel, onConfirm);
+        composeDialog = new ComposeDialogState(title, message, dismissLabel, confirmLabel, onConfirm, true);
+        invalidateComposeUi();
+    }
+
+    public void requestPluginRestartForUi(String pluginId) {
+        PluginPackageStore.InstalledPlugin installed = findRuntimePlugin(pluginId);
+        if (installed == null || !nativeProviderManager.isPendingRestart(installed)) return;
+        composeDialog = new ComposeDialogState(
+                "重启以启用 " + installed.manifest.plugin.title,
+                "插件已启用，但系统功能需要重启当前应用后才能使用。立即重启会关闭当前页面，已保存的数据会保留。",
+                "稍后重启",
+                "立即重启",
+                () -> AppRestartActivity.restart(this),
+                false
+        );
         invalidateComposeUi();
     }
 
@@ -1391,7 +1408,8 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                     : release.versionCode > runtime.manifest.plugin.versionCode);
             return available && isRepositoryPluginVersionSelectableForUi(release);
         }
-        return isRepositoryPluginVersionSelectableForUi(release);
+        // Repository availability is not an update: only installed packages participate.
+        return false;
     }
 
     public boolean isRepositoryPluginCompatibleForUi(UpdateCatalog.PluginRelease release) {
@@ -3577,7 +3595,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         PluginPackageStore.InstalledPlugin reloadedRuntime = findRuntimePlugin(pluginId);
         if (enabled && reloadedRuntime != null && !reloadedRuntime.manifest.providerEntries.isEmpty()
                 && nativeProviderManager.isPendingRestart(reloadedRuntime)) {
-            showToast("已启用插件，原生能力将在重启应用后激活");
+            requestPluginRestartForUi(pluginId);
             return;
         }
         if (enabled && !isPluginLoadedForUi(pluginId)) {
