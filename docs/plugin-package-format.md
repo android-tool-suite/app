@@ -2,7 +2,7 @@
 
 可信 Provider 与宿主同进程、同 UID，可以自行使用 Android/Binder 和宿主共享的 `rikka.shizuku.*` 客户端（当前 13.1.5，插件 compileOnly）。SDK 用于 Provider 注册与 Capability 契约，不要求将底层操作逐项实现为宿主桥；旧 `TrustedPlatformBridge` 仅作按需兼容。普通插件没有此原生装载路径，仍使用 Capability Router。
 
-`.atsbackup` 可携带已安装 format v3 原始包，包括未发布的本地项目。恢复复用本地安装校验，不自动授予权限或启用新插件；历史 API1 载荷仍拒绝执行。详见聚合工作区 `docs/data-management.md`。
+`.atsbackup` 可携带已安装 format v3 原始包，包括未发布的本地项目。恢复复用本地安装校验，不自动授予权限或启用新插件；历史 API1 载荷仍拒绝执行。详见聚合工作区 `docs/architecture/data-management.md`。
 
 插件包使用 `.atsplugin` 扩展名，本质是一个受限 ZIP。宿主当前同时读取两代格式：
 
@@ -220,7 +220,7 @@ WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号�
 - 降级目标无法读取当前格式时，宿主必须阻止安装；同一格式内可以提示后继续；
 - 代码 generation 回滚只恢复插件包，不代表回滚业务 Dataset。降级前应导出 `.atsbackup` Dataset 或插件领域标准格式。
 
-format v3 Dataset 的格式、恢复模式和依赖由 manifest 声明；历史归档的只读兼容范围由外层 [数据管理文档](../../docs/data-management.md) 约束。
+format v3 Dataset 的格式、恢复模式和依赖由 manifest 声明；历史归档的只读兼容范围由外层 [数据管理文档](../../docs/architecture/data-management.md) 约束。
 
 ## 10. 历史 format v1/v2
 
