@@ -19,11 +19,3 @@ adb -s <设备序列号> install -r -t .\app\artifacts\android-tool-suite-perfor
 - APK 输出：`app/artifacts/android-tool-suite-performance.apk`（聚合工作树视角）。
 
 手机安装只验证共存和安装状态，实际功能及加载体验仍由用户手动验收。
-
-## 本次安装记录
-
-已在手机 `ad93000d` 安装并启动 1.8.0-perf（24）。原正式版、Debug 和旧 benchmark 包的 APK 校验和、版本与更新时间均未变化。
-
-安装包及四个新版插件包已复制到手机 `/sdcard/Download/ATS-Performance-20260918-142113`。插件尚未导入此独立应用，也未迁移用户数据或代替用户授予手机 Shizuku 权限。
-
-构建和模拟器启动已验证；手机仅验证安装、启动及共存，功能与性能需要用户手动验收。

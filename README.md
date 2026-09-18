@@ -4,7 +4,7 @@ Android Tool Suite 的主体应用仓库。宿主负责插件安装、统一声�
 
 当前版本的新增特性、优化和问题修复见 [更新日志](CHANGELOG.md)。
 
-宿主卡顿的测量基线、候选热点和后续实施顺序见 [性能优化路线](docs/performance-optimization-roadmap.md)。性能结论以实体设备上的 Release／benchmark 构建为准，不以 Debug 帧率代替正式验收。
+需要独立安装非调试测试版时，参见 [性能版构建与安装说明](docs/performance-installation.md)。
 
 ## 使用方式
 
