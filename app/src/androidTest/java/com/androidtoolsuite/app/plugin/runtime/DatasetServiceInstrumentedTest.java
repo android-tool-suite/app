@@ -80,19 +80,28 @@ public final class DatasetServiceInstrumentedTest {
     public void datasetCommitSecretRoundTripAndFailedValidationPreserveGeneration() throws Exception {
         DatasetService service = runtime.datasets();
         String session = "instrumented";
+        String previousGeneration = service.revisionForCache(PLUGIN_ID);
+        assertTrue("Invalid initial generation: " + previousGeneration,
+                previousGeneration.matches("g[1-9][0-9]*"));
         byte[] first = "{\"formatVersion\":1,\"value\":\"first\"}".getBytes(StandardCharsets.UTF_8);
         JSONObject opened = service.openWrite(PLUGIN_ID, session, "settings");
         service.write(PLUGIN_ID, session, opened.getString("handle"), Base64.encodeToString(first, Base64.NO_WRAP));
         String generation = service.commit(PLUGIN_ID, session, opened.getString("handle")).getString("generation");
 
         assertArrayEquals(first, read(service, session, "settings"));
-        assertTrue(generation.matches("g[2-9][0-9]*|g[2-9]"));
+        assertTrue("Invalid committed generation: " + generation,
+                generation.matches("g[1-9][0-9]*"));
+        assertTrue("Commit must advance the generation: " + previousGeneration + " -> " + generation,
+                Long.parseLong(generation.substring(1)) > Long.parseLong(previousGeneration.substring(1)));
+        assertEquals(generation, service.revisionForCache(PLUGIN_ID));
 
         JSONObject invalid = service.openWrite(PLUGIN_ID, session, "settings");
         service.write(PLUGIN_ID, session, invalid.getString("handle"),
                 Base64.encodeToString("not-json".getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
         assertThrows(CapabilityFailure.class,
                 () -> service.commit(PLUGIN_ID, session, invalid.getString("handle")));
+        assertEquals("Rejected data must not activate a new generation",
+                generation, service.revisionForCache(PLUGIN_ID));
         assertArrayEquals(first, read(service, session, "settings"));
 
         MigrationToolPlugin migration = new MigrationToolPlugin(
