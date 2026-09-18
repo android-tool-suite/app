@@ -15,10 +15,8 @@ import com.androidtoolsuite.app.host.MainActivity;
 import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget;
 import com.androidtoolsuite.app.plugin.api.PluginDependency;
 import com.androidtoolsuite.app.plugin.runtime.HostTool;
-import com.androidtoolsuite.app.plugin.model.ImportedPluginDescriptor;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
-import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
 import com.androidtoolsuite.app.plugin.runtime.PluginPackageStore;
 import com.androidtoolsuite.app.plugin.runtime.CapabilityRouter;
 import com.androidtoolsuite.app.plugin.runtime.PluginPackageArchive;
@@ -48,9 +46,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 import rikka.shizuku.Shizuku;
 
@@ -288,7 +283,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
     }
 
     private JSONObject listPlugins(Context context) throws Exception {
-        ExternalPluginStore externalStore = new ExternalPluginStore(context);
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
         Set<String> activeIds = activePluginVersions(context).keySet();
         JSONArray plugins = new JSONArray();
@@ -305,23 +299,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                     builtInStore.isEnabled(plugin.id()) && activeIds.contains(plugin.id())
             ));
             plugin.onDestroy();
-        }
-        for (ImportedPluginDescriptor descriptor : externalStore.load()) {
-            JSONObject plugin = new JSONObject();
-            plugin.put("id", descriptor.id);
-            plugin.put("title", descriptor.title);
-            plugin.put("version", descriptor.version);
-            plugin.put("builtIn", false);
-            plugin.put("required", false);
-            plugin.put("enabled", externalStore.isEnabled(descriptor.id));
-            plugin.put("active", activeIds.contains(descriptor.id));
-            plugin.put("entryClass", descriptor.entryClass);
-            plugin.put("hasCode", !descriptor.codePath.isEmpty());
-            plugin.put("dependencies", new JSONArray(descriptor.dependencies));
-            JSONArray widgets = new JSONArray();
-            descriptor.widgets.forEach(widget -> widgets.put(descriptor.id + ":" + widget.id));
-            plugin.put("widgets", widgets);
-            plugins.put(plugin);
         }
         PluginRuntime runtime = PluginRuntime.get(context);
         for (PluginPackageStore.InstalledPlugin installed : runtime.packages().load()) {
@@ -379,7 +356,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                 PluginPackageStore.InstalledPlugin installed = runtime.packages().find(session.pluginId);
                 if (installed == null) throw new IOException("插件运行时 install generation is unreadable");
                 runtime.permissions().reconcile(installed.manifest);
-                if (isReservedPluginId(session.pluginId) || findExternal(new ExternalPluginStore(context), session.pluginId) != null) {
+                if (isReservedPluginId(session.pluginId)) {
                     throw new IllegalArgumentException("插件 ID 与现有插件冲突：" + session.pluginId);
                 }
                 if (session.newInstall) runtime.packages().setEnabled(session.pluginId, false);
@@ -410,36 +387,28 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
     }
 
     private JSONObject deletePlugin(Context context, String pluginId) throws Exception {
-        ExternalPluginStore store = new ExternalPluginStore(context);
-        ImportedPluginDescriptor descriptor = findExternal(store, pluginId);
         PluginRuntime runtime = PluginRuntime.get(context);
         PluginPackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
-        if (descriptor == null && v2 == null) {
+        if (v2 == null) {
             throw new IllegalArgumentException("外部插件不存在：" + pluginId);
         }
         List<String> dependents = enabledDependents(context, pluginId);
         if (!dependents.isEmpty()) {
             throw new IllegalStateException("仍被已启用插件依赖：" + join(dependents));
         }
-        if (v2 != null) {
-            runtime.scheduler().cancelPlugin(pluginId);
-            runtime.nativeProviders().deactivate(pluginId);
-            runtime.packages().delete(pluginId);
-            runtime.permissions().removePlugin(pluginId);
-            runtime.workerProviders().sync(runtime.packages().load());
-        } else {
-            store.delete(pluginId);
-        }
+        runtime.scheduler().cancelPlugin(pluginId);
+        runtime.nativeProviders().deactivate(pluginId);
+        runtime.packages().delete(pluginId);
+        runtime.permissions().removePlugin(pluginId);
+        runtime.workerProviders().sync(runtime.packages().load());
         notifyStateChanged(context);
         return changed("plugin", pluginId, "deleted", true);
     }
 
     private JSONObject exportPlugin(Context context, String pluginId, String relativePath) throws Exception {
-        ExternalPluginStore store = new ExternalPluginStore(context);
-        ImportedPluginDescriptor descriptor = findExternal(store, pluginId);
         PluginRuntime runtime = PluginRuntime.get(context);
         PluginPackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
-        if (descriptor == null && v2 == null) {
+        if (v2 == null) {
             throw new IllegalArgumentException("外部插件不存在：" + pluginId);
         }
         File output = resolveOutboxFile(context, relativePath);
@@ -447,13 +416,9 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             throw new IOException("无法创建导出目录");
         }
-        if (v2 != null) {
-            try (FileOutputStream stream = new FileOutputStream(output)) {
-                stream.write(runtime.packages().exportPackage(pluginId));
-                stream.getFD().sync();
-            }
-        } else {
-            writePluginPackage(output, descriptor);
+        try (FileOutputStream stream = new FileOutputStream(output)) {
+            stream.write(runtime.packages().exportPackage(pluginId));
+            stream.getFD().sync();
         }
 
         JSONObject result = new JSONObject();
@@ -466,7 +431,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
     private JSONObject setPluginEnabled(Context context, String pluginId, boolean enabled) throws Exception {
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
-        ExternalPluginStore externalStore = new ExternalPluginStore(context);
 
         HostTool required = findPlugin(ToolRegistry.createRequiredBuiltInPlugins(), pluginId);
         if (required != null) {
@@ -478,16 +442,15 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         }
 
         HostTool optional = findPlugin(ToolRegistry.createOptionalBuiltInPlugins(), pluginId);
-        ImportedPluginDescriptor external = findExternal(externalStore, pluginId);
         PluginRuntime runtime = PluginRuntime.get(context);
         PluginPackageStore.InstalledPlugin v2 = runtime.packages().find(pluginId);
-        if (optional == null && external == null && v2 == null) {
+        if (optional == null && v2 == null) {
             throw new IllegalArgumentException("插件不存在：" + pluginId);
         }
 
         Set<String> dependencies = optional != null
                 ? optional.dependencies()
-                : external == null ? Collections.emptySet() : external.dependencies;
+                : Collections.emptySet();
         if (enabled) {
             Map<String, String> activeVersions = activePluginVersions(context);
             List<String> missing = missingDependencies(dependencies, activeVersions);
@@ -505,8 +468,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         if (optional != null) {
             builtInStore.setEnabled(pluginId, enabled);
             optional.onDestroy();
-        } else if (external != null) {
-            externalStore.setEnabled(pluginId, enabled);
         } else {
             runtime.packages().setEnabled(pluginId, enabled);
             runtime.scheduler().syncPlugin(pluginId);
@@ -617,11 +578,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
     }
 
     private JSONObject resetState(Context context) throws Exception {
-        ExternalPluginStore externalStore = new ExternalPluginStore(context);
-        List<ImportedPluginDescriptor> imported = new ArrayList<>(externalStore.load());
-        for (ImportedPluginDescriptor descriptor : imported) {
-            externalStore.delete(descriptor.id);
-        }
         PluginRuntime runtime = PluginRuntime.get(context);
         int removedV2 = 0;
         for (PluginPackageStore.InstalledPlugin installed : new ArrayList<>(runtime.packages().load())) {
@@ -643,7 +599,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         notifyStateChanged(context);
 
         JSONObject result = new JSONObject();
-        result.put("removedExternalPlugins", imported.size() + removedV2);
+        result.put("removedExternalPlugins", removedV2);
         result.put("optionalBuiltInsEnabled", false);
         result.put("hiddenWidgets", new JSONArray());
         result.put("note", "完整清空应用数据请使用 adb shell pm clear " + context.getPackageName());
@@ -652,7 +608,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
     private Map<String, String> activePluginVersions(Context context) {
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
-        ExternalPluginStore externalStore = new ExternalPluginStore(context);
         LinkedHashMap<String, String> active = new LinkedHashMap<>();
         for (HostTool plugin : ToolRegistry.createRequiredBuiltInPlugins()) {
             if (dependenciesSatisfied(plugin.dependencies(), active)) {
@@ -703,18 +658,12 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
     private List<String> enabledDependents(Context context, String pluginId) {
         BuiltInPluginStateStore builtInStore = new BuiltInPluginStateStore(context);
-        ExternalPluginStore externalStore = new ExternalPluginStore(context);
         List<String> dependents = new ArrayList<>();
         for (HostTool plugin : ToolRegistry.createOptionalBuiltInPlugins()) {
             if (builtInStore.isEnabled(plugin.id()) && dependsOn(plugin.dependencies(), pluginId)) {
                 dependents.add(plugin.id());
             }
             plugin.onDestroy();
-        }
-        for (ImportedPluginDescriptor descriptor : externalStore.load()) {
-            if (externalStore.isEnabled(descriptor.id) && dependsOn(descriptor.dependencies, pluginId)) {
-                dependents.add(descriptor.id);
-            }
         }
         for (PluginPackageStore.InstalledPlugin installed : PluginRuntime.get(context).packages().load()) {
             if (!installed.enabled) continue;
@@ -756,41 +705,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         return json;
     }
 
-    private PluginPackage readPluginPackage(File file) throws Exception {
-        byte[] bytes;
-        try (FileInputStream input = new FileInputStream(file)) {
-            bytes = readAll(input, MAX_PLUGIN_PACKAGE_BYTES);
-        }
-        if (bytes.length < 2 || bytes[0] != 'P' || bytes[1] != 'K') {
-            throw new IOException("只支持包含 manifest.json 和 plugin.apk 的完整 .atsplugin 插件包");
-        }
-        String manifest = null;
-        byte[] code = null;
-        try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                if (!entry.isDirectory() && "manifest.json".equals(entry.getName())) {
-                    manifest = new String(readAll(zip, MAX_PLUGIN_PACKAGE_BYTES), StandardCharsets.UTF_8);
-                } else if (!entry.isDirectory()
-                        && ("plugin.apk".equals(entry.getName()) || entry.getName().endsWith("/plugin.apk"))) {
-                    code = readAll(zip, MAX_PLUGIN_PACKAGE_BYTES);
-                }
-                zip.closeEntry();
-            }
-        }
-        if (manifest == null) {
-            throw new IOException("插件包缺少 manifest.json");
-        }
-        ImportedPluginDescriptor descriptor = ImportedPluginDescriptor.fromJson(manifest);
-        if (descriptor.entryClass.isEmpty()) {
-            throw new IOException("插件包清单缺少 plugin.entryClass");
-        }
-        if (code == null || code.length == 0) {
-            throw new IOException("插件包缺少 plugin.apk");
-        }
-        return new PluginPackage(descriptor, code);
-    }
-
     private byte[] readAll(InputStream input, long limit) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
@@ -804,29 +718,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             output.write(buffer, 0, read);
         }
         return output.toByteArray();
-    }
-
-    private void writePluginPackage(File output, ImportedPluginDescriptor descriptor) throws Exception {
-        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(output))) {
-            zip.putNextEntry(new ZipEntry("manifest.json"));
-            zip.write(descriptor.toJson().getBytes(StandardCharsets.UTF_8));
-            zip.closeEntry();
-
-            if (!descriptor.codePath.isEmpty()) {
-                File code = new File(descriptor.codePath);
-                if (code.isFile()) {
-                    zip.putNextEntry(new ZipEntry("plugin.apk"));
-                    try (FileInputStream input = new FileInputStream(code)) {
-                        byte[] buffer = new byte[8192];
-                        int read;
-                        while ((read = input.read(buffer)) != -1) {
-                            zip.write(buffer, 0, read);
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
     }
 
     private File debugInbox(Context context) throws IOException {
@@ -870,15 +761,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
     private Set<String> hiddenWidgets(Context context) {
         return new LinkedHashSet<>(context.getSharedPreferences("main_ui", Context.MODE_PRIVATE)
                 .getStringSet("hidden_widgets", Collections.emptySet()));
-    }
-
-    private ImportedPluginDescriptor findExternal(ExternalPluginStore store, String id) {
-        for (ImportedPluginDescriptor descriptor : store.load()) {
-            if (descriptor.id.equals(id)) {
-                return descriptor;
-            }
-        }
-        return null;
     }
 
     private HostTool findPlugin(List<HostTool> plugins, String id) {
@@ -990,13 +872,4 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         return android.text.TextUtils.join(", ", values);
     }
 
-    private static final class PluginPackage {
-        final ImportedPluginDescriptor descriptor;
-        final byte[] codeBytes;
-
-        PluginPackage(ImportedPluginDescriptor descriptor, byte[] codeBytes) {
-            this.descriptor = descriptor;
-            this.codeBytes = codeBytes;
-        }
-    }
 }

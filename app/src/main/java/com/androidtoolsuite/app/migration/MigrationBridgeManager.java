@@ -164,7 +164,7 @@ public final class MigrationBridgeManager {
         return Collections.unmodifiableList(new ArrayList<>(options.values()));
     }
 
-    /** Matches archive records to installed legacy bridges without requiring data to exist yet. */
+    /** Matches archive records to installed Dataset adapters without requiring data to exist yet. */
     public static List<DatasetOption> matchForImport(
             Activity activity,
             List<HostTool> plugins,
@@ -713,7 +713,7 @@ public final class MigrationBridgeManager {
     }
 
     /**
-     * Authenticates and stages every selected Dataset before mutating legacy storage, then restores
+     * Authenticates and stages every selected Dataset before mutating runtime storage, then restores
      * them in dependency order. Staged plaintext remains inside the app-private cache directory and
      * is deleted on both success and failure.
      */

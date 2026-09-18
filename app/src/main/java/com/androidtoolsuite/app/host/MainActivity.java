@@ -27,7 +27,6 @@ import androidx.core.content.FileProvider;
 import androidx.core.splashscreen.SplashScreen;
 
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
-import com.androidtoolsuite.app.plugin.store.ExternalPluginStore;
 import com.androidtoolsuite.app.migration.BackupArchiveV2;
 import com.androidtoolsuite.app.migration.BackupPackageProbe;
 import com.androidtoolsuite.app.migration.DataPackageArchive;
@@ -100,9 +99,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 import rikka.shizuku.Shizuku;
 
@@ -113,8 +109,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     private static final int REQUEST_SHIZUKU = 3001;
     private static final int REQUEST_IMPORT_PLUGIN = 4001;
     private static final int REQUEST_EXPORT_PLUGIN = 4002;
-    private static final int REQUEST_IMPORT_MIGRATION = 4003;
-    private static final int REQUEST_EXPORT_MIGRATION = 4004;
     private static final int REQUEST_EXPORT_MIGRATION_BRIDGE = 4005;
     private static final int REQUEST_IMPORT_MIGRATION_BRIDGE = 4006;
     private static final int REQUEST_V2_FILE_IMPORT = 4007;
@@ -145,11 +139,9 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     private static final String PREF_UPDATE_CHECK_EXCLUDED = "update_check_excluded_plugins";
 
     private final List<HostTool> plugins = new ArrayList<>();
-    private final Map<String, ImportedPluginDescriptor> importedDescriptorCache = new LinkedHashMap<>();
     private final Map<String, PluginPackageStore.InstalledPlugin> runtimeInstalledCache = new LinkedHashMap<>();
     private final Set<String> optionalBuiltInPluginIds = new HashSet<>();
     private HostTool selectedPlugin;
-    private ExternalPluginStore externalPluginStore;
     private PluginRuntime pluginRuntime;
     private PluginPackageStore pluginPackageStore;
     private StorageService storageService;
@@ -281,7 +273,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                     .withEndAction(provider::remove)
                     .start();
         });
-        externalPluginStore = new ExternalPluginStore(this);
         pluginRuntime = PluginRuntime.get(this);
         pluginPackageStore = pluginRuntime.packages();
         storageService = pluginRuntime.storage();
@@ -632,7 +623,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     private void loadPlugins() {
         pluginRuntime.widgetSnapshots().reconcile(pluginPackageStore.load());
         plugins.clear();
-        importedDescriptorCache.clear();
         runtimeInstalledCache.clear();
         optionalBuiltInPluginIds.clear();
         pluginRuntime.workerProviders().sync(pluginPackageStore.load());
@@ -679,7 +669,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 RuntimePluginManifest manifest = installed.manifest;
                 String pluginId = manifest.plugin.id;
                 if (!installed.enabled
-                        || importedDescriptorCache.containsKey(pluginId)
                         || activeVersions.containsKey(pluginId)) {
                     pendingRuntimePlugins.remove(index);
                 } else if (!manifest.providerEntries.isEmpty()
@@ -2202,24 +2191,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         startActivityForResult(intent, REQUEST_EXPORT_PLUGIN);
     }
 
-    public void importMigration() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/octet-stream");
-        startActivityForResult(intent, REQUEST_IMPORT_MIGRATION);
-    }
-
-    public void exportMigration() {
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/octet-stream");
-        intent.putExtra(
-                Intent.EXTRA_TITLE,
-                "android-tool-suite-" + (BuildConfig.DEBUG ? "debug" : "release") + ".atsbackup"
-        );
-        startActivityForResult(intent, REQUEST_EXPORT_MIGRATION);
-    }
-
     public void importMigrationBridgeForUi() {
         importMigrationBridgeForOwner(null);
     }
@@ -2734,10 +2705,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             handleImportResult(resultCode, data);
         } else if (requestCode == REQUEST_EXPORT_PLUGIN) {
             handleExportResult(resultCode, data);
-        } else if (requestCode == REQUEST_IMPORT_MIGRATION) {
-            handleMigrationImportResult(resultCode, data);
-        } else if (requestCode == REQUEST_EXPORT_MIGRATION) {
-            handleMigrationExportResult(resultCode, data);
         } else if (requestCode == REQUEST_EXPORT_MIGRATION_BRIDGE) {
             handleMigrationBridgeExportResult(resultCode, data);
         } else if (requestCode == REQUEST_IMPORT_MIGRATION_BRIDGE) {
@@ -3111,60 +3078,20 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         }
     }
 
-    private void handleMigrationExportResult(int resultCode, Intent data) {
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            return;
-        }
-        try (OutputStream output = getContentResolver().openOutputStream(data.getData())) {
-            if (output == null) {
-                throw new IOException("无法写入迁移包");
-            }
-            HostMigrationArchive.write(output, createMigrationSnapshot());
-            showToast("迁移包已导出，不包含账号凭据和插件业务数据");
-        } catch (IOException | JSONException error) {
-            showToast("导出迁移包失败：" + error.getMessage());
-        }
-    }
-
-    private void handleMigrationImportResult(int resultCode, Intent data) {
-        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            return;
-        }
-        try {
-            HostMigrationArchive.Snapshot snapshot = HostMigrationArchive.read(
-                    readBytes(data.getData(), HostMigrationArchive.MAX_ARCHIVE_BYTES)
-            );
-            List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
-            String message = "来源：" + snapshot.sourcePackage + " " + snapshot.sourceVersionName
-                    + "\n插件：" + prepared.size() + " 个"
-                    + "\n\n将迁移应用布局、仓库选择、插件包与启用状态。"
-                    + "目标端独有插件会保留；账号凭据和插件业务数据不会迁移。";
-            showComposeDialog(
-                    "导入 Android Tool Suite 迁移包？",
-                    message,
-                    "取消",
-                    "导入",
-                    () -> applyMigration(snapshot, prepared)
-            );
-        } catch (IOException | JSONException error) {
-            showToast("读取迁移包失败：" + error.getMessage());
-        }
-    }
-
     private void handleLegacyMigrationPackageFromDataPicker(Uri source) {
         try {
             HostMigrationArchive.Snapshot snapshot = HostMigrationArchive.read(
                     readBytes(source, HostMigrationArchive.MAX_ARCHIVE_BYTES)
             );
-            List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
+            legacyBuiltInState(snapshot);
             runOnUiThread(() -> showComposeDialog(
                     "导入旧版 Android Tool Suite 迁移包？",
                     "来源：" + snapshot.sourcePackage + " " + snapshot.sourceVersionName
-                            + "\n插件：" + prepared.size() + " 个"
-                            + "\n\n这是旧版仅宿主迁移包；导入后可再选择 v2/v3 数据包恢复插件数据。",
+                            + "\n\n仅恢复应用设置；包内的 " + snapshot.plugins.size() + " 个旧版插件不会安装或启用。"
+                            + "插件业务数据请从已有的数据备份恢复。",
                     "取消",
                     "导入",
-                    () -> applyMigration(snapshot, prepared)
+                    () -> applyMigration(snapshot)
             ));
         } catch (IOException | JSONException error) {
             showToast("读取旧版迁移包失败：" + safeMessage(error));
@@ -3176,8 +3103,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             HostMigrationArchive.Snapshot snapshot = HostMigrationArchive.read(
                     readBytes(input, HostMigrationArchive.MAX_ARCHIVE_BYTES)
             );
-            List<PreparedMigrationPlugin> prepared = prepareMigration(snapshot);
-            applyMigrationOrThrow(snapshot, prepared);
+            applyMigrationOrThrow(snapshot);
         } catch (JSONException error) {
             throw new IOException("应用迁移快照无效", error);
         }
@@ -3186,7 +3112,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     private final class HostRestoreCheckpoint implements AutoCloseable {
         private final JSONObject settings;
         private final Set<String> builtIns = new LinkedHashSet<>(builtInPluginStateStore.enabledIds());
-        private final Set<String> external = new LinkedHashSet<>(externalPluginStore.enabledIds());
         private final Map<String, Boolean> runtimeEnabled = new LinkedHashMap<>();
         private boolean committed;
 
@@ -3202,9 +3127,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             if (committed) return;
             if (!applyHostSettings(settings) || !builtInPluginStateStore.replaceEnabledIds(builtIns)) {
                 throw new IOException("恢复失败且宿主设置回滚未完成");
-            }
-            for (ImportedPluginDescriptor plugin : externalPluginStore.load()) {
-                externalPluginStore.setEnabled(plugin.id, external.contains(plugin.id));
             }
             for (Map.Entry<String, Boolean> entry : runtimeEnabled.entrySet()) {
                 pluginPackageStore.setEnabled(entry.getKey(), entry.getValue());
@@ -3273,8 +3195,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
 
             JSONObject previousHost = captureHostSettings();
             Set<String> previousBuiltIns = builtInPluginStateStore.enabledIds();
-            Set<String> previousExternalEnabled = externalPluginStore.enabledIds();
-            validateHostDataDependencies(incomingPluginState, pluginStateMode, Collections.emptyMap());
+            validateHostDataDependencies(incomingPluginState, pluginStateMode);
 
             JSONObject finalIncomingSettings = incomingSettings;
             DatasetRestoreMode finalSettingsMode = settingsMode;
@@ -3292,12 +3213,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                     public void rollback() throws IOException {
                         if (!builtInPluginStateStore.replaceEnabledIds(previousBuiltIns)) {
                             throw new IOException("无法恢复内置插件状态");
-                        }
-                        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-                            externalPluginStore.setEnabled(
-                                    descriptor.id,
-                                    previousExternalEnabled.contains(descriptor.id)
-                            );
                         }
                     }
                 });
@@ -3403,14 +3318,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         if (!builtInPluginStateStore.replaceEnabledIds(resultingBuiltIns)) {
             throw new IOException("无法保存内置插件状态");
         }
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            if (mode == DatasetRestoreMode.REPLACE || incomingExternal.containsKey(descriptor.id)) {
-                externalPluginStore.setEnabled(
-                        descriptor.id,
-                        incomingExternal.getOrDefault(descriptor.id, false)
-                );
-            }
-        }
         for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             String pluginId = installed.manifest.plugin.id;
             if (mode == DatasetRestoreMode.REPLACE || incomingExternal.containsKey(pluginId)) {
@@ -3430,11 +3337,10 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
 
     private void validateHostDataDependencies(
             JSONObject pluginState,
-            DatasetRestoreMode mode,
-            Map<String, PluginImport> packageImports
+            DatasetRestoreMode mode
     ) throws IOException {
         Set<String> enabledBuiltIns = new LinkedHashSet<>(builtInPluginStateStore.enabledIds());
-        Set<String> enabledExternal = new LinkedHashSet<>(externalPluginStore.enabledIds());
+        Set<String> enabledExternal = new LinkedHashSet<>();
         for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             if (installed.enabled) enabledExternal.add(installed.manifest.plugin.id);
         }
@@ -3454,14 +3360,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             applyEnabledState(enabledExternal, incomingExternal);
         }
 
-        Map<String, ImportedPluginDescriptor> resultingExternal = new LinkedHashMap<>();
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            resultingExternal.put(descriptor.id, descriptor);
-        }
-        for (PluginImport pluginImport : packageImports.values()) {
-            resultingExternal.put(pluginImport.descriptor.id, pluginImport.descriptor);
-        }
-        Set<String> resultingExternalIds = new LinkedHashSet<>(resultingExternal.keySet());
+        Set<String> resultingExternalIds = new LinkedHashSet<>();
         for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             resultingExternalIds.add(installed.manifest.plugin.id);
         }
@@ -3476,11 +3375,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 }
             }
             for (String pluginId : enabledExternal) {
-                ImportedPluginDescriptor descriptor = resultingExternal.get(pluginId);
-                if (descriptor != null) {
-                    activeVersions.put(pluginId, descriptor.version);
-                    continue;
-                }
                 PluginPackageStore.InstalledPlugin installed = pluginPackageStore.find(pluginId);
                 if (installed != null) activeVersions.put(pluginId, installed.manifest.plugin.version);
             }
@@ -3488,18 +3382,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 if (enabledBuiltIns.contains(plugin.id())
                         && !areDependenciesSatisfied(plugin.dependencies(), activeVersions)) {
                     throw new IOException(plugin.title() + " 的依赖未满足");
-                }
-            }
-            for (String pluginId : enabledExternal) {
-                ImportedPluginDescriptor descriptor = resultingExternal.get(pluginId);
-                if (descriptor == null) continue;
-                for (String rawDependency : descriptor.dependencies) {
-                    PluginDependency dependency = PluginDependency.parse(rawDependency);
-                    if (!dependency.isSatisfied(activeVersions)) {
-                        throw new IOException(
-                                descriptor.title + " 缺少依赖 " + dependency.label()
-                        );
-                    }
                 }
             }
             for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
@@ -3599,11 +3481,8 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             return;
         }
         if (enabled && !isPluginLoadedForUi(pluginId)) {
-            if (runtimePlugin != null) {
-                pluginPackageStore.setEnabled(pluginId, false);
-                schedulerService.syncPluginAsync(pluginId);
-            }
-            else externalPluginStore.setEnabled(pluginId, false);
+            pluginPackageStore.setEnabled(pluginId, false);
+            schedulerService.syncPluginAsync(pluginId);
             reloadPlugins(null);
             showToast("插件无法激活，已保持停用");
             return;
@@ -3759,10 +3638,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         return builder.toString();
     }
 
-    private ImportedPluginDescriptor findImportedDescriptor(String pluginId) {
-        return pluginId == null ? null : importedDescriptorCache.get(pluginId);
-    }
-
     private PluginPackageStore.InstalledPlugin findRuntimePlugin(String pluginId) {
         return pluginId == null ? null : runtimeInstalledCache.get(pluginId);
     }
@@ -3871,11 +3746,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             builtIns.put(new JSONObject().put("id", id).put("enabled", enabledBuiltIns.contains(id)));
         }
         JSONArray external = new JSONArray();
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            external.put(new JSONObject()
-                    .put("id", descriptor.id)
-                    .put("enabled", externalPluginStore.isEnabled(descriptor.id)));
-        }
         for (PluginPackageStore.InstalledPlugin installed : pluginPackageStore.load()) {
             external.put(new JSONObject()
                     .put("id", installed.manifest.plugin.id)
@@ -3912,94 +3782,25 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         }
     }
 
-    private HostMigrationArchive.Snapshot createMigrationSnapshot()
-            throws IOException, JSONException {
-        List<HostMigrationArchive.PluginEntry> entries = new ArrayList<>();
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            writePluginPackage(output, descriptor);
-            entries.add(new HostMigrationArchive.PluginEntry(
-                    descriptor.id,
-                    externalPluginStore.isEnabled(descriptor.id),
-                    output.toByteArray()
-            ));
-        }
-        return new HostMigrationArchive.Snapshot(
-                getPackageName(),
-                BuildConfig.VERSION_NAME,
-                BuildConfig.VERSION_CODE,
-                captureHostSettings(),
-                builtInPluginStateStore.enabledIds(),
-                entries
-        );
-    }
-
-    private List<PreparedMigrationPlugin> prepareMigration(
-            HostMigrationArchive.Snapshot snapshot
-    ) throws IOException, JSONException {
-        Set<String> knownBuiltInIds = builtInPluginIds();
-        if (!knownBuiltInIds.containsAll(snapshot.builtInEnabledIds)) {
+    private Set<String> legacyBuiltInState(HostMigrationArchive.Snapshot snapshot) throws IOException {
+        Set<String> enabled = new LinkedHashSet<>(snapshot.builtInEnabledIds);
+        // The former built-in Shizuku tool is now a separately consented trusted provider.
+        enabled.remove("shizuku_auth");
+        if (!builtInPluginIds().containsAll(enabled)) {
             throw new IOException("迁移包包含未知内置插件状态");
         }
-        return Collections.emptyList();
-    }
-
-    private void validateMigrationDependencies(
-            Set<String> builtInEnabledIds,
-            List<PreparedMigrationPlugin> prepared
-    ) throws IOException {
-        Map<String, ImportedPluginDescriptor> resulting = new LinkedHashMap<>();
-        Set<String> enabled = new LinkedHashSet<>(externalPluginStore.enabledIds());
-        for (ImportedPluginDescriptor descriptor : externalPluginStore.load()) {
-            resulting.put(descriptor.id, descriptor);
-        }
-        for (PreparedMigrationPlugin item : prepared) {
-            resulting.put(item.pluginImport.descriptor.id, item.pluginImport.descriptor);
-            if (item.enabled) {
-                enabled.add(item.pluginImport.descriptor.id);
-            } else {
-                enabled.remove(item.pluginImport.descriptor.id);
-            }
-        }
-
-        Map<String, String> activeVersions = new LinkedHashMap<>();
-        for (HostTool plugin : ToolRegistry.createBuiltInPlugins()) {
-            if (builtInEnabledIds.contains(plugin.id())) {
-                activeVersions.put(plugin.id(), plugin.version());
-            }
-        }
-        for (String id : enabled) {
-            ImportedPluginDescriptor descriptor = resulting.get(id);
-            if (descriptor != null) {
-                activeVersions.put(id, descriptor.version);
-            }
-        }
-        for (String id : enabled) {
-            ImportedPluginDescriptor descriptor = resulting.get(id);
-            if (descriptor == null) {
-                continue;
-            }
-            for (String rawDependency : descriptor.dependencies) {
-                PluginDependency dependency = PluginDependency.parse(rawDependency);
-                if (!dependency.isSatisfied(activeVersions)) {
-                    throw new IOException(
-                            descriptor.title + " 缺少依赖 " + dependency.label()
-                    );
-                }
-            }
-        }
+        return enabled;
     }
 
     private void applyMigration(
-            HostMigrationArchive.Snapshot snapshot,
-            List<PreparedMigrationPlugin> prepared
+            HostMigrationArchive.Snapshot snapshot
     ) {
         try {
-            applyMigrationOrThrow(snapshot, prepared);
+            applyMigrationOrThrow(snapshot);
             reloadPlugins(null);
             updateCatalog = null;
             checkForUpdates(true, false, false);
-            showToast("迁移完成：已导入 " + prepared.size() + " 个插件");
+            showToast("已恢复旧版应用设置；旧版插件未安装或启用");
         } catch (IOException | JSONException error) {
             reloadPlugins(null);
             String rollbackStatus = error.getSuppressed().length == 0
@@ -4010,53 +3811,18 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     }
 
     private void applyMigrationOrThrow(
-            HostMigrationArchive.Snapshot snapshot,
-            List<PreparedMigrationPlugin> prepared
+            HostMigrationArchive.Snapshot snapshot
     ) throws IOException, JSONException {
-        List<ExternalPluginStore.PluginState> previousPlugins = new ArrayList<>();
+        Set<String> enabledBuiltIns = legacyBuiltInState(snapshot);
         JSONObject previousHost = captureHostSettings();
         Set<String> previousBuiltIns = builtInPluginStateStore.enabledIds();
-        for (PreparedMigrationPlugin item : prepared) {
-            previousPlugins.add(externalPluginStore.snapshot(item.pluginImport.descriptor.id));
-        }
-
-        Set<String> migratedIds = builtInPluginIds();
-        for (PreparedMigrationPlugin item : prepared) {
-            migratedIds.add(item.pluginImport.descriptor.id);
-        }
-        JSONObject mergedHost = mergeHostSettings(previousHost, snapshot.host, migratedIds);
+        JSONObject mergedHost = mergeHostSettings(previousHost, snapshot.host, builtInPluginIds());
 
         List<MigrationTransaction.Operation> operations = new ArrayList<>();
-        for (int index = 0; index < prepared.size(); index++) {
-            PreparedMigrationPlugin item = prepared.get(index);
-            ExternalPluginStore.PluginState previous = previousPlugins.get(index);
-            operations.add(new MigrationTransaction.Operation() {
-                @Override
-                public void apply() throws IOException, JSONException {
-                    ImportedPluginDescriptor descriptor = item.pluginImport.descriptor;
-                    externalPluginStore.installPlugin(
-                            descriptor,
-                            item.pluginImport.codeBytes,
-                            "",
-                            "",
-                            "",
-                            false,
-                            0
-                    );
-                    externalPluginStore.confirmInstall(descriptor.id);
-                    externalPluginStore.setEnabled(descriptor.id, item.enabled);
-                }
-
-                @Override
-                public void rollback() throws IOException, JSONException {
-                    externalPluginStore.restore(previous);
-                }
-            });
-        }
         operations.add(new MigrationTransaction.Operation() {
             @Override
             public void apply() throws IOException {
-                if (!builtInPluginStateStore.replaceEnabledIds(snapshot.builtInEnabledIds)) {
+                if (!builtInPluginStateStore.replaceEnabledIds(enabledBuiltIns)) {
                     throw new IOException("无法保存内置插件状态");
                 }
             }
@@ -4277,25 +4043,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         return values;
     }
 
-    private PluginImport readPluginPackage(Uri uri) throws IOException, JSONException {
-        return readPluginPackage(readBytes(uri));
-    }
-
-    private PluginImport readPluginPackage(byte[] bytes) throws IOException, JSONException {
-        if (!isZip(bytes)) {
-            throw new IOException("只支持包含 manifest.json 和 plugin.apk 的完整 .atsplugin 插件包");
-        }
-        ZipPluginPackage zipPackage = readPackageFromZip(bytes);
-        ImportedPluginDescriptor descriptor = ImportedPluginDescriptor.fromJson(zipPackage.manifestJson);
-        if (descriptor.entryClass.isEmpty()) {
-            throw new IOException("插件包清单缺少 plugin.entryClass");
-        }
-        if (zipPackage.codeBytes == null || zipPackage.codeBytes.length == 0) {
-            throw new IOException("插件包缺少 plugin.apk");
-        }
-        return new PluginImport(descriptor, zipPackage.codeBytes);
-    }
-
     private byte[] readBytes(Uri uri) throws IOException {
         return readBytes(uri, Integer.MAX_VALUE);
     }
@@ -4330,67 +4077,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         }
     }
 
-    private boolean isZip(byte[] bytes) {
-        return bytes.length >= 2 && bytes[0] == 'P' && bytes[1] == 'K';
-    }
-
-    private ZipPluginPackage readPackageFromZip(byte[] bytes) throws IOException {
-        String manifestJson = null;
-        byte[] codeBytes = null;
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                if (!entry.isDirectory() && "manifest.json".equals(entry.getName())) {
-                    manifestJson = new String(readZipEntry(zip), StandardCharsets.UTF_8);
-                } else if (!entry.isDirectory() && isPluginCodeEntry(entry.getName())) {
-                    codeBytes = readZipEntry(zip);
-                }
-                zip.closeEntry();
-            }
-        }
-        if (manifestJson == null) {
-            throw new IOException("插件包缺少 manifest.json");
-        }
-        return new ZipPluginPackage(manifestJson, codeBytes);
-    }
-
-    private byte[] readZipEntry(ZipInputStream zip) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[4096];
-        int read;
-        while ((read = zip.read(buffer)) != -1) {
-            output.write(buffer, 0, read);
-        }
-        return output.toByteArray();
-    }
-
-    private boolean isPluginCodeEntry(String name) {
-        return "plugin.apk".equals(name) || name.endsWith("/plugin.apk");
-    }
-
-    private void writePluginPackage(OutputStream outputStream, ImportedPluginDescriptor descriptor) throws IOException, JSONException {
-        try (ZipOutputStream zip = new ZipOutputStream(outputStream)) {
-            zip.putNextEntry(new ZipEntry("manifest.json"));
-            zip.write(descriptor.toJson().getBytes(StandardCharsets.UTF_8));
-            zip.closeEntry();
-
-            if (!descriptor.codePath.isEmpty()) {
-                File codeFile = new File(descriptor.codePath);
-                if (codeFile.exists()) {
-                    zip.putNextEntry(new ZipEntry("plugin.apk"));
-                    try (FileInputStream input = new FileInputStream(codeFile)) {
-                        byte[] buffer = new byte[8192];
-                        int read;
-                        while ((read = input.read(buffer)) != -1) {
-                            zip.write(buffer, 0, read);
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
-    }
-
     private static final class WidgetRegistration {
         final String pluginTitle;
         final String key;
@@ -4400,16 +4086,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             this.pluginTitle = pluginTitle;
             this.key = key;
             this.widget = widget;
-        }
-    }
-
-    private static final class PluginImport {
-        final ImportedPluginDescriptor descriptor;
-        final byte[] codeBytes;
-
-        PluginImport(ImportedPluginDescriptor descriptor, byte[] codeBytes) {
-            this.descriptor = descriptor;
-            this.codeBytes = codeBytes;
         }
     }
 
@@ -4460,16 +4136,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         }
     }
 
-    private static final class PreparedMigrationPlugin {
-        final PluginImport pluginImport;
-        final boolean enabled;
-
-        PreparedMigrationPlugin(PluginImport pluginImport, boolean enabled) {
-            this.pluginImport = pluginImport;
-            this.enabled = enabled;
-        }
-    }
-
     private static void deleteRecursively(File file) {
         if (file == null || !file.exists()) return;
         File[] children = file.listFiles();
@@ -4477,13 +4143,4 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         if (!file.delete()) file.deleteOnExit();
     }
 
-    private static final class ZipPluginPackage {
-        final String manifestJson;
-        final byte[] codeBytes;
-
-        ZipPluginPackage(String manifestJson, byte[] codeBytes) {
-            this.manifestJson = manifestJson;
-            this.codeBytes = codeBytes;
-        }
-    }
 }

@@ -25,6 +25,8 @@
 
 ## 推荐环境与模拟器
 
+主体 2.0.0 的插件列表、启停、导出、删除和状态重置仅管理当前 format v3 插件。历史 API1 安装记录不会阻止同 ID 的 format v3 包导入，也不会被报告为可启用插件。旧 APK 与业务数据不会因运行时升级或 Debug 状态重置自动删除。
+
 框架变更的设备回归（安装最新 Debug APK 和 `:app:assembleDebugAndroidTest` 产物后执行）：
 
 ```powershell

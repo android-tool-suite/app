@@ -60,7 +60,7 @@ tools/plugin/
 
 ## 导入插件
 
-format v3 包必须包含 `manifest.json`、`META-INF/ats-integrity.json` 以及清单引用的 `web/`、`ui/`、`workers/` 或可选 `android/provider.apk`；Provider 包还必须有受信 publisher 签名。旧 format v1/v2 包继续要求 `plugin.apk`。插件默认停用，宿主版本、可选 `minAndroidApi` 或依赖未满足时不能启用；敏感 Capability 默认待用户决定。
+format v3 包必须包含 `manifest.json`、`META-INF/ats-integrity.json` 以及清单引用的 `web/`、`ui/`、`workers/` 或可选 `android/provider.apk`；Provider 包还必须有受信 publisher 签名。旧 format v1/v2 包仅供历史归档识别，不再安装、启用或导出。插件默认停用，宿主版本、可选 `minAndroidApi` 或依赖未满足时不能启用；敏感 Capability 默认待用户决定。
 
 完整包格式与 SDK 接入方式见 `docs/plugin-package-format.md`。
 
