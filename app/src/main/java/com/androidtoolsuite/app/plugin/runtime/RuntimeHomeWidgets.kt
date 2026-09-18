@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -29,6 +30,10 @@ import com.androidtoolsuite.runtime.contract.RuntimePluginManifest
 import org.json.JSONObject
 
 internal object RuntimeHomeWidgets {
+    @JvmStatic
+    fun prepare(widgets: List<HostHomeWidget>): List<WidgetSnapshotStore.Entry> =
+        widgets.filterIsInstance<RuntimeHomeWidget>().mapNotNull { it.prepare() }
+
     fun create(
         installed: PluginPackageStore.InstalledPlugin,
         actions: HostActions,
@@ -44,6 +49,15 @@ private class RuntimeHomeWidget(
     private val actions: HostActions,
     private val revision: MutableIntState,
 ) : HostHomeWidget {
+    fun prepare(): WidgetSnapshotStore.Entry? {
+        val store = PluginRuntime.get(actions.activity()).widgetSnapshots()
+        val entry = store.entry(installed, contribution)
+        // Only live system summaries: worker/data summaries retain their lazy/cache policy.
+        if (entry.persistent) return null
+        store.hostChanged(entry, revision.intValue)
+        return entry
+    }
+
     override fun id(): String = contribution.id
     override fun title(): String = contribution.title
     override fun pluginId(): String = installed.manifest.plugin.id
@@ -72,29 +86,27 @@ private fun RuntimeWidgetContent(
         MaterialTheme.colorScheme.primaryContainer
     } else MaterialTheme.colorScheme.surfaceContainerLow
     val value = entry.value
-    if (value != null) {
-        RuntimeWidgetReady(contribution, value, color, entry.error)
-    } else {
-        SuiteCard(modifier = Modifier.fillMaxSize(), containerColor = color) {
-            Text(contribution.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Text(if (entry.error == null) "—" else "暂时不可用", style = MaterialTheme.typography.titleLarge)
-            Text(entry.error ?: "正在读取状态", style = MaterialTheme.typography.bodySmall)
-        }
+    val error = entry.error
+    RuntimeWidgetCard(contribution, value, color, error)
+    SideEffect {
+        if (value != null || error != null) entry.presented = true
     }
 }
 
 @Composable
-private fun RuntimeWidgetReady(
+private fun RuntimeWidgetCard(
     contribution: RuntimePluginManifest.HomeWidgetContribution,
-    value: JSONObject,
+    value: JSONObject?,
     containerColor: Color,
     refreshError: String?,
 ) {
-    val title = value.optString("title", contribution.title)
-    val detail = value.optString("detail", value.optString("label", ""))
-    val metric = value.opt("value")?.takeUnless { it == JSONObject.NULL }?.toString()
-        ?: value.opt("uid")?.takeUnless { it == JSONObject.NULL }?.toString().orEmpty()
-    val positive = value.optBoolean("connected", false) || value.optString("state") == "ready"
+    val title = value?.optString("title", contribution.title)
+        ?: if (refreshError == null) "—" else "暂时不可用"
+    val detail = value?.optString("detail", value.optString("label", ""))
+        ?: refreshError ?: "正在读取状态"
+    val metric = value?.opt("value")?.takeUnless { it == JSONObject.NULL }?.toString()
+        ?: value?.opt("uid")?.takeUnless { it == JSONObject.NULL }?.toString().orEmpty()
+    val positive = value?.optBoolean("connected", false) == true || value?.optString("state") == "ready"
     SuiteCard(modifier = Modifier.fillMaxSize(), containerColor = containerColor) {
         Row(
             Modifier.fillMaxWidth(),
@@ -109,11 +121,11 @@ private fun RuntimeWidgetReady(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!positive) {
+            if (value != null && !positive) {
                 SuiteStatusChip("需处理", positive = false)
             }
         }
-        when (contribution.template) {
+        when (if (value == null) "status" else contribution.template) {
             "metric" -> Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
                 Text(metric.ifBlank { "—" }, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                 Text(title, style = MaterialTheme.typography.bodyMedium)
@@ -125,7 +137,7 @@ private fun RuntimeWidgetReady(
                 }
             }
         }
-        if (refreshError != null) {
+        if (value != null && refreshError != null) {
             Text("刷新失败 · 已保留上次内容", style = MaterialTheme.typography.labelSmall)
         }
     }

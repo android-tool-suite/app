@@ -139,6 +139,8 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     private static final String PREF_UPDATE_CHECK_EXCLUDED = "update_check_excluded_plugins";
 
     private final List<HostTool> plugins = new ArrayList<>();
+    private final FirstFrameGate firstFrameGate = new FirstFrameGate();
+    private List<com.androidtoolsuite.app.plugin.runtime.WidgetSnapshotStore.Entry> startupWidgetEntries = Collections.emptyList();
     private final Map<String, PluginPackageStore.InstalledPlugin> runtimeInstalledCache = new LinkedHashMap<>();
     private final Set<String> optionalBuiltInPluginIds = new HashSet<>();
     private HostTool selectedPlugin;
@@ -264,14 +266,31 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         }
         splashScreen.setOnExitAnimationListener(provider -> {
             View splashView = provider.getView();
-            splashView.animate()
-                    .alpha(0f)
-                    .scaleX(1.04f)
-                    .scaleY(1.04f)
-                    .setDuration(260L)
-                    .setInterpolator(new DecelerateInterpolator())
-                    .withEndAction(provider::remove)
-                    .start();
+            // Keep the opaque overlay, not the window's pre-draw: nested ComposeViews must
+            // keep receiving frames so the fetched status can reach their composition.
+            new Runnable() {
+                @Override public void run() {
+                    if (isFinishing() || isDestroyed()) {
+                        provider.remove();
+                        return;
+                    }
+                    boolean pending = currentSection == SECTION_DASHBOARD && selectedPlugin == null
+                            && startupWidgetEntries.stream().anyMatch(
+                                    com.androidtoolsuite.app.plugin.runtime.WidgetSnapshotStore.Entry::isAwaitingFirstPresentation);
+                    if (firstFrameGate.keepOnScreen(SystemClock.uptimeMillis(), pending)) {
+                        splashView.postOnAnimation(this);
+                        return;
+                    }
+                    splashView.animate()
+                            .alpha(0f)
+                            .scaleX(1.04f)
+                            .scaleY(1.04f)
+                            .setDuration(260L)
+                            .setInterpolator(new DecelerateInterpolator())
+                            .withEndAction(provider::remove)
+                            .start();
+                }
+            }.run();
         });
         pluginRuntime = PluginRuntime.get(this);
         pluginPackageStore = pluginRuntime.packages();
@@ -364,6 +383,10 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         super.onStart();
         ensureShellServiceIfAuthorized();
         notifyHostStateChangedAfterBinderCallback();
+        // Start only visible live widget reads before Compose draws their first frame.
+        if (currentSection == SECTION_DASHBOARD && selectedPlugin == null) {
+            startupWidgetEntries = com.androidtoolsuite.app.plugin.runtime.RuntimeHomeWidgets.prepare(widgetsForUi());
+        }
         schedulerService.onHostStartedAsync();
         if (autoCheckUpdatesForUi()) {
             checkForUpdates(false, false, false);

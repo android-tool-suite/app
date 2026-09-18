@@ -538,9 +538,15 @@ private fun AppContent(
     hostRevision(activity)  // 订阅：选中插件变化时 selected 不变但 Java 字段已变
     val selected = activity.selectedPluginForUi()
     val section = activity.currentSectionForUi()
-    androidx.compose.runtime.SideEffect {
+    val widgetSnapshots = remember(activity) {
         com.androidtoolsuite.app.plugin.runtime.PluginRuntime.get(activity).widgetSnapshots()
-            .setVisible(selected == null && section == DASHBOARD)
+    }
+    val mainPagesVisible = selected == null && section != ABOUT
+    LaunchedEffect(widgetSnapshots, pagerState, mainPagesVisible) {
+        // Bottom navigation and swipes update PagerState without invalidating the Java host.
+        // Observe the actual settled page so returning Home resumes pending widget reads.
+        snapshotFlow { mainPagesVisible && pagerState.settledPage == DASHBOARD }
+            .collect(widgetSnapshots::setVisible)
     }
     // Keep the two most recently used tools mounted; ordinary navigation preserves JS state.
     var recent by remember(activity) { mutableStateOf<List<HostTool>>(emptyList()) }

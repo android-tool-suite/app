@@ -38,6 +38,11 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
         internal var observers = 0
         internal var job: Job? = null
         internal var lastHostRevision = -1
+        internal var started = false
+        internal var presented = false
+
+        // A fetched result alone is insufficient: Compose must have applied it to the card.
+        fun isAwaitingFirstPresentation(): Boolean = !persistent && !presented
     }
 
     init {
@@ -123,15 +128,20 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
 
     private fun refresh(entry: Entry) {
         if (!visible || !entry.dirty || entry.job?.isActive == true) return
+        val firstRead = !entry.started
+        entry.started = true
         entry.job = scope.launch {
             // Coalesce a restore/sync's consecutive commits and provider connection callbacks.
-            delay(120)
+            // A first live status read should already be running before the card's first frame.
+            if (!firstRead || entry.persistent) delay(120)
             if (!visible) return@launch
             val id = entry.installed.manifest.plugin.id
             val session = "widget-" + UUID.randomUUID()
             try {
                 check(allowed(entry.installed, entry.contribution)) { "请先允许组件所需的功能权限" }
-                val revision = withContext(Dispatchers.IO) { runtime.datasets().revisionForCache(id) }
+                val revision = if (entry.persistent) withContext(Dispatchers.IO) {
+                    runtime.datasets().revisionForCache(id)
+                } else ""
                 val result = suspendCancellableCoroutine<JSONObject> { continuation ->
                     val future = runtime.capabilities().invoke(entry.installed.manifest, id, session,
                         entry.contribution.dataSource, JSONObject(), false, 5_000)
