@@ -14,7 +14,6 @@ import java.util.Set;
 
 public final class UpdateCatalog {
     public static final String CHANNEL_RELEASE = "release";
-    public static final String CHANNEL_DEBUG = "debug";
 
     public final int schemaVersion;
     public final String channel;
@@ -53,7 +52,7 @@ public final class UpdateCatalog {
             throw new JSONException("不支持的更新索引版本：" + schemaVersion);
         }
         String channel = clean(root.optString("channel", CHANNEL_RELEASE));
-        if (!CHANNEL_RELEASE.equals(channel) && !CHANNEL_DEBUG.equals(channel)) {
+        if (!CHANNEL_RELEASE.equals(channel)) {
             throw new JSONException("不支持的更新通道：" + channel);
         }
 
@@ -170,7 +169,6 @@ public final class UpdateCatalog {
         public final String versionName;
         public final int versionCode;
         public final String channel;
-        public final String commitSha;
         public final String releaseUrl;
         public final String downloadUrl;
         public final long size;
@@ -181,9 +179,8 @@ public final class UpdateCatalog {
             versionName = required(json, "versionName");
             versionCode = positive(json, "versionCode");
             this.channel = channel;
-            commitSha = clean(json.optString("commitSha"));
-            if (CHANNEL_DEBUG.equals(channel) && !commitSha.matches("[0-9a-fA-F]{40}")) {
-                throw new JSONException("调试更新缺少有效的 commit SHA");
+            if (!channel.equals(json.optString("channel", channel))) {
+                throw new JSONException("更新资产通道不匹配");
             }
             releaseUrl = required(json, "releaseUrl");
             downloadUrl = required(json, "downloadUrl");

@@ -1880,8 +1880,7 @@ private fun VersionPickerSheet(
             items(versions, key = UpdateCatalog.PluginRelease::sha256) { version ->
                 val installed = activity.isRepositoryPluginVersionInstalledForUi(version)
                 val selectable = activity.isRepositoryPluginVersionSelectableForUi(version)
-                val label = version.versionName +
-                        if (version.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${version.commitSha.take(7)}" else ""
+                val label = version.versionName
                 SuiteSettingsRow(
                     label,
                     supportingText = activity.repositoryPluginTransitionLabelForUi(version),
@@ -1929,8 +1928,7 @@ private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.
                     Icon(Icons.Rounded.Verified, "已验证发布", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
                 Text(
-                    release.versionName
-                            + if (release.channel == UpdateCatalog.CHANNEL_DEBUG) " · ${release.commitSha.take(7)}" else "",
+                    release.versionName,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2011,7 +2009,6 @@ private fun SettingsScreen(
     val listState = rememberPageListState(activity, "settings")
     var themeMenu by remember { mutableStateOf(false) }
     var colorMenu by remember { mutableStateOf(false) }
-    var channelMenu by remember { mutableStateOf(false) }
     val themeLabel = when (activity.themePreferenceForUi()) {
         "light" -> "浅色"
         "dark" -> "深色"
@@ -2078,22 +2075,6 @@ private fun SettingsScreen(
                     "删除插件数据",
                     onClick = activity::prepareMigrationBridgeDeleteForUi,
                 )
-            }
-        }
-        if (activity.isDebugBuildForUi()) {
-            item {
-                SuiteSettingsGroup("开发者选项") {
-                    SettingsDropdownRow(
-                        title = "插件仓库渠道",
-                        supportingText = if (activity.isDebugPluginRepositoryForUi()) "调试版本可能不稳定" else null,
-                        selectedValue = activity.pluginRepositoryChannelForUi(),
-                        selectedLabel = activity.pluginRepositoryChannelLabelForUi(),
-                        options = listOf(UpdateCatalog.CHANNEL_RELEASE to "正式仓库", UpdateCatalog.CHANNEL_DEBUG to "调试仓库"),
-                        expanded = channelMenu,
-                        onExpandedChange = { channelMenu = it },
-                        onSelected = activity::selectPluginRepositoryChannelForUi,
-                    )
-                }
             }
         }
         item {

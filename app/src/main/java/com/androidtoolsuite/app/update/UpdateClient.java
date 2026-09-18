@@ -53,43 +53,26 @@ public final class UpdateClient {
     }
 
     public void check(
-            String appChannel,
-            String pluginChannel,
             boolean force,
             CatalogCallback callback
     ) {
         executor.execute(() -> {
             try {
-                String selectedAppChannel = normalizeChannel(appChannel);
-                String selectedChannel = normalizeChannel(pluginChannel);
-                CatalogResult app = loadCatalog(
-                        selectedAppChannel,
-                        PAYLOAD_INDEX,
-                        indexUrl(selectedAppChannel),
-                        force
+                CatalogResult latest = loadCatalog(
+                        UpdateCatalog.CHANNEL_RELEASE, PAYLOAD_INDEX,
+                        BuildConfig.UPDATE_RELEASE_INDEX_URL, force
                 );
-                CatalogResult pluginLatest = selectedAppChannel.equals(selectedChannel)
-                        ? app
-                        : loadCatalog(
-                                selectedChannel,
-                                PAYLOAD_INDEX,
-                                indexUrl(selectedChannel),
-                                force
-                        );
-                CatalogResult pluginHistory = loadCatalog(
-                        selectedChannel,
-                        PAYLOAD_CATALOG,
-                        catalogUrl(selectedChannel),
-                        force
+                CatalogResult history = loadCatalog(
+                        UpdateCatalog.CHANNEL_RELEASE, PAYLOAD_CATALOG,
+                        BuildConfig.UPDATE_RELEASE_CATALOG_URL, force
                 );
                 deliverCatalog(
                         callback,
                         UpdateCatalog.combine(
-                                app.catalog,
-                                pluginLatest.catalog,
-                                pluginHistory.catalog
+                                BuildConfig.DEBUG ? null : latest.catalog,
+                                latest.catalog, history.catalog
                         ),
-                        app.cached || pluginLatest.cached || pluginHistory.cached
+                        latest.cached || history.cached
                 );
             } catch (IOException | GeneralSecurityException | JSONException error) {
                 deliverError(callback, readableMessage(error));
@@ -227,24 +210,6 @@ public final class UpdateClient {
         } catch (IOException | GeneralSecurityException | JSONException ignored) {
             return null;
         }
-    }
-
-    private static String normalizeChannel(String channel) {
-        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
-                ? UpdateCatalog.CHANNEL_DEBUG
-                : UpdateCatalog.CHANNEL_RELEASE;
-    }
-
-    private static String indexUrl(String channel) {
-        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
-                ? BuildConfig.UPDATE_DEBUG_INDEX_URL
-                : BuildConfig.UPDATE_RELEASE_INDEX_URL;
-    }
-
-    private static String catalogUrl(String channel) {
-        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
-                ? BuildConfig.UPDATE_DEBUG_CATALOG_URL
-                : BuildConfig.UPDATE_RELEASE_CATALOG_URL;
     }
 
     private File payloadCacheFile(String channel, String payload) {

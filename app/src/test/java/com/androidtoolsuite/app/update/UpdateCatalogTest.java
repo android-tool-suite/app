@@ -77,7 +77,7 @@ public final class UpdateCatalogTest {
     }
 
     @Test
-    public void parsesDebugChannelAndCombinesCatalogs() throws Exception {
+    public void combinesFormalAppAndPluginCatalogs() throws Exception {
         UpdateCatalog release = UpdateCatalog.parse("{"
                 + "\"schemaVersion\":1,"
                 + "\"channel\":\"release\","
@@ -91,32 +91,31 @@ public final class UpdateCatalogTest {
                 + "\"size\":42,"
                 + "\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""
                 + "},\"plugins\":[]}");
-        UpdateCatalog debug = UpdateCatalog.parse("{"
+        UpdateCatalog plugins = UpdateCatalog.parse("{"
                 + "\"schemaVersion\":1,"
-                + "\"channel\":\"debug\","
+                + "\"channel\":\"release\","
                 + "\"plugins\":[{"
                 + "\"id\":\"sample\","
                 + "\"title\":\"Sample\","
                 + "\"repositoryUrl\":\"https://example.test/repo\","
                 + "\"versionName\":\"2.1.0\","
                 + "\"versionCode\":4,"
-                + "\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\","
-                + "\"releaseUrl\":\"https://example.test/debug\","
+                + "\"releaseUrl\":\"https://example.test/release\","
                 + "\"downloadUrl\":\"https://example.test/plugin.atsplugin\","
                 + "\"size\":84,"
                 + "\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\""
                 + "}]}");
 
-        UpdateCatalog combined = UpdateCatalog.combine(release, debug);
+        UpdateCatalog combined = UpdateCatalog.combine(release, plugins);
 
-        assertEquals(UpdateCatalog.CHANNEL_DEBUG, combined.channel);
+        assertEquals(UpdateCatalog.CHANNEL_RELEASE, combined.channel);
         assertNotNull(combined.app);
         assertEquals(12, combined.app.versionCode);
-        assertEquals("0123456", combined.plugins.get(0).commitSha.substring(0, 7));
+        assertEquals("sample", combined.plugins.get(0).id);
     }
 
     @Test(expected = JSONException.class)
-    public void rejectsDebugEntryWithoutCommitSha() throws Exception {
+    public void rejectsRetiredDebugChannel() throws Exception {
         UpdateCatalog.parse("{"
                 + "\"schemaVersion\":1,"
                 + "\"channel\":\"debug\","
@@ -207,6 +206,23 @@ public final class UpdateCatalogTest {
                 + pluginVersionJson("1.0.0", 1, 2, 3, 2)
                 + "]}"
         );
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsDebugAssetInsideFormalCatalog() throws Exception {
+        String plugin = pluginVersionJson("1.0.0", 1, 1, 1, 1)
+                .replace("\"id\":", "\"channel\":\"debug\",\"id\":");
+        UpdateCatalog.parse("{\"schemaVersion\":1,\"channel\":\"release\",\"plugins\":[" + plugin + "]}");
+    }
+
+    @Test
+    public void localDebugCatalogCanExcludeAppWhileRetainingPluginHistory() throws Exception {
+        UpdateCatalog plugins = UpdateCatalog.parse("{\"schemaVersion\":1,\"plugins\":["
+                + pluginVersionJson("1.0.0", 1, 1, 1, 1) + "]}");
+        UpdateCatalog combined = UpdateCatalog.combine(null, plugins, plugins);
+        org.junit.Assert.assertNull(combined.app);
+        assertEquals(1, combined.plugins.size());
+        assertEquals(1, combined.versionsForPlugin("sample").size());
     }
 
     private static String pluginVersionJson(

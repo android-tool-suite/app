@@ -8,42 +8,29 @@ import org.junit.Test;
 public final class AppUpdatePolicyTest {
     @Test
     public void releaseRequiresNewerVersionAndReleasePackage() throws Exception {
-        UpdateCatalog.AppRelease release = appRelease("release", "com.androidtoolsuite.app", 14, "");
+        UpdateCatalog.AppRelease release = appRelease("release", "com.androidtoolsuite.app", 14);
         assertTrue(AppUpdatePolicy.isUpdateAvailable(
-                release, "com.androidtoolsuite.app", 13, false, ""
+                release, "com.androidtoolsuite.app", 13, false
         ));
         assertFalse(AppUpdatePolicy.isUpdateAvailable(
-                release, "com.androidtoolsuite.app", 14, false, ""
+                release, "com.androidtoolsuite.app", 14, false
         ));
         assertFalse(AppUpdatePolicy.isUpdateAvailable(
-                release, "com.androidtoolsuite.app.debug", 13, false, ""
+                release, "com.androidtoolsuite.app.debug", 13, false
         ));
     }
 
     @Test
-    public void debugUsesCommitAndAllowsSameVersionCode() throws Exception {
-        String nextCommit = "0123456789abcdef0123456789abcdef01234567";
-        UpdateCatalog.AppRelease release = appRelease(
-                "debug", "com.androidtoolsuite.app.debug", 13, nextCommit
-        );
-        assertTrue(AppUpdatePolicy.isUpdateAvailable(
-                release,
-                "com.androidtoolsuite.app.debug",
-                13,
-                true,
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        ));
-        assertFalse(AppUpdatePolicy.isUpdateAvailable(
-                release, "com.androidtoolsuite.app.debug", 13, true, nextCommit
-        ));
-        assertFalse(AppUpdatePolicy.isUpdateAvailable(
-                release, "com.androidtoolsuite.app.debug", 13, true, ""
-        ));
+    public void debugBuildNeverOffersRemoteAppUpdates() throws Exception {
+        UpdateCatalog.AppRelease release = appRelease("release", "com.androidtoolsuite.app.debug", 14);
+        assertFalse(AppUpdatePolicy.isUpdateAvailable(release, "com.androidtoolsuite.app.debug", 13, true));
+        assertFalse(AppUpdatePolicy.isUpdateAvailable(release, "com.androidtoolsuite.app.debug", 14, true));
     }
 
     @Test
     public void downloadedVersionRulesDifferByBuildType() {
-        assertTrue(AppUpdatePolicy.isDownloadedVersionValid(13, 13, true));
+        assertFalse(AppUpdatePolicy.isDownloadedVersionValid(13, 13, true));
+        assertFalse(AppUpdatePolicy.isDownloadedVersionValid(14, 13, true));
         assertFalse(AppUpdatePolicy.isDownloadedVersionValid(12, 13, true));
         assertTrue(AppUpdatePolicy.isDownloadedVersionValid(14, 13, false));
         assertFalse(AppUpdatePolicy.isDownloadedVersionValid(13, 13, false));
@@ -52,12 +39,8 @@ public final class AppUpdatePolicyTest {
     private UpdateCatalog.AppRelease appRelease(
             String channel,
             String packageName,
-            int versionCode,
-            String commitSha
+            int versionCode
     ) throws Exception {
-        String commit = "debug".equals(channel)
-                ? ",\"commitSha\":\"" + commitSha + "\""
-                : "";
         UpdateCatalog catalog = UpdateCatalog.parse("{"
                 + "\"schemaVersion\":1,"
                 + "\"channel\":\"" + channel + "\","
@@ -65,8 +48,7 @@ public final class AppUpdatePolicyTest {
                 + "\"packageName\":\"" + packageName + "\","
                 + "\"versionName\":\"1.3.1\","
                 + "\"versionCode\":" + versionCode + ","
-                + "\"minSdk\":24"
-                + commit + ","
+                + "\"minSdk\":24,"
                 + "\"releaseUrl\":\"https://example.test/release\","
                 + "\"downloadUrl\":\"https://example.test/app.apk\","
                 + "\"size\":42,"

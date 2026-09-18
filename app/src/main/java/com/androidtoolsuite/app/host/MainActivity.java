@@ -129,7 +129,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     private static final String PREF_WIDGET_ORDER = "widget_order";
     private static final String PREF_FULL_WIDTH_WIDGETS = "full_width_widgets";
     private static final String PREF_WIDGET_SIZES = "widget_sizes";
-    private static final String PREF_PLUGIN_REPOSITORY_CHANNEL = "plugin_repository_channel";
     private static final String PREF_THEME = "theme_preference";
     private static final String PREF_COLOR = "color_preference";
     private static final String PREF_AUTO_CHECK_UPDATES = "auto_check_updates";
@@ -1332,45 +1331,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 : updateCatalog.versionsForPlugin(pluginId);
     }
 
-    public String pluginRepositoryChannelForUi() {
-        String fallback = BuildConfig.DEBUG
-                ? UpdateCatalog.CHANNEL_DEBUG
-                : UpdateCatalog.CHANNEL_RELEASE;
-        String channel = uiPreferences.getString(PREF_PLUGIN_REPOSITORY_CHANNEL, fallback);
-        return UpdateCatalog.CHANNEL_DEBUG.equals(channel)
-                ? UpdateCatalog.CHANNEL_DEBUG
-                : UpdateCatalog.CHANNEL_RELEASE;
-    }
-
-    public String pluginRepositoryChannelLabelForUi() {
-        return UpdateCatalog.CHANNEL_DEBUG.equals(pluginRepositoryChannelForUi())
-                ? "调试仓库"
-                : "正式仓库";
-    }
-
-    public boolean isDebugPluginRepositoryForUi() {
-        return UpdateCatalog.CHANNEL_DEBUG.equals(pluginRepositoryChannelForUi());
-    }
-
-    public void selectPluginRepositoryChannelForUi(String channel) {
-        String selected = UpdateCatalog.CHANNEL_DEBUG.equals(channel)
-                ? UpdateCatalog.CHANNEL_DEBUG
-                : UpdateCatalog.CHANNEL_RELEASE;
-        if (selected.equals(pluginRepositoryChannelForUi())) {
-            return;
-        }
-        if (updateOperations.contains("__check__")) {
-            showToast("请等待当前仓库刷新完成");
-            return;
-        }
-        uiPreferences.edit().putString(PREF_PLUGIN_REPOSITORY_CHANNEL, selected).apply();
-        updateCatalog = null;
-        updateStatus = "正在切换到" + pluginRepositoryChannelLabelForUi() + "…";
-        updateCheckState = UpdateCheckState.CHECKING;
-        invalidateComposeUi();
-        checkForUpdates(true, false, true);
-    }
-
     public UpdateCatalog.AppRelease appUpdateForUi() {
         if (updateCatalog == null || updateCatalog.app == null) {
             return null;
@@ -1380,8 +1340,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 release,
                 getPackageName(),
                 BuildConfig.VERSION_CODE,
-                BuildConfig.DEBUG,
-                BuildConfig.BUILD_COMMIT_SHA
+                BuildConfig.DEBUG
         )
                 ? release
                 : null;
@@ -1409,16 +1368,8 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         }
         PluginPackageStore.InstalledPlugin runtime = findRuntimePlugin(release.id);
         if (runtime != null) {
-            if (!runtime.repositoryVerified) {
-                return release.versionCode > runtime.manifest.plugin.versionCode
-                        && isRepositoryPluginVersionSelectableForUi(release);
-            }
-            String channel = runtime.channel.isEmpty() ? UpdateCatalog.CHANNEL_RELEASE : runtime.channel;
-            boolean available = !release.channel.equals(channel)
-                    || (UpdateCatalog.CHANNEL_DEBUG.equals(release.channel)
-                    ? !runtimeMatchesRelease(runtime, release)
-                    : release.versionCode > runtime.manifest.plugin.versionCode);
-            return available && isRepositoryPluginVersionSelectableForUi(release);
+            return release.versionCode > runtime.manifest.plugin.versionCode
+                    && isRepositoryPluginVersionSelectableForUi(release);
         }
         // Repository availability is not an update: only installed packages participate.
         return false;
@@ -1742,15 +1693,12 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
             return;
         }
         updateOperations.add("__check__");
-        updateStatus = "正在检查" + pluginRepositoryChannelLabelForUi() + "更新…";
+        updateStatus = "正在检查正式仓库更新…";
         updateCheckState = UpdateCheckState.CHECKING;
         updateError = "";
         // 后台自动检查不展示“检查中”，避免应用刚打开后让当前页和相邻页一起重组。
         if (userInitiated) invalidateComposeUi();
-        String appChannel = BuildConfig.DEBUG
-                ? UpdateCatalog.CHANNEL_DEBUG
-                : UpdateCatalog.CHANNEL_RELEASE;
-        updateClient.check(appChannel, pluginRepositoryChannelForUi(), force, new UpdateClient.CatalogCallback() {
+        updateClient.check(force, new UpdateClient.CatalogCallback() {
             @Override
             public void onSuccess(UpdateCatalog catalog, boolean cached) {
                 updateOperations.remove("__check__");
@@ -3888,7 +3836,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
         host.put("theme", themePreferenceForUi());
         host.put("color", colorPreferenceForUi());
         host.put("autoCheckUpdates", autoCheckUpdatesForUi());
-        host.put("pluginRepositoryChannel", pluginRepositoryChannelForUi());
         host.put("hiddenWidgets", strings(uiPreferences.getStringSet(
                 PREF_HIDDEN_WIDGETS, Collections.emptySet()
         )));
@@ -3918,13 +3865,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 "autoCheckUpdates",
                 current.optBoolean("autoCheckUpdates", true)
         ));
-        String channel = incoming.optString("pluginRepositoryChannel", UpdateCatalog.CHANNEL_RELEASE);
-        merged.put(
-                "pluginRepositoryChannel",
-                UpdateCatalog.CHANNEL_DEBUG.equals(channel)
-                        ? UpdateCatalog.CHANNEL_DEBUG
-                        : UpdateCatalog.CHANNEL_RELEASE
-        );
         merged.put("hiddenTools", strings(mergeScopedSet(
                 jsonStrings(current.optJSONArray("hiddenTools")),
                 jsonStrings(incoming.optJSONArray("hiddenTools")),
@@ -4015,12 +3955,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 )
                 .putString(PREF_COLOR, "dynamic".equals(host.optString("color")) ? "dynamic" : "brand")
                 .putBoolean(PREF_AUTO_CHECK_UPDATES, host.optBoolean("autoCheckUpdates", true))
-                .putString(
-                        PREF_PLUGIN_REPOSITORY_CHANNEL,
-                        UpdateCatalog.CHANNEL_DEBUG.equals(
-                                host.optString("pluginRepositoryChannel")
-                        ) ? UpdateCatalog.CHANNEL_DEBUG : UpdateCatalog.CHANNEL_RELEASE
-                )
                 .putStringSet(PREF_HIDDEN_WIDGETS, jsonStrings(host.optJSONArray("hiddenWidgets")))
                 .putStringSet(PREF_HIDDEN_TOOLS, jsonStrings(host.optJSONArray("hiddenTools")))
                 .putString(PREF_TOOL_ORDER, String.join("\n", jsonStrings(host.optJSONArray("toolOrder"))))

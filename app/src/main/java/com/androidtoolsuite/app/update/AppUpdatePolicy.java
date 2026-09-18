@@ -8,18 +8,13 @@ public final class AppUpdatePolicy {
             UpdateCatalog.AppRelease release,
             String installedPackage,
             int installedVersionCode,
-            boolean debugBuild,
-            String installedCommitSha
+            boolean debugBuild
     ) {
         if (release == null || !clean(installedPackage).equals(release.packageName)) {
             return false;
         }
         if (debugBuild) {
-            String currentCommit = clean(installedCommitSha);
-            return UpdateCatalog.CHANNEL_DEBUG.equals(release.channel)
-                    && currentCommit.matches("[0-9a-fA-F]{40}")
-                    && release.versionCode >= installedVersionCode
-                    && !currentCommit.equalsIgnoreCase(release.commitSha);
+            return false;
         }
         return UpdateCatalog.CHANNEL_RELEASE.equals(release.channel)
                 && release.versionCode > installedVersionCode;
@@ -30,9 +25,7 @@ public final class AppUpdatePolicy {
             int installedVersionCode,
             boolean debugBuild
     ) {
-        return debugBuild
-                ? archiveVersionCode >= installedVersionCode
-                : archiveVersionCode > installedVersionCode;
+        return !debugBuild && archiveVersionCode > installedVersionCode;
     }
 
     private static String clean(String value) {

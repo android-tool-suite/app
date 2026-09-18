@@ -195,9 +195,9 @@ WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号�
 
 宿主先在 staging 目录完成路径、schema、完整性、平台和签名校验，再把整个包切换为新的只读 generation。失败时保留旧 generation；Provider 更新在下次宿主冷启动激活。删除插件时同时关闭 session、任务和 Provider effect，但业务 Dataset 仍按显式数据管理流程处理。
 
-正式仓库、调试仓库和手动导入是不同来源：
+正式仓库和手动导入是不同来源：
 
-- 正式/调试索引还会校验索引签名、包大小、SHA-256、插件 ID、版本和最低宿主版本；
+- 正式索引还会校验索引签名、包大小、SHA-256、插件 ID、版本和最低宿主版本；
 - 手动导入不取得仓库信誉；
 - 无论来源，包内 format v3 校验规则相同；Native Provider 仍必须命中受信 publisher key。
 

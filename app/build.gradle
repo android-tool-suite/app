@@ -114,9 +114,7 @@ android {
         buildConfigField "String", "PLUGIN_SDK_VERSION", "\"${providers.gradleProperty("pluginSdkVersion").get()}\""
         buildConfigField "String", "BUILD_COMMIT_SHA", "\"${buildCommitSha}\""
         buildConfigField "String", "UPDATE_RELEASE_INDEX_URL", "\"https://android-tool-suite.github.io/plugin-registry/release/index-v1.json\""
-        buildConfigField "String", "UPDATE_DEBUG_INDEX_URL", "\"https://android-tool-suite.github.io/plugin-registry/debug/index-v1.json\""
         buildConfigField "String", "UPDATE_RELEASE_CATALOG_URL", "\"https://android-tool-suite.github.io/plugin-registry/release/catalog-v1.json\""
-        buildConfigField "String", "UPDATE_DEBUG_CATALOG_URL", "\"https://android-tool-suite.github.io/plugin-registry/debug/catalog-v1.json\""
         buildConfigField "String", "UPDATE_INDEX_PUBLIC_KEY", "\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6leKPqgvELS3qbBrAe+/Wk8vCvdtMVy1ZwH1py7ynxye2/bsbH9UaFBVTFyW7wxqpFimmklZF/XeToMt21TjNQ==\""
     }
 

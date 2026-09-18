@@ -22,7 +22,7 @@ public final class HostMigrationArchiveTest {
                 "com.androidtoolsuite.app",
                 "1.3.1",
                 13,
-                new JSONObject().put("pluginRepositoryChannel", "debug"),
+                new JSONObject().put("theme", "dark"),
                 Set.of("shizuku_auth"),
                 List.of(new HostMigrationArchive.PluginEntry(
                         "sample-plugin", true, "plugin-package".getBytes(StandardCharsets.UTF_8)
@@ -34,7 +34,7 @@ public final class HostMigrationArchiveTest {
         HostMigrationArchive.Snapshot restored = HostMigrationArchive.read(output.toByteArray());
 
         assertEquals("com.androidtoolsuite.app", restored.sourcePackage);
-        assertEquals("debug", restored.host.getString("pluginRepositoryChannel"));
+        assertEquals("dark", restored.host.getString("theme"));
         assertTrue(restored.builtInEnabledIds.contains("shizuku_auth"));
         assertEquals("sample-plugin", restored.plugins.get(0).id);
         assertTrue(restored.plugins.get(0).enabled);

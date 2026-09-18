@@ -9,57 +9,13 @@ import org.junit.Test;
 
 public final class PluginUpdatePolicyTest {
     @Test
-    public void debugBuildUsesDigestEvenWhenVersionCodeIsUnchanged() throws Exception {
-        UpdateCatalog.PluginRelease release = debugRelease("b");
-        ImportedPluginDescriptor installed = descriptor(7);
-
-        assertTrue(PluginUpdatePolicy.isUpdateAvailable(
-                release,
-                installed,
-                true,
-                UpdateCatalog.CHANNEL_DEBUG,
-                "a".repeat(64)
-        ));
-        assertFalse(PluginUpdatePolicy.isUpdateAvailable(
-                release,
-                installed,
-                true,
-                UpdateCatalog.CHANNEL_DEBUG,
-                "b".repeat(64)
-        ));
-    }
-
-    @Test
-    public void verifiedPluginCanSwitchBetweenChannels() throws Exception {
-        UpdateCatalog.PluginRelease release = debugRelease("c");
-
-        assertTrue(PluginUpdatePolicy.isUpdateAvailable(
-                release,
-                descriptor(9),
-                true,
-                UpdateCatalog.CHANNEL_RELEASE,
-                "c".repeat(64)
-        ));
-    }
-
-    @Test
-    public void localImportStillRequiresHigherVersionCode() throws Exception {
-        UpdateCatalog.PluginRelease release = debugRelease("d");
-
-        assertFalse(PluginUpdatePolicy.isUpdateAvailable(
-                release,
-                descriptor(7),
-                false,
-                "",
-                ""
-        ));
-        assertTrue(PluginUpdatePolicy.isUpdateAvailable(
-                release,
-                descriptor(6),
-                false,
-                "",
-                ""
-        ));
+    public void automaticUpdateRequiresHigherVersionCode() throws Exception {
+        UpdateCatalog.PluginRelease release = releaseWithDataCompatibility(7, 1, 1, 1);
+        assertTrue(PluginUpdatePolicy.isUpdateAvailable(release, descriptor(6)));
+        assertFalse(PluginUpdatePolicy.isUpdateAvailable(release, descriptor(7)));
+        assertFalse(PluginUpdatePolicy.isUpdateAvailable(release, descriptor(8)));
+        assertFalse(PluginUpdatePolicy.isUpdateAvailable(release, null));
+        assertFalse(PluginUpdatePolicy.isUpdateAvailable(null, descriptor(6)));
     }
 
     @Test
@@ -114,24 +70,6 @@ public final class PluginUpdatePolicyTest {
         assertTrue(PluginUpdatePolicy.assessTransition(
                 release, descriptor(8), true, "a".repeat(64), true, 0, true
         ) == PluginUpdatePolicy.Transition.DOWNGRADE_COMPATIBLE);
-    }
-
-    private static UpdateCatalog.PluginRelease debugRelease(String digestCharacter) throws Exception {
-        return UpdateCatalog.parse("{"
-                + "\"schemaVersion\":1,"
-                + "\"channel\":\"debug\","
-                + "\"plugins\":[{"
-                + "\"id\":\"sample\","
-                + "\"title\":\"Sample\","
-                + "\"repositoryUrl\":\"https://example.test/repo\","
-                + "\"versionName\":\"1.0.0\","
-                + "\"versionCode\":7,"
-                + "\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\","
-                + "\"releaseUrl\":\"https://example.test/debug\","
-                + "\"downloadUrl\":\"https://example.test/plugin\","
-                + "\"size\":1,"
-                + "\"sha256\":\"" + digestCharacter.repeat(64) + "\""
-                + "}]}").plugins.get(0);
     }
 
     private static ImportedPluginDescriptor descriptor(int versionCode) throws Exception {
