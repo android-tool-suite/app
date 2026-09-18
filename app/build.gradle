@@ -108,7 +108,7 @@ android {
         applicationId "com.androidtoolsuite.app"
         minSdk 24
         targetSdk 35
-        versionCode 25
+        versionCode 23
         versionName "2.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "PLUGIN_SDK_VERSION", "\"${providers.gradleProperty("pluginSdkVersion").get()}\""

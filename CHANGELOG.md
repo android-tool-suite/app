@@ -2,96 +2,48 @@
 
 ## 2.0.0（未发布）
 
-- 完成 v1/API1 运行时退役：移除旧插件存储、APK 安装和回滚、旧包导出、启停及依赖管理分支，宿主与 Debug 命令统一管理 format v3 插件。
-- 修复升级后残留的旧插件记录阻止同 ID format v3 包导入，以及旧插件被误报为已启用的问题。旧安装文件和业务数据保留在设备上，不自动清除。
-- 旧宿主迁移包只恢复兼容的应用设置，明确提示其中的旧插件不会安装或启用；历史内置 Shizuku 状态不会自动授权或启用新的可信 Provider。
-- 保留 `.atsbackup` v2/v3 数据恢复、format v3 原始包备份与事务回滚。尚未迁移的 API1 业务数据需先在支持 Migration Bridge 的旧版本导出。
-- 主体版本提升至 2.0.0（versionCode 25）；插件 SDK 保持 2.0.0，Runtime Contract 和各插件独立版本不变。
-- 修复更新插件后从仓库返回主页时，游戏小部件一直显示“正在读取状态”的问题。摘要刷新直接跟随分页器的实际页面状态，返回首页后自动恢复，无需先打开插件。
-- 优化首页 Shizuku、无障碍等系统部件的启动显示：可见部件提前异步读取实时状态，首次读取不再固定等待；加载与正常内容共用卡片布局，减少启动闪动。系统授权仍实时验证，不缓存为已授权。
-- 首页首次展示时为可见系统部件提供最多 150 ms 的就绪等待，主页在不透明启动层下正常绘制，内容或错误状态完成界面更新后立即淡出启动屏，减少快速查询仍闪过一帧加载占位的问题；慢查询超时后正常显示首页，不持续等待授权。
+### Runtime v2 与插件架构
 
-## 1.8.0（2026-09-18）
+- 交付 Runtime v2 format v3：严格插件清单、确定性完整性校验、原子 generation 安装与回滚、版本化 RPC、TypeScript SDK 和插件 CLI。
+- 插件界面统一使用声明式 UI 文档，Host 与隔离 WebView 两种 renderer 共用设计 token、状态外壳、权限与生命周期。
+- 普通插件通过受限 JavaScript Worker 提供自定义 Capability，下游调用以提供者插件身份重新授权；普通包禁止携带原生 Provider。
+- Shizuku 授权、主页状态和系统能力迁移到独立的签名 `trusted-provider` 插件，宿主保留 Android manifest、UserService 与 Binder 生命周期所需的最小 bootstrap。完全信任 Provider 为同进程代码，不受普通插件权限开关隔离。
+- 插件 SDK 2.0.0 提供稳定的 `.plugin.runtime` Provider API 和共享 Shizuku 客户端，移除 API1 Tool、Host、主页组件和 Migration Bridge 接口；Runtime Contract 2.1.0 提供通用受限系统日志与 `file.export` 契约。
+- 提供独立后台任务、Host/WebView UI 和 Worker Capability 示例，以及任务运行、历史、归档检查和 Dataset 状态的 Debug ADB 入口。
 
-- Debug 改为手动推送 `debug-v<版本号>` 标签发布；日常 CI 只验证并上传构建产物，不再创建滚动发布。
+### 权限、调度与数据
 
-- 修复仓库中未安装插件被计入更新提醒和全部更新的问题；可安装列表继续保留。
-- 启用需重启激活的系统插件时显示明确的持久弹窗，提供立即重启／稍后重启；管理页保留重新打开提示的入口。
-
-- 新增独立包名的非调试性能测试变体，沿用 Release 运行配置，可与正式版并存且数据隔离。
-
-- 修复主页 Shizuku 组件背景未铺满卡片高度的问题；刷新错误提示放回卡片内部，保持完整背景。
-
-- 主页摘要在页面之外保留并按数据变化刷新；最近两个插件页复用页面状态，短加载不再强制显示动画。
-- 修复自动检查更新开关切换后未立即反映当前状态的问题。
+- Capability 权限按插件及 scope 指纹管理，敏感能力默认待决定；权限范围扩大后重新确认，撤销时拒绝新调用、取消在途调用并停止相关后台任务。权限页仅展示用户可决定的权限。
+- WebView 禁止远程导航、任意网络、文件访问、Cookie 和 DOM Storage，使用精确来源消息监听与 CSP；未声明或未授权的调用在 Provider 执行前被拒绝。
+- 新增 WorkManager 持久调度、API 24+ Provider 任务和 API 26+ JavaScriptSandbox Worker，支持约束、超时、重试、并发租约与持久历史，不使用隐藏 WebView 模拟后台执行。
+- 新增隔离 KV/Blob、Keystore AES-GCM SecretStore、Dataset 分块读取与 staging generation 原子切换，并接入统一 `.atsbackup` v3 数据管理。
+- `file.export` 受权限、MIME、大小和用户手势约束：插件先写入自身隔离 Blob，再通过系统文件保存器导出；权限撤销、会话关闭或 Activity 销毁时取消在途文件操作。
+- 网络能力接受合法 HTTP token 请求头（包括米游社 `x-rpc-device_id`）；仅在 scope 显式声明后允许 `Authorization` 或 `Cookie`，继续禁止 Host、代理及连接级请求头和控制字符注入。
+- 普通插件可将自提供 Worker Capability 用作主页组件数据源，包内调用不展示多余权限，但下游网络、文件与调度仍检查插件授权。
+- 修复 Dataset 分块读取未应用 offset 导致重复读取文件头、ZIP 目录解析和 JSON 解析失败的问题。
+- 备份包含已安装 format v3 原始插件包，支持恢复未公开发布的本地包；安装失败回滚包版本，新装插件默认停用，并重新检查权限与完全信任。
 
 ### 界面与交互
 
-- 主页将工具与组件数量改为轻量摘要，优先呈现实际小部件；保留点击进入、长按小菜单与拖动排序。
-- 插件管理使用按对象打开的详情面板，集中显示启用、显示位置、真实权限范围、更新与数据维护操作；停用插件仍可管理，关闭后保留列表上下文。
-- 备份恢复说明明确区分替换和数据集支持的合并，不把插件包删除与业务数据清除混为一项操作。
-- 导入、导出、删除数据统一为全屏两步操作：固定标题和底栏、独立滚动列表、确认页核对范围；不支持下滑或点击外部关闭，修改选择后退出需确认，返回选择保留原进度。
-- 修复部分手机收起软键盘后数据操作页保持缩小的问题，底栏随键盘避让并在收起后恢复全屏。
-- 沿用现有 SDK、主题与权限契约，无数据格式或公开 API 变更。
+- 主页优先呈现实际小部件，以轻量摘要显示工具与组件数量，保留点击进入、长按菜单和拖动排序；最近两个插件页复用页面状态，短加载不再强制播放动画。
+- 插件详情面板集中呈现启用、显示位置、真实权限范围、更新与数据维护；停用插件仍可管理，关闭面板后保留列表上下文。
+- 修复未安装插件被计入更新提醒及全部更新、自动检查更新开关未立即反映状态的问题；需要重启激活的系统插件提供持久提示及立即／稍后重启入口。
+- 导入、导出和删除数据统一为全屏两步流程：独立滚动列表、固定底栏与范围确认，不支持手势误关闭；修改选择后退出需确认，返回选择保留进度，并修复收起软键盘后的高度恢复。
+- 数据操作明确区分替换、合并、删除插件包和清除业务数据，避免误解影响范围。
+- 主页摘要按数据变化刷新，并跟随实际分页状态恢复读取，修复更新插件后返回首页时游戏组件持续加载的问题。
+- 系统部件提前异步读取实时状态，加载与内容共用卡片布局；首次展示最多等待 150 ms 就绪，界面更新后淡出启动屏，慢查询超时后正常显示首页，不缓存系统授权结果。
+- Shizuku Binder、授权和系统服务连接变化会刷新插件及主页组件，冷启动也能更新状态，系统服务意外退出后自动重连。
+- WebView 字体层级与 Compose 对齐，Host 声明式 renderer 增加受限共享图标；组件移除重复状态标签，完整铺满卡片背景，错误信息保留在卡片内部。
+- 移除 WebView 创建前固定一秒等待，保留首帧加载外壳；提供独立包名和数据空间的非调试性能测试变体。
 
-### 新增特性
+### 升级与兼容性
 
-- Runtime Contract 提升到 2.1.0，新增受权限、MIME、大小和用户手势约束的 `file.export`；插件先写入自身隔离 Blob，再通过系统“另存为”界面导出，宿主不接受任意路径。
-- 新增独立后台任务示例、任务运行／历史 ADB 命令和 Runtime 生命周期回归脚本，覆盖 Host/WebView、旋转、前后台、错误外壳、权限撤销、超时、重试及 Provider 重连。
-
-### 优化与修复
-
-- 补充 `system.logs.search` 可选时间范围与 Provider 回执的契约说明；不改变网络／日志授权范围。
-- 网络 Capability 按 HTTP token 语法接收下划线请求头，修复米游社 `x-rpc-device_id` 等合法字段被拒绝的问题；保留敏感 Header scope 与危险字段限制，并拒绝控制字符注入。
-- 修复 Dataset 分块读取未应用 offset 导致大文件重复读取文件头的问题，避免插件 ZIP 目录解析和 JSON 解析失败；增加跨块读取设备回归测试。
-- Debug 新增归档检查、显式选择 Dataset 恢复与数据状态查询接口，复用正式归档校验和暂存恢复流程，诊断仅返回元数据。
-- 移除 WebView 创建前固定的一秒等待，保留首帧加载外壳；Debug 日志增加页面就绪耗时，便于区分页面启动与业务数据加载。
-- 普通插件可把自提供 Worker Capability 用作主页组件数据源；包内自调用不显示无意义权限，但 Worker 的网络、文件、调度等下游调用仍以插件自身授权检查。
-- `network.request` 只在 scope 显式声明后允许标准 `Authorization` 或 `Cookie` 请求头；Host、代理与连接级请求头仍始终禁止，声明会进入权限指纹并显示在管理页。
-- 插件 SDK 2.0.0 移除已退出的 API1 Tool、Host、主页组件和 Migration Bridge 接口；可信 Provider 可直接使用共享 Shizuku 客户端，取消待发布的 `readSystemLog` 平台桥，旧桥仅按需兼容。Runtime Contract 提供通用 `system.logs` 权限定义，普通插件不能获得完整日志或通用 Shell。
-- 数据备份包含已安装 format v3 原始插件包，可恢复未发布的本地项目；与本地导入共用校验，失败回滚包版本，新装插件保持停用并重新检查权限/完全信任。
-- 宿主停止装载或安装旧 `plugin.apk`；历史归档仍可识别，但不会重新执行其中的 API1 代码。
-- Scheduler 的触发、约束、撤权、重试与租约决策抽为可测试策略，并补齐持久历史、并发租约和宿主生命周期 instrumentation 用例。
-- Debug 文件导入与导出选择器在权限撤销、会话关闭和 Activity 销毁时会取消，不留下继续运行的宿主操作。
-
-### 兼容性
-
-- versionCode 提升到 24，为迁移后的 format v3 插件提供 `file.export`、自提供 Worker 主页能力和通用受限系统日志 Provider；插件 SDK 提升到 2.0.0。
-
-## 1.7.0（2026-08-28）
-
-### 新增特性
-
-- 交付 Runtime v2 format v3：严格插件清单、确定性完整性清单、原子 generation 安装／回滚、版本化 RPC、TypeScript SDK 与 Capability Router。
-- UI contribution 统一使用 `ui/*.json` 声明式文档；Host 组件树与隔离 WebView 是两种 renderer，共用设计 token、状态外壳、权限与生命周期，旧 `runtime.ui.type=web` 只保留读取兼容。
-- 新增按插件管理的 Capability 权限：基础会话与私有存储自动允许，敏感能力默认待决定；授权绑定 scope 指纹，扩大范围后重新确认，撤销会阻止新调用、取消在途调用并停止相关后台任务。
-- 普通插件可通过必需的 JavaScript Worker 提供自定义 Capability；Worker 的下游调用以提供者插件身份重新授权，不获得宿主身份。
-- 新增 WorkManager 持久调度、API 24+ provider-task 与 API 26+ JavaScriptSandbox worker；任务具备约束、超时、重试、并发租约和持久历史。
-- 新增宿主管理的 KV／blob、Keystore AES-GCM SecretStore、Dataset chunk API 与 staging generation 原子切换，并接入统一 `.atsbackup` v3 数据管理。
-- 提供插件 CLI、契约生成、WebView／Host UI 与 Worker Capability 示例及 ADB 调试入口；Runtime Contract 首版为 `2.0.0`，插件 SDK 保持 `1.4.0`。
-
-### 架构调整
-
-- 运行时实现归并到 `plugin/runtime` 并改用职责类名；Web SDK、CLI 和示例分别整理到 `web-sdk`、`tools/plugin` 与 `examples/plugins`，不再把 V2 工作代号写入文件名或包名。
-- Shizuku 授权及 Native Provider 源码迁移到独立 `plugin-shizuku-auth` 仓库，主体只保留平台生命周期桥和公开 SDK/契约。
-- 插件 SDK 的 Native Provider API 从工作代号包 `.plugin.v2` 迁移到稳定包 `.plugin.runtime`；本次只整理源码命名，不改变 SDK 版本，Provider 插件随当前源码重新编译。
-- 普通包禁止声明或夹带 Native Provider；必须以宿主身份与系统交互的插件使用签名的 `trusted-provider`，但仍可同时贡献 UI、主页组件、Worker 与普通 Tool 功能，管理页明确显示完全信任边界。
-- `shizuku_auth` 从内置插件改为单个独立 `1.0.0 (1)` 全信任 V3 包：同包注册 `shizuku.control` 与 `accessibility.manage`，并用声明式 UI 查看连接、请求系统授权和连接 UserService；宿主只保留 Android manifest、UserService 与 Binder 生命周期要求的最小 bridge。
-- API1 与 Runtime v2 插件使用统一迭代依赖装载；旧备份中的内置 `shizuku_auth` 启用状态可映射到同 ID 外部包。
-- 旧版插件升级为同 ID format v3 包时，宿主会先导出并校验兼容 Dataset，再切换插件记录；失败恢复旧插件，旧偏好数据继续保留以便回滚。
-
-### 安全与兼容性
-
-- WebView 禁止远程导航、任意网络、文件访问、Cookie 与 DOM Storage，使用精确来源消息监听和 CSP；普通插件未声明或未授权的能力调用会在 Provider 执行前被拒绝。
-- `trusted-provider` 必须通过 publisher 信任根签名验证；API1 与全信任 Provider 的原生代码不受普通插件权限开关约束。
-- 权限页面只列出用户可以决定的权限：插件私有数据空间不再作为不可关闭的“权限”展示，完全信任插件自身也不再显示或接受权限开关。
-- Shizuku 的 Binder、授权及系统服务连接变化会通知全部插件和主页组件，冷启动停留在主页时也能自动刷新最终状态；系统服务意外退出后会自动重新连接。
-- WebView renderer 新增与 Compose 对齐的字体层级 token，Host 声明式 renderer 新增受限共享图标节点；Shizuku 工具页恢复状态图标、标题说明和并排操作的统一卡片结构。
-- 主页小部件移除重复的“已就绪”标签，异常时才显示“需处理”；全信任 Provider 使用绿色强调背景，普通插件保留原有浅色背景，Shizuku 顶部说明改回通用中性提示色。
-- Debug ADB 导入支持显式同版本开发替换，便于不占用正式版本号地复核 UI；正式安装入口仍拒绝同 `versionCode` 异包，替换过程不删除插件 Dataset。
-- 最低 Android 版本保持 API 24；JavaScript worker 在 API 26 与 WebView 能力双重检查后启用，不用隐藏 WebView 模拟后台执行。
-- 宿主 versionCode 仅从 22 提升到 23；Phigros 与抽卡分析继续保留 API1 兼容实现，本版本不提前迁移其业务 UI。
-- API1 与 Migration Bridge 在剩余插件完成迁移并通过迁移、恢复、业务与降级测试前继续保留，只接受迁移与兼容修复；退出不附加版本数量或日历时间要求。
+- 主体为 2.0.0（versionCode 23），插件 SDK 为 2.0.0，Runtime Contract 为 2.1.0；最低 Android 版本保持 API 24，JavaScript Worker 还需 API 26 及设备 WebView 能力支持。
+- 完成 v1/API1 运行时退役，移除旧插件 APK 安装、执行、启停、依赖和回滚分支，宿主与 Debug 命令统一管理 format v3 插件。
+- 修复残留旧插件记录阻止同 ID format v3 包导入及错误显示启用状态的问题；旧安装文件和业务数据保留在设备上，不自动清除。
+- 继续支持 `.atsbackup` v2/v3 的兼容数据恢复和事务回滚；旧宿主迁移包仅恢复兼容应用设置，不安装或启用旧插件，也不自动授权新的 Shizuku Provider。
+- 尚未迁移的 API1 业务数据须先在支持 Migration Bridge 的旧版本导出，再通过新版的数据恢复入口导入；历史归档识别不代表可以执行旧 API1 代码。
+- Debug ADB 支持显式同版本开发替换，正式安装仍拒绝相同 versionCode 的不同包，替换不删除 Dataset。
 
 ## 1.6.1（2026-08-21）
 
