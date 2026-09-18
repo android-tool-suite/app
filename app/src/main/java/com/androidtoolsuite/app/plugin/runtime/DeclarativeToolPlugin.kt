@@ -78,8 +78,14 @@ class DeclarativeToolPlugin(
     val installed: PluginPackageStore.InstalledPlugin,
     private val actions: HostActions,
 ) : HostTool {
+    private val documentFuture = java.util.concurrent.CompletableFuture.supplyAsync { loadDocument(installed) }
     private var activeView = WeakReference<ComposeView>(null)
     @Volatile private var activeWebSession: WebSession? = null
+    private var visible = true
+    override fun onVisibilityChanged(visible: Boolean) {
+        this.visible = visible
+        activeWebSession?.setVisible(visible)
+    }
     private val hostRevision: MutableIntState = mutableIntStateOf(0)
 
     override fun id(): String = installed.manifest.plugin.id
@@ -95,16 +101,18 @@ class DeclarativeToolPlugin(
 
     override fun createView(activity: android.app.Activity, host: HostServices): View {
         val view = composePluginView(activity) {
-            DeclarativeToolScreen(installed, actions, hostRevision.intValue) { session ->
+            DeclarativeToolScreen(installed, actions, hostRevision.intValue, documentFuture) { session ->
                 activeWebSession = session
+                session?.setVisible(visible)
             }
         } as ComposeView
         activeView = WeakReference(view)
         return view
     }
 
-    override fun createHomeWidgets(activity: android.app.Activity, host: HostServices): List<HostHomeWidget> =
-        RuntimeHomeWidgets.create(installed, actions, hostRevision)
+    private val homeWidgets by lazy { RuntimeHomeWidgets.create(installed, actions, hostRevision) }
+
+    override fun createHomeWidgets(activity: android.app.Activity, host: HostServices): List<HostHomeWidget> = homeWidgets
 
     override fun onHostStateChanged() {
         hostRevision.intValue++
@@ -132,13 +140,17 @@ private fun DeclarativeToolScreen(
     installed: PluginPackageStore.InstalledPlugin,
     actions: HostActions,
     hostRevision: Int,
+    documentFuture: java.util.concurrent.CompletableFuture<DeclarativeUiDocument>,
     onWebSessionChanged: (WebSession?) -> Unit,
 ) {
     var reloadKey by remember(installed.generationDirectory) { mutableIntStateOf(0) }
-    var documentState by remember(installed.generationDirectory) { mutableStateOf<DocumentState>(DocumentState.Loading) }
+    var documentState by remember(installed.generationDirectory) {
+        mutableStateOf<DocumentState>(if (documentFuture.isDone && !documentFuture.isCompletedExceptionally)
+            DocumentState.Ready(documentFuture.getNow(null)) else DocumentState.Loading)
+    }
     LaunchedEffect(installed.generationDirectory, reloadKey) {
         documentState = try {
-            val document = withContext(Dispatchers.IO) { loadDocument(installed) }
+            val document = withContext(Dispatchers.IO) { if (reloadKey == 0) documentFuture.get() else loadDocument(installed) }
             DocumentState.Ready(document)
         } catch (error: Exception) {
             DocumentState.Failed(safeMessage(error))

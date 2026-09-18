@@ -80,6 +80,11 @@ class WebToolPlugin(
 ) : HostTool {
     private var activeView = WeakReference<androidx.compose.ui.platform.ComposeView>(null)
     @Volatile private var activeSession: WebSession? = null
+    private var visible = true
+    override fun onVisibilityChanged(visible: Boolean) {
+        this.visible = visible
+        activeSession?.setVisible(visible)
+    }
     private val widgetRevision = mutableIntStateOf(0)
 
     override fun id(): String = installed.manifest.plugin.id
@@ -107,14 +112,15 @@ class WebToolPlugin(
                 installed = installed,
                 actions = actions,
                 entryPath = requireNotNull(installed.manifest.defaultUiEntry()).entry,
-            ) { session -> activeSession = session }
+            ) { session -> activeSession = session; session?.setVisible(visible) }
         } as androidx.compose.ui.platform.ComposeView
         activeView = WeakReference(view)
         return view
     }
 
-    override fun createHomeWidgets(activity: android.app.Activity, host: HostServices): List<HostHomeWidget> =
-        RuntimeHomeWidgets.create(installed, actions, widgetRevision)
+    private val homeWidgets by lazy { RuntimeHomeWidgets.create(installed, actions, widgetRevision) }
+
+    override fun createHomeWidgets(activity: android.app.Activity, host: HostServices): List<HostHomeWidget> = homeWidgets
 
     override fun onSelected() = Unit
     override fun onHostStateChanged() {
@@ -139,6 +145,8 @@ internal fun WebToolScreen(
 ) {
     var reloadKey by remember { mutableIntStateOf(0) }
     var state by remember(reloadKey) { mutableStateOf<WebUiState>(WebUiState.Loading) }
+    var showLoading by remember(reloadKey) { mutableStateOf(false) }
+    LaunchedEffect(reloadKey) { kotlinx.coroutines.delay(250); showLoading = true }
     var backendRequested by remember(reloadKey) { mutableStateOf(false) }
     key(reloadKey) {
         val session = remember(installed.generationDirectory, reloadKey) {
@@ -173,7 +181,7 @@ internal fun WebToolScreen(
             when (val current = state) {
                 WebUiState.Loading -> Box(
                     Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-                ) { LoadingState("正在打开工具…") }
+                ) { if (showLoading) LoadingState("正在打开工具…") }
                 WebUiState.Ready -> Unit
                 is WebUiState.Failed -> Box(
                     Modifier.fillMaxSize()
@@ -215,6 +223,7 @@ internal class WebSession(
     private var webView: WebView? = null
     private var rendererGone = false
     private var handshakeComplete = false
+    private var visible = true
     private var lastUserGestureAt = 0L
     private val pending = ConcurrentHashMap<String, CompletableFuture<JSONObject>>()
     private var replyProxy: JavaScriptReplyProxy? = null
@@ -302,13 +311,20 @@ internal class WebSession(
         view.destroy()
     }
 
+    fun setVisible(visible: Boolean) {
+        if (this.visible == visible) return
+        this.visible = visible
+        webView?.let { if (visible) it.onResume() else it.onPause() }
+        if (handshakeComplete) emitEvent(GeneratedContract.Events.APP_VISIBILITYCHANGED, JSONObject().put("visible", visible))
+    }
+
     fun emitHostStateEvents() {
         if (!handshakeComplete) return
         emitEvent(GeneratedContract.Events.APP_THEMECHANGED, themePayload())
         emitEvent(GeneratedContract.Events.APP_CONTAINERCHANGED, containerPayload())
         emitEvent(
             GeneratedContract.Events.APP_VISIBILITYCHANGED,
-            JSONObject().put("visible", webView?.isShown == true),
+            JSONObject().put("visible", visible && webView?.isShown == true),
         )
     }
 

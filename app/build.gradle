@@ -152,6 +152,14 @@ android {
                 signingConfig signingConfigs.release
             }
         }
+        performance {
+            initWith release
+            applicationIdSuffix ".performance"
+            versionNameSuffix "-perf"
+            debuggable false
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ["release"]
+        }
     }
 
     compileOptions {

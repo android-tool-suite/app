@@ -22,6 +22,7 @@ public interface HostTool {
     }
     default DatasetBridge datasetBridge() { return null; }
     View createView(Activity activity, HostServices host);
+    default void onVisibilityChanged(boolean visible) {}
     void onSelected();
     void onHostStateChanged();
     void onDestroy();

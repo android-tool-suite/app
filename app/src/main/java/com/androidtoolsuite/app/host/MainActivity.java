@@ -627,6 +627,7 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     }
 
     private void loadPlugins() {
+        pluginRuntime.widgetSnapshots().reconcile(pluginPackageStore.load());
         plugins.clear();
         importedDescriptorCache.clear();
         runtimeInstalledCache.clear();

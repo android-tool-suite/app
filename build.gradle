@@ -26,3 +26,15 @@ tasks.register("collectReleaseArtifacts", Copy) {
         rename { "android-tool-suite.apk" }
     }
 }
+
+// Separate, non-debuggable Release-derived APK for side-by-side device testing.
+tasks.register("collectPerformanceArtifacts", Copy) {
+    group = "build"
+    description = "Collects the isolated performance APK without replacing the normal release artifact."
+    dependsOn ":app:assemblePerformance"
+    from("app/build/outputs/apk/performance") {
+        include "app-performance.apk"
+        rename { "android-tool-suite-performance.apk" }
+    }
+    into(layout.projectDirectory.dir("artifacts"))
+}

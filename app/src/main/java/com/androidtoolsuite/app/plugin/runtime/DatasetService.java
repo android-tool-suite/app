@@ -52,6 +52,19 @@ public final class DatasetService implements AutoCloseable {
     private final File root;
     private final Map<String, PayloadHandle> handles = new HashMap<>();
 
+    private final java.util.List<java.util.function.Consumer<String>> changeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    public AutoCloseable addChangeListener(java.util.function.Consumer<String> listener) {
+        changeListeners.add(listener);
+        return () -> changeListeners.remove(listener);
+    }
+    private void changed(String pluginId) {
+        for (java.util.function.Consumer<String> listener : changeListeners) listener.accept(pluginId);
+    }
+    public synchronized String revisionForCache(String pluginId) {
+        try { return activeGeneration(pluginId).getName(); }
+        catch (IOException | CapabilityFailure error) { return "unavailable"; }
+    }
+
     @FunctionalInterface
     public interface RestoreOperation { void run() throws IOException; }
 
@@ -94,6 +107,7 @@ public final class DatasetService implements AutoCloseable {
                 throw new IOException(error.getMessage(), error);
             } finally {
                 for (File snapshot : snapshots.values()) if (!retained.contains(snapshot)) deleteRecursively(snapshot);
+                for (String id : pluginIds) changed(id);
             }
         }
     }
@@ -351,6 +365,7 @@ public final class DatasetService implements AutoCloseable {
             validatePayload(handle.file, dataset);
             String digest = hex(handle.digest.digest());
             String generation = activateDataset(pluginId, dataset, handle.file, digest);
+            changed(pluginId);
             return new JSONObject()
                     .put("committed", true)
                     .put("generation", generation)
@@ -380,6 +395,7 @@ public final class DatasetService implements AutoCloseable {
         RuntimePluginManifest.Dataset dataset = requireDataset(pluginId, datasetId, false);
         try {
             String generation = activateDataset(pluginId, dataset, null, "");
+            changed(pluginId);
             return new JSONObject().put("deleted", true).put("generation", generation);
         } catch (IOException | JSONException | RuntimeException error) {
             throw internal(error);

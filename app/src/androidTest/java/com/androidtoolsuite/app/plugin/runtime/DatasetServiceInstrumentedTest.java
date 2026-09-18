@@ -54,6 +54,29 @@ public final class DatasetServiceInstrumentedTest {
     }
 
     @Test
+    public void snapshotInvalidationOnlyFollowsCommittedDataChanges() throws Exception {
+        DatasetService service = runtime.datasets();
+        List<String> changes = new ArrayList<>();
+        try (AutoCloseable listener = service.addChangeListener(changes::add)) {
+            String initial = service.revisionForCache(PLUGIN_ID);
+            JSONObject opened = service.openWrite(PLUGIN_ID, "cache-test", "settings");
+            String handle = opened.getString("handle");
+            service.write(PLUGIN_ID, "cache-test", handle, Base64.encodeToString("{\"formatVersion\":1}".getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
+            service.abort(PLUGIN_ID, "cache-test", handle);
+            assertTrue(changes.isEmpty());
+            assertEquals(initial, service.revisionForCache(PLUGIN_ID));
+            opened = service.openWrite(PLUGIN_ID, "cache-test", "settings");
+            handle = opened.getString("handle");
+            service.write(PLUGIN_ID, "cache-test", handle, Base64.encodeToString("{\"formatVersion\":1}".getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
+            service.commit(PLUGIN_ID, "cache-test", handle);
+            assertEquals(Arrays.asList(PLUGIN_ID), changes);
+            assertTrue(!initial.equals(service.revisionForCache(PLUGIN_ID)));
+            service.delete(PLUGIN_ID, "settings");
+            assertEquals(Arrays.asList(PLUGIN_ID, PLUGIN_ID), changes);
+        }
+    }
+
+    @Test
     public void datasetCommitSecretRoundTripAndFailedValidationPreserveGeneration() throws Exception {
         DatasetService service = runtime.datasets();
         String session = "instrumented";

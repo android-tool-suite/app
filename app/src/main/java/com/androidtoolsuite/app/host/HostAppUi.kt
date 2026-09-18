@@ -150,6 +150,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.viewinterop.AndroidView
 import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget
 import com.androidtoolsuite.app.plugin.runtime.HostTool
@@ -537,17 +538,41 @@ private fun AppContent(
     hostRevision(activity)  // 订阅：选中插件变化时 selected 不变但 Java 字段已变
     val selected = activity.selectedPluginForUi()
     val section = activity.currentSectionForUi()
-    when {
-        // 插件详情和关于都是压在分区之上的独立页面，不参与左右滑动。
-        selected != null -> PluginDetailScreen(activity, selected, refreshVersion, modifier.fillMaxSize())
-        section == ABOUT -> AboutScreen(activity, refreshVersion, modifier.fillMaxSize())
-        else -> SectionPager(
-            activity,
-            pagerState,
-            refreshVersion,
-            snackbarHostState,
-            modifier.fillMaxSize(),
-        )
+    androidx.compose.runtime.SideEffect {
+        com.androidtoolsuite.app.plugin.runtime.PluginRuntime.get(activity).widgetSnapshots()
+            .setVisible(selected == null && section == DASHBOARD)
+    }
+    // Keep the two most recently used tools mounted; ordinary navigation preserves JS state.
+    var recent by remember(activity) { mutableStateOf<List<HostTool>>(emptyList()) }
+    val available = activity.pluginsForUi()
+    val retained = (recent.filter { it in available && it !== selected } + listOfNotNull(selected)).takeLast(2)
+    androidx.compose.runtime.SideEffect { if (recent != retained) recent = retained }
+    Box(modifier.fillMaxSize()) {
+        RetainedPage(selected == null && section != ABOUT) {
+            SectionPager(activity, pagerState, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
+        }
+        retained.forEach { plugin ->
+            key(plugin) {
+                androidx.compose.runtime.SideEffect { plugin.onVisibilityChanged(plugin === selected) }
+                RetainedPage(plugin === selected) {
+                    PluginDetailScreen(activity, plugin, refreshVersion, Modifier.fillMaxSize())
+                }
+            }
+        }
+        if (section == ABOUT && selected == null) AboutScreen(activity, refreshVersion, Modifier.fillMaxSize())
+    }
+
+}
+
+/** Unplaced pages keep composition but cannot draw or receive input. */
+@Composable
+private fun RetainedPage(visible: Boolean, content: @Composable () -> Unit) {
+    val semanticsModifier = if (visible) Modifier else Modifier.clearAndSetSemantics { }
+    Layout(content = content, modifier = semanticsModifier.fillMaxSize()) { children, constraints ->
+        val placeables = children.map { it.measure(constraints) }
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            if (visible) placeables.forEach { it.placeRelative(0, 0) }
+        }
     }
 }
 
@@ -970,7 +995,9 @@ private fun WidgetTile(
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-        PluginAndroidView(Modifier.fillMaxSize()) { widget.createView(activity, activity) }
+        key(widget) {
+            PluginAndroidView(Modifier.fillMaxSize()) { widget.createView(activity, activity) }
+        }
         // 小部件里的 View 会把触摸事件吃掉，外层的点按、长按和拖动就都收不到了。
         // 这层透明覆盖只拦事件不消费，手势判定仍然由上面的 dropPreviewReorder 做。
         Box(
@@ -1968,6 +1995,7 @@ private fun SettingsScreen(
 ) {
     val scope = rememberCoroutineScope()
     hostRevision(activity)
+    val autoCheckUpdates = activity.autoCheckUpdatesForUi()
     val listState = rememberPageListState(activity, "settings")
     var themeMenu by remember { mutableStateOf(false) }
     var colorMenu by remember { mutableStateOf(false) }
@@ -2009,7 +2037,7 @@ private fun SettingsScreen(
             SuiteSettingsGroup("更新") {
                 SuiteSettingsSwitchRow(
                     "自动检查更新",
-                    checked = activity.autoCheckUpdatesForUi(),
+                    checked = autoCheckUpdates,
                     onCheckedChange = activity::setAutoCheckUpdatesForUi,
                 )
                 SuiteSettingsRow(
@@ -2766,6 +2794,7 @@ private fun PluginAndroidView(
 ) {
     AndroidView(
         modifier = modifier.fillMaxWidth(),
+        onRelease = { (it as? androidx.compose.ui.platform.ComposeView)?.disposeComposition() },
         factory = {
             factory().also { view ->
                 (view.parent as? ViewGroup)?.removeView(view)

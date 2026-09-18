@@ -10,6 +10,7 @@ import java.util.List;
 public final class PluginRuntime {
     private static volatile PluginRuntime instance;
 
+    private final WidgetSnapshotStore widgetSnapshots;
     private final PluginPackageStore packages;
     private final StorageService storage;
     private final SecretStore secrets;
@@ -74,7 +75,10 @@ public final class PluginRuntime {
         nativeProviders.loadEnabledAtColdStart(packages.load());
         workerProviders = new WorkerCapabilityProviderManager(context, capabilities);
         workerProviders.sync(packages.load());
+        widgetSnapshots = new WidgetSnapshotStore(context, this);
     }
+
+    public WidgetSnapshotStore widgetSnapshots() { return widgetSnapshots; }
 
     public PluginPackageStore packages() {
         return packages;

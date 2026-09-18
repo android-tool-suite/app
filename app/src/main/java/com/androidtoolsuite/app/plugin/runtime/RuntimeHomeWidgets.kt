@@ -5,6 +5,7 @@ import android.view.View
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -12,10 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -23,19 +21,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.androidtoolsuite.app.plugin.runtime.HostHomeWidget
 import com.androidtoolsuite.app.plugin.api.HomeWidgetSize
 import com.androidtoolsuite.app.plugin.runtime.HostServices
-import com.androidtoolsuite.app.ui.LoadingState
 import com.androidtoolsuite.app.ui.SuiteCard
 import com.androidtoolsuite.app.ui.SuiteSpacing
 import com.androidtoolsuite.app.ui.SuiteStatusChip
 import com.androidtoolsuite.app.ui.composePluginView
-import com.androidtoolsuite.runtime.contract.GeneratedContract
 import com.androidtoolsuite.runtime.contract.RuntimePluginManifest
-import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
-import java.security.SecureRandom
-import java.util.concurrent.CompletionException
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 internal object RuntimeHomeWidgets {
     fun create(
@@ -63,12 +54,6 @@ private class RuntimeHomeWidget(
     }
 }
 
-private sealed interface WidgetState {
-    data object Loading : WidgetState
-    data class Ready(val value: JSONObject) : WidgetState
-    data class Failed(val message: String) : WidgetState
-}
-
 @Composable
 private fun RuntimeWidgetContent(
     installed: PluginPackageStore.InstalledPlugin,
@@ -76,59 +61,25 @@ private fun RuntimeWidgetContent(
     actions: HostActions,
     revision: Int,
 ) {
-    val sessionId = remember(installed.generationDirectory, contribution.id) { widgetSessionId() }
-    var state by remember(installed.generationDirectory, contribution.id) {
-        mutableStateOf<WidgetState>(WidgetState.Loading)
+    val store = PluginRuntime.get(actions.activity()).widgetSnapshots()
+    val entry = remember(installed.generationDirectory, contribution.id) { store.entry(installed, contribution) }
+    DisposableEffect(entry) {
+        val observation = store.observe(entry)
+        onDispose { observation.close() }
     }
-    DisposableEffect(sessionId) {
-        onDispose { actions.closeRuntimeSession(sessionId) }
-    }
-    LaunchedEffect(sessionId, revision) {
-        state = try {
-            val capability = GeneratedContract.capabilityForMethod(contribution.dataSource)
-                ?: installed.manifest.capabilityContributions
-                    .firstOrNull { provided -> contribution.dataSource in provided.methods }
-                    ?.id
-                ?: throw IllegalStateException("主页组件数据源无效")
-            if (installed.manifest.capabilityRequirements.none { it.id == capability }) {
-                throw IllegalStateException("主页组件未声明所需能力")
-            }
-            val result = suspendCancellableCoroutine<JSONObject> { continuation ->
-                val future = actions.capabilityRouter().invoke(
-                    installed.manifest,
-                    installed.manifest.plugin.id,
-                    sessionId,
-                    contribution.dataSource,
-                    JSONObject(),
-                    false,
-                    5_000,
-                )
-                continuation.invokeOnCancellation { future.cancel(true) }
-                future.whenComplete { value, error ->
-                    if (!continuation.isActive) return@whenComplete
-                    if (error == null) continuation.resume(value ?: JSONObject())
-                    else continuation.resumeWithException(unwrapWidgetError(error))
-                }
-            }
-            WidgetState.Ready(result)
-        } catch (error: Throwable) {
-            WidgetState.Failed(error.message?.takeIf { it.isNotBlank() } ?: "暂时无法读取状态")
-        }
-    }
-
-    val containerColor = if (installed.manifest.plugin.kind == "trusted-provider") {
+    LaunchedEffect(entry, revision) { store.hostChanged(entry, revision) }
+    val color = if (installed.manifest.plugin.kind == "trusted-provider") {
         MaterialTheme.colorScheme.primaryContainer
+    } else MaterialTheme.colorScheme.surfaceContainerLow
+    val value = entry.value
+    if (value != null) {
+        RuntimeWidgetReady(contribution, value, color, entry.error)
     } else {
-        MaterialTheme.colorScheme.surfaceContainerLow
-    }
-    when (val current = state) {
-        WidgetState.Loading -> SuiteCard(containerColor = containerColor) { LoadingState("正在读取状态…") }
-        is WidgetState.Failed -> SuiteCard(containerColor = containerColor) {
+        SuiteCard(modifier = Modifier.fillMaxSize(), containerColor = color) {
             Text(contribution.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Text("暂时不可用", style = MaterialTheme.typography.titleMedium)
-            Text(current.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (entry.error == null) "—" else "暂时不可用", style = MaterialTheme.typography.titleLarge)
+            Text(entry.error ?: "正在读取状态", style = MaterialTheme.typography.bodySmall)
         }
-        is WidgetState.Ready -> RuntimeWidgetReady(contribution, current.value, containerColor)
     }
 }
 
@@ -137,13 +88,14 @@ private fun RuntimeWidgetReady(
     contribution: RuntimePluginManifest.HomeWidgetContribution,
     value: JSONObject,
     containerColor: Color,
+    refreshError: String?,
 ) {
     val title = value.optString("title", contribution.title)
     val detail = value.optString("detail", value.optString("label", ""))
     val metric = value.opt("value")?.takeUnless { it == JSONObject.NULL }?.toString()
         ?: value.opt("uid")?.takeUnless { it == JSONObject.NULL }?.toString().orEmpty()
     val positive = value.optBoolean("connected", false) || value.optString("state") == "ready"
-    SuiteCard(containerColor = containerColor) {
+    SuiteCard(modifier = Modifier.fillMaxSize(), containerColor = containerColor) {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -173,6 +125,9 @@ private fun RuntimeWidgetReady(
                 }
             }
         }
+        if (refreshError != null) {
+            Text("刷新失败 · 已保留上次内容", style = MaterialTheme.typography.labelSmall)
+        }
     }
 }
 
@@ -182,16 +137,4 @@ private fun parseSize(raw: String): HomeWidgetSize? {
     val width = parts[0].toIntOrNull() ?: return null
     val height = parts[1].toIntOrNull() ?: return null
     return runCatching { HomeWidgetSize(width, height) }.getOrNull()
-}
-
-private fun unwrapWidgetError(error: Throwable): Throwable {
-    var current = error
-    while (current is CompletionException && current.cause != null) current = current.cause!!
-    return current
-}
-
-private fun widgetSessionId(): String {
-    val bytes = ByteArray(18)
-    SecureRandom().nextBytes(bytes)
-    return android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP or android.util.Base64.URL_SAFE)
 }
