@@ -16,6 +16,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.util.Log
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -146,8 +150,16 @@ internal fun WebToolScreen(
     var reloadKey by remember { mutableIntStateOf(0) }
     var state by remember(reloadKey) { mutableStateOf<WebUiState>(WebUiState.Loading) }
     var showLoading by remember(reloadKey) { mutableStateOf(false) }
-    LaunchedEffect(reloadKey) { kotlinx.coroutines.delay(250); showLoading = true }
     var backendRequested by remember(reloadKey) { mutableStateOf(false) }
+    LaunchedEffect(reloadKey, backendRequested, state) {
+        // WebView's first construction can block main longer than the delay. Start only
+        // after AndroidView has been created and its first frame can actually be drawn.
+        if (backendRequested && state == WebUiState.Loading) {
+            withFrameNanos { }
+            kotlinx.coroutines.delay(500)
+            showLoading = true
+        }
+    }
     key(reloadKey) {
         val session = remember(installed.generationDirectory, reloadKey) {
             WebSession(
@@ -181,7 +193,13 @@ internal fun WebToolScreen(
             when (val current = state) {
                 WebUiState.Loading -> Box(
                     Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-                ) { if (showLoading) LoadingState("正在打开工具…") }
+                ) {
+                    AnimatedVisibility(
+                        visible = showLoading,
+                        enter = fadeIn(tween(200)),
+                        exit = ExitTransition.None,
+                    ) { LoadingState("正在打开工具…") }
+                }
                 WebUiState.Ready -> Unit
                 is WebUiState.Failed -> Box(
                     Modifier.fillMaxSize()
