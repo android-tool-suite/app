@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'release-notes.ps1')
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $buildFile = Join-Path $repositoryRoot 'app\build.gradle'
@@ -28,12 +29,14 @@ $versionCode = [int]$Matches[1]
 if ($ExpectedTag -ne "v$versionName") {
     throw "标签 $ExpectedTag 与应用版本 $versionName 不一致"
 }
-if (-not (Select-String -LiteralPath $changelogFile -SimpleMatch "## $versionName" -Quiet)) {
-    throw "CHANGELOG.md 缺少 $versionName"
-}
+$releaseNotes = Get-ChangelogReleaseNotes `
+    -Text (Get-Content -LiteralPath (Join-Path $repositoryRoot 'CHANGELOG.md') -Raw -Encoding utf8) `
+    -Version $versionName -RequirePublished
+Assert-ChangelogHistory -RepositoryRoot $repositoryRoot -CurrentVersion $versionName
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-$targetName = 'android-tool-suite.apk'
+[IO.File]::WriteAllText((Join-Path $OutputDirectory 'release-notes.md'), $releaseNotes + "`n", [Text.UTF8Encoding]::new($false))
+$targetName = "android-tool-suite-v$versionName.apk"
 $targetArtifact = Join-Path $OutputDirectory $targetName
 Copy-Item -LiteralPath $artifact.FullName -Destination $targetArtifact -Force
 $targetFile = Get-Item -LiteralPath $targetArtifact

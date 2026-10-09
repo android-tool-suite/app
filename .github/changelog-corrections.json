@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "version": "1.5.0",
+      "tagCommit": "15c7fc7cb2c34d3462d92277321dc30c9eeb10fc",
+      "originalSha256": "cdf5edcb9fc1d26831bd3ffb62871b8f155354c24154dbe35c6cc606bb9f77f4",
+      "correctedSha256": "544de46d11bfe7cbf7a5ee0a613700f3d3f33fb5b9936feaca1cab9ba042a683",
+      "reason": "Describe the delivered paging behavior rather than fixes against an unreleased intermediate implementation.",
+      "evidence": [
+        "v1.4.0:app/src/main/java/com/androidtoolsuite/app/host/HostAppUi.kt",
+        "d7df150:app/src/main/java/com/androidtoolsuite/app/host/HostAppUi.kt",
+        "15c7fc7:app/src/main/java/com/androidtoolsuite/app/host/HostAppUi.kt"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "tagCommit": "e80ef471ed9254bc79dadbee6731cb013b9181ad",
+      "originalSha256": "94027c8a41e3878a6d2ded4e7ffde7000ac3dce363b3f8a6775c7473d9074fb1",
+      "correctedSha256": "7997e4bafa8326280ead54e0181880e6014bb9086ac591f24d5bffdb942965cd",
+      "reason": "Describe final Runtime v2 loading and Dataset semantics without using intermediate development defects as the release baseline.",
+      "evidence": [
+        "v1.6.1:app/build.gradle",
+        "6dfffa2:app/src/main/java/com/androidtoolsuite/app/plugin/runtime/WebToolPlugin.kt",
+        "v2.0.0:app/src/main/java/com/androidtoolsuite/app/plugin/runtime/DatasetService.java"
+      ]
+    }
+  ]
+}
