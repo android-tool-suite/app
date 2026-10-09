@@ -61,6 +61,25 @@ public final class MigrationBridgeManagerTest {
     }
 
     @Test
+    public void deletionProgressReportsOnlyCommittedItemsBeforeFailure() throws Exception {
+        List<String> completed = new ArrayList<>();
+        DatasetBridge bridge = new DatasetBridge() {
+            @Override public List<DatasetDescriptor> datasets(Activity activity) {
+                return List.of(descriptor("parent", List.of()), descriptor("child", List.of("parent")));
+            }
+            @Override public void exportDataset(Activity activity, String id, OutputStream output) { }
+            @Override public boolean supportsDelete(String id) { return true; }
+            @Override public void deleteDataset(Activity activity, String id) throws IOException {
+                if (id.equals("parent")) throw new IOException("storage unavailable");
+            }
+        };
+        List<MigrationBridgeManager.DatasetOption> options = MigrationBridgeManager.discover(null, List.of(plugin(bridge)));
+        assertThrows(IOException.class, () -> MigrationBridgeManager.delete(null, options, options,
+                option -> completed.add(option.descriptor.id)));
+        assertEquals(List.of("child"), completed);
+    }
+
+    @Test
     public void hostDataIsSplitIntoIndependentPackageItems() {
         MigrationBridgeManager.DatasetOption settings =
                 MigrationBridgeManager.hostSettingsExportOption(10L);
@@ -194,7 +213,7 @@ public final class MigrationBridgeManagerTest {
     }
 
     @Test
-    public void importUsesTargetModesAndReportsExistingData() throws Exception {
+    public void olderReplaceOnlyBackupUsesCurrentReceiverMergeModeAndReportsExistingData() throws Exception {
         DatasetDescriptor descriptor = new DatasetDescriptor(
                 "records",
                 "Records",
@@ -202,7 +221,7 @@ public final class MigrationBridgeManagerTest {
                 10L,
                 1,
                 false,
-                List.of(DatasetRestoreMode.REPLACE, DatasetRestoreMode.MERGE)
+                List.of(DatasetRestoreMode.REPLACE)
         );
         byte[] archive = writePackageItem(descriptor);
         DatasetBridge bridge = new DatasetBridge() {

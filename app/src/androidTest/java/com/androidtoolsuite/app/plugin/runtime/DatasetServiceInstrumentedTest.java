@@ -129,6 +129,32 @@ public final class DatasetServiceInstrumentedTest {
     }
 
     @Test
+    public void mergeImportRoundTripPreservesSettingsAndRejectsMalformedInputAtomically() throws Exception {
+        DatasetService service = runtime.datasets();
+        MigrationToolPlugin migration = new MigrationToolPlugin(runtime.packages().find(PLUGIN_ID), service);
+        byte[] current = "{\"formatVersion\":1,\"value\":\"local\",\"items\":[{\"id\":\"1\",\"value\":\"local\"}]}".getBytes(StandardCharsets.UTF_8);
+        byte[] incoming = "{\"formatVersion\":1,\"value\":\"old\",\"extra\":true,\"items\":[{\"id\":\"1\",\"value\":\"old\"},{\"id\":\"2\",\"value\":\"new\"}]}".getBytes(StandardCharsets.UTF_8);
+        var bridge = migration.datasetBridge();
+        bridge.importDataset(null, "settings", 1, com.androidtoolsuite.app.migration.DatasetRestoreMode.REPLACE, new ByteArrayInputStream(current));
+        assertTrue(bridge.supportsRestoreMode("settings", 1, com.androidtoolsuite.app.migration.DatasetRestoreMode.MERGE));
+        bridge.importDataset(null, "settings", 1, com.androidtoolsuite.app.migration.DatasetRestoreMode.MERGE, new ByteArrayInputStream(incoming));
+        byte[] committed = read(service, "merge-roundtrip", "settings");
+        JSONObject merged = new JSONObject(new String(committed, StandardCharsets.UTF_8));
+        assertEquals("local", merged.getString("value"));assertTrue(merged.getBoolean("extra"));
+        assertEquals(2, merged.getJSONArray("items").length());
+        assertEquals("local", merged.getJSONArray("items").getJSONObject(0).getString("value"));
+        String generation = service.revisionForCache(PLUGIN_ID);
+        assertThrows(java.io.IOException.class, () -> bridge.importDataset(null, "settings", 1,
+                com.androidtoolsuite.app.migration.DatasetRestoreMode.MERGE, new ByteArrayInputStream("{\"items\":[{\"value\":\"missing-id\"}]}".getBytes(StandardCharsets.UTF_8))));
+        assertEquals(generation, service.revisionForCache(PLUGIN_ID));
+        assertArrayEquals(committed, read(service, "merge-roundtrip", "settings"));
+        ByteArrayOutputStream exported = new ByteArrayOutputStream();bridge.exportDataset(null, "settings", exported);
+        bridge.deleteDataset(null, "settings");
+        bridge.importDataset(null, "settings", 1, com.androidtoolsuite.app.migration.DatasetRestoreMode.MERGE, new ByteArrayInputStream(exported.toByteArray()));
+        assertEquals(merged.toString(), new JSONObject(new String(read(service, "merge-roundtrip", "settings"), StandardCharsets.UTF_8)).toString());
+    }
+
+    @Test
     public void multiChunkDatasetReadAppliesOffsets() throws Exception {
         DatasetService service = runtime.datasets();
         String session = "instrumented-chunked";
@@ -272,7 +298,10 @@ public final class DatasetServiceInstrumentedTest {
                 .put("mediaType", "application/json")
                 .put("validator", "json")
                 .put("maxBytes", 131072)
-                .put("restoreModes", new JSONArray().put("replace"))
+                .put("restoreModes", new JSONArray().put("replace").put("merge"))
+                .put("mergePolicy", new JSONObject().put("format", "json").put("rule", new JSONObject()
+                        .put("kind", "object").put("fields", new JSONObject().put("items", new JSONObject()
+                                .put("kind", "array").put("keys", new JSONArray().put("id")).put("requireAllKeys", true)))))
                 .put("dependsOn", new JSONArray());
     }
 

@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import com.androidtoolsuite.app.R;
+import com.androidtoolsuite.app.host.MainActivity;
 import com.androidtoolsuite.app.plugin.runtime.CapabilityCall;
 import com.androidtoolsuite.app.plugin.runtime.CapabilityFailure;
 import com.androidtoolsuite.app.plugin.runtime.CapabilityProvider;
@@ -42,6 +43,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -99,6 +102,11 @@ public final class HostCapabilityProviders {
             super(GeneratedContract.Capabilities.APP,
                     GeneratedContract.Methods.APP_GETSESSION,
                     GeneratedContract.Methods.APP_OPENEXTERNAL,
+                    GeneratedContract.Methods.APP_OPENTOOL,
+                    GeneratedContract.Methods.APP_OPENPERMISSIONS,
+                    GeneratedContract.Methods.APP_SETBACKNAVIGATION,
+                    GeneratedContract.Methods.APP_REPORTOPERATION,
+                    GeneratedContract.Methods.APP_OPENWIDGETSETTINGS,
                     GeneratedContract.Methods.APP_CLOSE);
             this.actions = actions;
         }
@@ -107,17 +115,74 @@ public final class HostCapabilityProviders {
         public JSONObject call(CapabilityCall call) throws CapabilityFailure {
             try {
                 switch (call.method) {
+                    case GeneratedContract.Methods.APP_OPENWIDGETSETTINGS:
+                        return new JSONObject().put("opened", activeSessionAction(call, () -> {
+                            String instanceId = call.payload.has("instanceId") ? call.payload.optString("instanceId", "") : null;
+                            MainActivity activity = (MainActivity) actions.activity();
+                            if (instanceId != null && activity.widgetInstancesForUi().find(call.pluginId, instanceId) == null) return false;
+                            activity.openWidgetSettingsForUi(call.pluginId, instanceId);
+                            return true;
+                        }));
                     case GeneratedContract.Methods.APP_GETSESSION:
                         return new JSONObject()
                                 .put("pluginId", call.pluginId)
                                 .put("sessionId", call.sessionId)
+                                .put("hasReturnTarget", actions.activity() instanceof MainActivity
+                                        && ((MainActivity) actions.activity()).hasPluginReturnTargetForUi())
                                 .put("protocol", ProtocolVersion.CURRENT.toString())
                                 .put("platform", new JSONObject()
                                         .put("id", "android")
                                         .put("api", Build.VERSION.SDK_INT));
                     case GeneratedContract.Methods.APP_CLOSE:
-                        actions.closeTool();
-                        return new JSONObject().put("closed", true);
+                        return new JSONObject().put("closed", activeSessionAction(call, () -> {
+                            ((MainActivity) actions.activity()).closePluginSessionForUi(call.pluginId, call.sessionId);
+                            return true;
+                        }));
+                    case GeneratedContract.Methods.APP_REPORTOPERATION:
+                        PluginUiOperationRegistry.Report.parse(call.payload);
+                        CompletableFuture<JSONObject> operation = actions.reportOperation(call);
+                        try {
+                            return operation.get(Math.max(1L, call.deadlineEpochMillis - System.currentTimeMillis()), TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException error) {
+                            operation.cancel(false);
+                            throw new CapabilityFailure("TIMEOUT", "操作状态报告超时", true);
+                        } catch (InterruptedException error) {
+                            operation.cancel(false);
+                            Thread.currentThread().interrupt();
+                            throw new CapabilityFailure("CANCELLED", "操作状态报告已取消", true);
+                        } catch (ExecutionException error) {
+                            Throwable cause = error.getCause();
+                            if (cause instanceof CapabilityFailure) throw (CapabilityFailure) cause;
+                            throw internal(cause == null ? error : cause);
+                        }
+                    case GeneratedContract.Methods.APP_SETBACKNAVIGATION:
+                        Object rawBackEnabled = call.payload.opt("enabled");
+                        if (!(rawBackEnabled instanceof Boolean)) {
+                            throw CapabilityFailure.invalid("enabled must be boolean");
+                        }
+                        if (!(actions.activity() instanceof MainActivity)) {
+                            throw new CapabilityFailure("NOT_SUPPORTED", "当前页面不支持工具内返回", false);
+                        }
+                        actions.activity().runOnUiThread(() ->
+                                ((MainActivity) actions.activity()).configurePluginBackForUi(
+                                        call.pluginId, call.sessionId, (Boolean) rawBackEnabled));
+                        return new JSONObject();
+                    case GeneratedContract.Methods.APP_OPENTOOL:
+                        requireGesture(call);
+                        String pluginId = requiredString(call.payload, "pluginId", 128);
+                        String toolId = call.payload.has("toolId") ? requiredString(call.payload, "toolId", 128) : "main";
+                        if (!(actions.activity() instanceof MainActivity)) {
+                            throw new CapabilityFailure("NOT_SUPPORTED", "当前页面无法打开工具", false);
+                        }
+                        return new JSONObject().put("opened", activeSessionAction(call, () ->
+                                ((MainActivity) actions.activity()).openRelatedToolForUi(pluginId, toolId)));
+                    case GeneratedContract.Methods.APP_OPENPERMISSIONS:
+                        requireGesture(call);
+                        if (!(actions.activity() instanceof MainActivity)) {
+                            throw new CapabilityFailure("NOT_SUPPORTED", "当前页面无法查看权限", false);
+                        }
+                        return new JSONObject().put("opened", activeSessionAction(call, () ->
+                                ((MainActivity) actions.activity()).openOwnPluginPermissionsForUi(call.pluginId)));
                     case GeneratedContract.Methods.APP_OPENEXTERNAL:
                         requireGesture(call);
                         String raw = requiredString(call.payload, "url", 2_048);
@@ -139,6 +204,37 @@ public final class HostCapabilityProviders {
                 }
             } catch (JSONException error) {
                 throw internal(error);
+            }
+        }
+
+        private boolean activeSessionAction(CapabilityCall call, Callable<Boolean> action) throws CapabilityFailure {
+            if (!(actions.activity() instanceof MainActivity)) {
+                throw new CapabilityFailure("NOT_SUPPORTED", "当前页面不支持工具导航", false);
+            }
+            MainActivity activity = (MainActivity) actions.activity();
+            CompletableFuture<Boolean> result = new CompletableFuture<>();
+            activity.runOnUiThread(() -> {
+                if (result.isDone() || System.currentTimeMillis() >= call.deadlineEpochMillis) return;
+                if (!activity.isActivePluginSessionForUi(call.pluginId, call.sessionId)) {
+                    result.completeExceptionally(new CapabilityFailure("CANCELLED", "发起操作的工具已不在前台", true));
+                    return;
+                }
+                try { result.complete(action.call()); }
+                catch (Exception error) { result.completeExceptionally(error); }
+            });
+            try {
+                return result.get(Math.max(1L, call.deadlineEpochMillis - System.currentTimeMillis()), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException error) {
+                result.cancel(false);
+                throw new CapabilityFailure("TIMEOUT", "工具导航超时", true);
+            } catch (InterruptedException error) {
+                result.cancel(false);
+                Thread.currentThread().interrupt();
+                throw new CapabilityFailure("CANCELLED", "工具导航已取消", true);
+            } catch (ExecutionException error) {
+                Throwable cause = error.getCause();
+                if (cause instanceof CapabilityFailure) throw (CapabilityFailure) cause;
+                throw internal(cause == null ? error : cause);
             }
         }
     }

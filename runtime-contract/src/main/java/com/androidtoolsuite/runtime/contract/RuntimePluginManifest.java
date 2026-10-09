@@ -465,21 +465,21 @@ public final class RuntimePluginManifest {
         Set<String> ids = new HashSet<>();
         for (int index = 0; index < array.length(); index++) {
             JSONObject item = JsonContract.requireObject(array, index, "contributes.homeWidgets");
-            JsonContract.requireOnlyKeys(item, "id", "title", "template", "dataSource", "sizes");
+            JsonContract.requireOnlyKeys(item, "id", "title", "template", "dataSource", "sizes", "configurationSource");
             String id = ContractPatterns.requireId(
                     "contributes.homeWidgets.id", item.optString("id", ""), 64
             );
             if (!ids.add(id)) throw new ContractException("contributes.homeWidgets 包含重复 id：" + id);
             String template = item.optString("template", "");
-            if (!Set.of("status", "metric", "action").contains(template)) {
+            if (!Set.of("status", "metric", "action", "trend", "rows").contains(template)) {
                 throw new ContractException("未知 HomeWidget template：" + template);
             }
             List<String> sizes = JsonContract.stringList(
-                    JsonContract.requireArray(item, "sizes"), "contributes.homeWidgets.sizes", 1, 4, 8
+                    JsonContract.requireArray(item, "sizes"), "contributes.homeWidgets.sizes", 1, 16, 8
             );
             Set<String> uniqueSizes = new HashSet<>();
             for (String size : sizes) {
-                if (!Set.of("1x1", "2x1", "2x2", "4x2").contains(size) || !uniqueSizes.add(size)) {
+                if (!size.matches("[1-4]x[1-4]") || !uniqueSizes.add(size)) {
                     throw new ContractException("HomeWidget size 无效或重复：" + size);
                 }
             }
@@ -492,7 +492,8 @@ public final class RuntimePluginManifest {
                     ContractPatterns.requireText(
                             "contributes.homeWidgets.dataSource", item.optString("dataSource", ""), 160
                     ),
-                    sizes
+                    sizes,
+                    item.has("configurationSource") ? ContractPatterns.requireText("configurationSource", item.optString("configurationSource"), 160) : ""
             ));
         }
         return values;
@@ -510,7 +511,7 @@ public final class RuntimePluginManifest {
         for (int index = 0; index < array.length(); index++) {
             JSONObject item = JsonContract.requireObject(array, index, "datasets");
             JsonContract.requireOnlyKeys(item, "id", "title", "category", "formatVersion", "sensitive",
-                    "restoreModes", "dependsOn", "mediaType", "validator", "maxBytes");
+                    "restoreModes", "dependsOn", "mediaType", "validator", "maxBytes", "mergePolicy");
             String id = ContractPatterns.requireId("datasets.id", item.optString("id", ""), 64);
             if (!ids.add(id)) {
                 throw new ContractException("datasets 包含重复 id：" + id);
@@ -544,9 +545,12 @@ public final class RuntimePluginManifest {
             int maxBytes = item.has("maxBytes")
                     ? JsonContract.requirePositiveInt(item, "maxBytes") : 32 * 1024 * 1024;
             if (maxBytes > 512 * 1024 * 1024) throw new ContractException("Dataset maxBytes 超出范围");
+            JSONObject mergePolicy = DatasetMergePolicy.validate(item.optJSONObject("mergePolicy"), validator);
+            if (item.has("mergePolicy") && mergePolicy == null) throw new ContractException("Dataset merge policy must be an object");
+            if (mergePolicy != null && !restoreModes.contains("merge")) throw new ContractException("Dataset merge policy requires merge restore mode");
             values.add(new Dataset(
                     id, title, category, formatVersion, sensitive, restoreModes, dependsOn,
-                    mediaType, validator, maxBytes
+                    mediaType, validator, maxBytes, mergePolicy
             ));
         }
         return values;
@@ -723,17 +727,19 @@ public final class RuntimePluginManifest {
         Set<String> declared = new HashSet<>();
         for (CapabilityRequirement requirement : requirements) declared.add(requirement.id);
         for (HomeWidgetContribution widget : widgets) {
-            String capability = GeneratedContract.capabilityForMethod(widget.dataSource);
+            for (String method : widget.configurationSource.isEmpty() ? List.of(widget.dataSource) : List.of(widget.dataSource, widget.configurationSource)) {
+            String capability = GeneratedContract.capabilityForMethod(method);
             if (capability == null) {
                 for (CapabilityContribution contribution : contributions) {
-                    if (contribution.methods.contains(widget.dataSource)) {
+                    if (contribution.methods.contains(method)) {
                         capability = contribution.id;
                         break;
                     }
                 }
             }
             if (capability == null || !declared.contains(capability)) {
-                throw new ContractException("HomeWidget dataSource 未声明对应 Capability：" + widget.dataSource);
+                throw new ContractException("HomeWidget source 未声明对应 Capability：" + method);
+            }
             }
         }
     }
@@ -942,13 +948,15 @@ public final class RuntimePluginManifest {
         public final String title;
         public final String template;
         public final String dataSource;
+        public final String configurationSource;
         public final List<String> sizes;
 
-        HomeWidgetContribution(String id, String title, String template, String dataSource, List<String> sizes) {
+        HomeWidgetContribution(String id, String title, String template, String dataSource, List<String> sizes, String configurationSource) {
             this.id = id;
             this.title = title;
             this.template = template;
             this.dataSource = dataSource;
+            this.configurationSource = configurationSource;
             this.sizes = immutable(sizes);
         }
     }
@@ -964,10 +972,17 @@ public final class RuntimePluginManifest {
         public final String mediaType;
         public final String validator;
         public final int maxBytes;
+        public final JSONObject mergePolicy;
 
         Dataset(String id, String title, String category, int formatVersion, boolean sensitive,
                 List<String> restoreModes, List<String> dependsOn, String mediaType,
                 String validator, int maxBytes) {
+            this(id, title, category, formatVersion, sensitive, restoreModes, dependsOn, mediaType, validator, maxBytes, null);
+        }
+
+        Dataset(String id, String title, String category, int formatVersion, boolean sensitive,
+                List<String> restoreModes, List<String> dependsOn, String mediaType,
+                String validator, int maxBytes, JSONObject mergePolicy) {
             this.id = id;
             this.title = title;
             this.category = category;
@@ -978,6 +993,7 @@ public final class RuntimePluginManifest {
             this.mediaType = mediaType;
             this.validator = validator;
             this.maxBytes = maxBytes;
+            this.mergePolicy = mergePolicy;
         }
     }
 

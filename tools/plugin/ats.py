@@ -357,17 +357,21 @@ def validate_manifest(value: Any) -> dict[str, Any]:
                 raise AtsError("HomeWidget dataSource method 对应多个 Capability")
             method_capability[method] = capability["id"]
     for item in home_widgets:
-        require_keys(item, {"id", "title", "template", "dataSource", "sizes"}, "contributes.homeWidgets")
+        require_keys(item, {"id", "title", "template", "dataSource", "sizes", "configurationSource"}, "contributes.homeWidgets")
         require_text(item.get("title"), "contributes.homeWidgets.title", 80)
-        if item.get("template") not in {"status", "metric", "action"}:
+        if item.get("template") not in {"status", "metric", "action", "trend", "rows"}:
             raise AtsError("未知 HomeWidget template")
         data_source = require_text(item.get("dataSource"), "contributes.homeWidgets.dataSource", 160)
         if method_capability.get(data_source) not in declared_capability_ids:
             raise AtsError("HomeWidget dataSource 未声明对应 Capability")
+        if "configurationSource" in item:
+            source = require_text(item["configurationSource"], "configurationSource", 160)
+            if method_capability.get(source) not in declared_capability_ids:
+                raise AtsError("HomeWidget configurationSource 未声明对应 Capability")
         sizes = require_type(item.get("sizes"), list, "contributes.homeWidgets.sizes")
-        if not 1 <= len(sizes) <= 4 or len(set(sizes)) != len(sizes):
+        if not 1 <= len(sizes) <= 16 or len(set(sizes)) != len(sizes):
             raise AtsError("HomeWidget sizes 数量无效或重复")
-        if any(size not in {"1x1", "2x1", "2x2", "4x2"} for size in sizes):
+        if any(not isinstance(size, str) or not re.fullmatch(r"[1-4]x[1-4]", size) for size in sizes):
             raise AtsError("未知 HomeWidget size")
 
     datasets = require_type(value.get("datasets", []), list, "datasets")
@@ -380,7 +384,7 @@ def validate_manifest(value: Any) -> dict[str, Any]:
             item,
             {
                 "id", "title", "category", "formatVersion", "sensitive", "restoreModes",
-                "dependsOn", "mediaType", "validator", "maxBytes",
+                "dependsOn", "mediaType", "validator", "maxBytes", "mergePolicy",
             },
             "datasets",
         )
@@ -401,6 +405,10 @@ def validate_manifest(value: Any) -> dict[str, Any]:
         validator = item.get("validator", "json" if media_type == "application/json" else "opaque")
         if validator not in {"json", "zip", "opaque"}:
             raise AtsError("未知 Dataset validator")
+        if "mergePolicy" in item:
+            if "merge" not in modes:
+                raise AtsError("Dataset merge policy requires merge restore mode")
+            validate_merge_policy(item["mergePolicy"], validator)
         max_bytes = item.get("maxBytes", 32 * 1024 * 1024)
         require_type(max_bytes, int, "datasets.maxBytes")
         if not 1 <= max_bytes <= 512 * 1024 * 1024:
@@ -1567,6 +1575,84 @@ def main(argv: list[str] | None = None) -> int:
     except AtsError as error:
         print(f"ERROR {error}", file=sys.stderr)
         return 2
+
+
+def validate_merge_policy(policy: Any, validator: str) -> None:
+    policy = require_type(policy, dict, "mergePolicy")
+    require_keys(policy, {"format", "rule", "entries"}, "mergePolicy")
+    if policy.get("format") not in {"json", "zip"} or policy["format"] != validator:
+        raise AtsError("Dataset merge policy must match its JSON or ZIP validator")
+
+    def path(value: Any) -> None:
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.|\-]{1,160}", value):
+            raise AtsError("Invalid merge field path")
+
+    def rule(value: Any, depth: int = 0) -> None:
+        if depth > 12:
+            raise AtsError("Dataset merge rule nesting is too deep")
+        value = require_type(value, dict, "mergeRule")
+        require_keys(value, {"kind", "fields", "keys", "aliases", "items", "sortBy", "descending",
+                            "incomingFirst", "timestamp", "legacySets", "constants", "requireAllKeys"}, "mergeRule")
+        kind = value.get("kind")
+        if kind not in {"object", "map", "array", "set", "newer", "or", "current"}:
+            raise AtsError("Unknown Dataset merge rule kind")
+        if "fields" in value:
+            fields = require_type(value["fields"], dict, "mergeRule.fields")
+            if kind != "object" or len(fields) > 128:
+                raise AtsError("Invalid merge fields")
+            for item in fields.values():
+                rule(item, depth + 1)
+        if kind == "array":
+            keys = require_type(value.get("keys"), list, "mergeRule.keys")
+            if not 1 <= len(keys) <= 8:
+                raise AtsError("Invalid merge identity")
+            for key in keys:
+                path(key)
+        if "items" in value:
+            if kind not in {"map", "array"}:
+                raise AtsError("Invalid merge item rule")
+            rule(value["items"], depth + 1)
+        if kind == "newer":
+            path(value.get("timestamp"))
+        if "sortBy" in value:
+            path(value["sortBy"])
+        for key in ("descending", "incomingFirst", "requireAllKeys"):
+            if key in value:
+                require_type(value[key], bool, "mergeRule." + key)
+        if "aliases" in value:
+            aliases = require_type(value["aliases"], dict, "mergeRule.aliases")
+            for key, mappings in aliases.items():
+                path(key)
+                mappings = require_type(mappings, dict, "mergeRule.aliases.values")
+                if len(mappings) > 64:
+                    raise AtsError("Too many merge aliases")
+                for source, target in mappings.items():
+                    require_text(source, "merge alias", 128)
+                    require_text(target, "merge alias", 128)
+        if "legacySets" in value:
+            for mapping in require_type(value["legacySets"], dict, "mergeRule.legacySets").values():
+                require_keys(mapping, {"source", "when"}, "mergeRule.legacySets.value")
+                path(mapping.get("source"))
+                path(mapping.get("when"))
+        if "constants" in value:
+            require_type(value["constants"], dict, "mergeRule.constants")
+
+    if policy["format"] == "json":
+        if "entries" in policy:
+            raise AtsError("JSON merge policy cannot contain archive entries")
+        rule(policy.get("rule"))
+    else:
+        if "rule" in policy:
+            raise AtsError("ZIP merge policy uses entry rules")
+        entries = require_type(policy.get("entries"), list, "mergePolicy.entries")
+        if len(entries) > 32:
+            raise AtsError("Too many ZIP merge rules")
+        for entry in entries:
+            require_keys(entry, {"pattern", "rule"}, "mergePolicy.entries.value")
+            pattern = entry.get("pattern", "")
+            if not re.fullmatch(r"[A-Za-z0-9_./*?\-]{1,160}", pattern) or ".." in pattern or pattern.startswith("/"):
+                raise AtsError("Invalid archive merge pattern")
+            rule(entry.get("rule"))
 
 
 if __name__ == "__main__":

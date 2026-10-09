@@ -9,6 +9,11 @@
     "description": "请求本应用的 Shizuku 授权并连接受控系统服务。"
   },
   "methods": {
+    "shizuku.openApp": {
+      "params": { "type": "object", "additionalProperties": false },
+      "result": { "type": "object", "required": ["opened"] },
+      "description": "仅在明确用户操作后打开设备上的 Shizuku 应用，不接受任意包名或 Intent。"
+    },
     "shizuku.getConnection": {
       "params": { "type": "object" },
       "result": {

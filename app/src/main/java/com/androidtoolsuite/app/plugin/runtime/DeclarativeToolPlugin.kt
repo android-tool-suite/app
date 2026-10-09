@@ -82,10 +82,20 @@ class DeclarativeToolPlugin(
     private var activeView = WeakReference<ComposeView>(null)
     @Volatile private var activeWebSession: WebSession? = null
     private var visible = true
+    private var widgetEntry: JSONObject? = null
+    override fun onWidgetSelected(entry: JSONObject) {
+        widgetEntry = JSONObject(entry.toString())
+        activeWebSession?.let { it.setWidgetEntry(widgetEntry!!);widgetEntry=null }
+    }
     override fun onVisibilityChanged(visible: Boolean) {
         this.visible = visible
         activeWebSession?.setVisible(visible)
     }
+    override fun setBackNavigation(sessionId: String, enabled: Boolean) {
+        activeWebSession?.setBackNavigation(sessionId, enabled)
+    }
+    override fun onBackRequested(): Boolean = activeWebSession?.requestBack() == true
+    override fun ownsSession(sessionId: String): Boolean = activeWebSession?.matchesSessionId(sessionId) == true
     private val hostRevision: MutableIntState = mutableIntStateOf(0)
 
     override fun id(): String = installed.manifest.plugin.id
@@ -103,6 +113,7 @@ class DeclarativeToolPlugin(
         val view = composePluginView(activity) {
             DeclarativeToolScreen(installed, actions, hostRevision.intValue, documentFuture) { session ->
                 activeWebSession = session
+                widgetEntry?.let { if(session!=null){session.setWidgetEntry(it);widgetEntry=null} }
                 session?.setVisible(visible)
             }
         } as ComposeView

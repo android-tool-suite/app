@@ -16,6 +16,38 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/** Only finite, non-negative progress with a positive scale reaches a widget or its cache. */
+internal fun normalizedWidgetProgress(value: JSONObject?): Pair<Double, Double>? {
+    if (value == null) return null
+    val progress = value.optDouble("progress", Double.NaN)
+    val maximum = value.optDouble("max", Double.NaN)
+    if (!progress.isFinite() || progress < 0 || !maximum.isFinite() || maximum <= 0) return null
+    return progress.coerceAtMost(maximum) to maximum
+}
+
+internal fun normalizedWidgetSnapshot(result:JSONObject):JSONObject {
+    val snapshot=JSONObject()
+    listOf("title","detail","label","value","uid","state","connected").forEach { key->
+        val value=result.opt(key)
+        if(value is String && value.length<=320 || value is Boolean || value is Number && value.toDouble().isFinite()) snapshot.put(key,value)
+    }
+    normalizedWidgetProgress(result)?.let { (progress,max)->snapshot.put("progress",progress).put("max",max) }
+    result.optJSONArray("points")?.let { points->
+        require(points.length()<=512){"趋势节点过多"}; val clean=org.json.JSONArray();var last=Double.NEGATIVE_INFINITY
+        for(i in 0 until points.length()) {val point=points.getJSONObject(i);val time=point.getDouble("timestamp");val value=point.getDouble("value")
+            require(time.isFinite()&&value.isFinite()&&time>last&&value>=0){"趋势节点无效"};last=time;clean.put(JSONObject().put("timestamp",time).put("value",value))
+        };snapshot.put("points",clean)
+    }
+    result.optJSONArray("rows")?.let { rows->
+        require(rows.length()<=4){"指标项目过多"};val clean=org.json.JSONArray()
+        for(i in 0 until rows.length()){val row=rows.getJSONObject(i);val label=row.getString("label");val value=row.get("value")
+            require(label.length<=80&&(value is String&&value.length<=80||value is Number&&value.toDouble().isFinite())){"指标无效"}
+            clean.put(JSONObject().put("label",label).put("value",value))
+        };snapshot.put("rows",clean)
+    }
+    return snapshot
+}
+
 /** Small presentation snapshots outlive the views, never the plugin's permissions or data revision. */
 class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) {
     private val preferences = context.getSharedPreferences("runtime-widget-snapshots", Context.MODE_PRIVATE)
@@ -29,6 +61,9 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
         internal val contribution: RuntimePluginManifest.HomeWidgetContribution,
         internal val persistent: Boolean,
         initial: JSONObject?,
+        internal val instanceId: String,
+        internal val configuration: JSONObject,
+        internal val configurationRevision: Long,
     ) {
         var value by mutableStateOf(initial)
             internal set
@@ -69,9 +104,9 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
         }.apply()
     }
 
-    fun entry(installed: PluginPackageStore.InstalledPlugin, contribution: RuntimePluginManifest.HomeWidgetContribution): Entry {
-        val key = "${installed.manifest.plugin.id}/${contribution.id}"
-        entries[key]?.takeIf { it.installed.generationDirectory == installed.generationDirectory }?.let { return it }
+    @JvmOverloads fun entry(installed: PluginPackageStore.InstalledPlugin, contribution: RuntimePluginManifest.HomeWidgetContribution, instanceId:String=contribution.id, configuration:JSONObject=JSONObject(), configurationRevision:Long=0): Entry {
+        val key = "${installed.manifest.plugin.id}/$instanceId"
+        entries[key]?.takeIf { it.installed.generationDirectory == installed.generationDirectory && it.contribution.id==contribution.id && it.configurationRevision==configurationRevision && it.configuration.toString()==configuration.toString() }?.let { return it }
         entries.remove(key)?.job?.cancel()
         // Only a plugin's own data summaries persist. System connection/authorization is queried live.
         val persistent = GeneratedContract.capabilityForMethod(contribution.dataSource) == null &&
@@ -82,12 +117,19 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
         val cached = if (persistent && allowed(installed, contribution)) runCatching {
             val saved = JSONObject(preferences.getString(key, "")!!)
             if (saved.optString("package") == installed.generationDirectory.absolutePath &&
+                saved.optLong("configurationRevision",-1)==configurationRevision && saved.optString("configuration")==configuration.toString() && saved.optString("preset")==contribution.id &&
                 saved.optString("data") == runtime.datasets().revisionForCache(installed.manifest.plugin.id)) {
                 saved.getJSONObject("value")
             } else null
         }.getOrNull() else null
         if (BuildConfig.DEBUG) Log.d("AtsWidget", "entry plugin=${installed.manifest.plugin.id} restored=${cached != null}")
-        return Entry(installed, contribution, persistent, cached).also { entries[key] = it }
+        return Entry(installed, contribution, persistent, cached,instanceId,JSONObject(configuration.toString()),configurationRevision).also { entries[key] = it }
+    }
+
+    fun forgetInstance(pluginId:String,instanceId:String) {
+        val key="$pluginId/$instanceId"
+        entries.remove(key)?.let {entry->entry.job?.cancel();entry.job=null;entry.value=null}
+        preferences.edit().remove(key).apply()
     }
 
     fun observe(entry: Entry): AutoCloseable {
@@ -144,7 +186,7 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
                 } else ""
                 val result = suspendCancellableCoroutine<JSONObject> { continuation ->
                     val future = runtime.capabilities().invoke(entry.installed.manifest, id, session,
-                        entry.contribution.dataSource, JSONObject(), false, 5_000)
+                        entry.contribution.dataSource, if(entry.contribution.configurationSource.isEmpty()) JSONObject() else JSONObject().put("widgetId",entry.contribution.id).put("instanceId",entry.instanceId).put("configuration",entry.configuration), false, 5_000)
                     continuation.invokeOnCancellation { future.cancel(true) }
                     future.whenComplete { value, failure ->
                         if (continuation.isActive) {
@@ -155,16 +197,16 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
                 }
                 ensureActive()
                 // Persist only fields rendered by the card, not provider service lists or arbitrary payloads.
-                val snapshot = JSONObject()
-                listOf("title", "detail", "label", "value", "uid", "state", "connected").forEach {
-                    if (result.has(it)) snapshot.put(it, result.get(it))
-                }
+                val snapshot = normalizedWidgetSnapshot(result)
+                check(entries["$id/${entry.instanceId}"] === entry) { "小部件配置已变化" }
+                if(entry.persistent) check(revision==withContext(Dispatchers.IO){runtime.datasets().revisionForCache(id)}) { "数据已更新，正在重新读取" }
                 if (BuildConfig.DEBUG) Log.d("AtsWidget", "refreshed plugin=$id")
                 entry.value = snapshot
                 entry.error = null
                 entry.dirty = false
-                if (entry.persistent) preferences.edit().putString("$id/${entry.contribution.id}",
+                if (entry.persistent) preferences.edit().putString("$id/${entry.instanceId}",
                     JSONObject().put("package", entry.installed.generationDirectory.absolutePath)
+                        .put("preset",entry.contribution.id).put("configurationRevision",entry.configurationRevision).put("configuration",entry.configuration.toString())
                         .put("data", revision).put("value", snapshot).toString()).apply()
             } catch (cancelled: CancellationException) {
                 throw cancelled

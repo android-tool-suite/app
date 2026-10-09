@@ -217,7 +217,7 @@ public final class CapabilityRouter implements CapabilityRegistrar, AutoCloseabl
             permissions.recordDenied(pluginId, capabilityId, "not-granted");
             result.completeExceptionally(new CapabilityFailure(
                     "PERMISSION_DENIED",
-                    "请在管理页允许插件权限：" + GeneratedContract.permissionTitle(capabilityId),
+                    "请在插件详情允许此权限：" + GeneratedContract.permissionTitle(capabilityId),
                     false
             ));
             return result;

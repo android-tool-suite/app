@@ -85,10 +85,20 @@ class WebToolPlugin(
     private var activeView = WeakReference<androidx.compose.ui.platform.ComposeView>(null)
     @Volatile private var activeSession: WebSession? = null
     private var visible = true
+    private var widgetEntry: JSONObject? = null
+    override fun onWidgetSelected(entry: JSONObject) {
+        widgetEntry = JSONObject(entry.toString())
+        activeSession?.let { it.setWidgetEntry(widgetEntry!!); widgetEntry=null }
+    }
     override fun onVisibilityChanged(visible: Boolean) {
         this.visible = visible
         activeSession?.setVisible(visible)
     }
+    override fun setBackNavigation(sessionId: String, enabled: Boolean) {
+        activeSession?.setBackNavigation(sessionId, enabled)
+    }
+    override fun onBackRequested(): Boolean = activeSession?.requestBack() == true
+    override fun ownsSession(sessionId: String): Boolean = activeSession?.matchesSessionId(sessionId) == true
     private val widgetRevision = mutableIntStateOf(0)
 
     override fun id(): String = installed.manifest.plugin.id
@@ -116,7 +126,7 @@ class WebToolPlugin(
                 installed = installed,
                 actions = actions,
                 entryPath = requireNotNull(installed.manifest.defaultUiEntry()).entry,
-            ) { session -> activeSession = session; session?.setVisible(visible) }
+            ) { session -> activeSession = session; widgetEntry?.let { if(session!=null){session.setWidgetEntry(it);widgetEntry=null} }; session?.setVisible(visible) }
         } as androidx.compose.ui.platform.ComposeView
         activeView = WeakReference(view)
         return view
@@ -241,6 +251,17 @@ internal class WebSession(
     private var webView: WebView? = null
     private var rendererGone = false
     private var handshakeComplete = false
+    private var widgetEntry: JSONObject? = null
+    fun setWidgetEntry(entry: JSONObject) {
+        widgetEntry = JSONObject(entry.toString())
+        if(handshakeComplete&&visible) emitWidgetVisibility()
+    }
+    private fun emitWidgetVisibility() {
+        val payload=JSONObject().put("visible",visible)
+        if(visible)widgetEntry?.let { payload.put("widgetEntry",it);widgetEntry=null }
+        emitEvent(GeneratedContract.Events.APP_VISIBILITYCHANGED,payload)
+    }
+    private var backEnabled = false
     private var visible = true
     private var lastUserGestureAt = 0L
     private val pending = ConcurrentHashMap<String, CompletableFuture<JSONObject>>()
@@ -313,6 +334,10 @@ internal class WebSession(
     }
 
     fun close() {
+        backEnabled = false
+        handshakeComplete = false
+        replyProxy = null
+        visible = false
         try {
             runtimeEventRegistration.close()
         } catch (_: Exception) {
@@ -333,7 +358,24 @@ internal class WebSession(
         if (this.visible == visible) return
         this.visible = visible
         webView?.let { if (visible) it.onResume() else it.onPause() }
-        if (handshakeComplete) emitEvent(GeneratedContract.Events.APP_VISIBILITYCHANGED, JSONObject().put("visible", visible))
+        if (handshakeComplete) emitWidgetVisibility()
+    }
+
+    fun setBackNavigation(callerSessionId: String, enabled: Boolean) {
+        if (matchesSessionId(callerSessionId)) {
+            backEnabled = enabled
+        }
+    }
+
+    fun matchesSessionId(callerSessionId: String): Boolean = callerSessionId == sessionId
+        && handshakeComplete && !rendererGone && webView != null
+
+    fun requestBack(): Boolean {
+        val view = webView
+        if (!backEnabled || !visible || !handshakeComplete || rendererGone || view == null
+            || !view.isShown || replyProxy == null) return false
+        emitEvent(GeneratedContract.Events.APP_BACKREQUESTED, JSONObject())
+        return true
     }
 
     fun emitHostStateEvents() {
@@ -373,7 +415,9 @@ internal class WebSession(
             if (isAllowedOrigin(Uri.parse(url))) {
                 pending.values.forEach { it.cancel(true) }
                 pending.clear()
+                if (handshakeComplete) actions.closeOperationReports(sessionId)
                 handshakeComplete = false
+                backEnabled = false
                 replyProxy = null
                 eventSequence = 0L
             }
@@ -406,6 +450,7 @@ internal class WebSession(
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
             if (request.isForMainFrame) {
+                backEnabled = false
                 if (BuildConfig.DEBUG) {
                     Log.e("AtsRuntimeWeb", "Main-frame load failed ${request.url}: ${error.description}")
                 }
@@ -420,6 +465,7 @@ internal class WebSession(
         @android.annotation.TargetApi(Build.VERSION_CODES.O)
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             rendererGone = true
+            backEnabled = false
             onError(if (detail.didCrash()) "工具页面进程已崩溃。" else "工具页面因系统资源不足被关闭。")
             view.post { close() }
             return true
@@ -592,13 +638,15 @@ internal class WebSession(
             return
         }
         val recentGesture = SystemClock.elapsedRealtime() - lastUserGestureAt <= USER_GESTURE_WINDOW_MS
+        val admittedGesture = recentGesture && (envelope.method != GeneratedContract.Methods.APP_REPORTOPERATION
+            || visible && view.isShown && actions.canStartUiOperation(installed.manifest.plugin.id, sessionId))
         val future = actions.capabilityRouter().invoke(
             installed.manifest,
             installed.manifest.plugin.id,
             sessionId,
             envelope.method,
             envelope.payload(),
-            recentGesture,
+            admittedGesture,
             envelope.deadlineMs,
         )
         pending[envelope.requestId] = future
@@ -642,7 +690,7 @@ internal class WebSession(
         .put("sessionId", sessionId)
         .put("requestId", "0")
         .put("payload", sessionPayload())
-        .toString()
+        .toString().also { widgetEntry=null }
 
     private fun sessionPayload(): JSONObject = JSONObject()
         .put("platform", JSONObject().put("id", "android").put("api", Build.VERSION.SDK_INT))
@@ -651,6 +699,7 @@ internal class WebSession(
         .put("permissions", actions.capabilityRouter().permissionSnapshot(installed.manifest))
         .put("theme", themePayload())
         .put("container", containerPayload())
+        .apply { widgetEntry?.let { put("widgetEntry", it) } }
 
     private fun themePayload(): JSONObject {
         val nightMask = actions.activity().resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
@@ -681,7 +730,10 @@ internal class WebSession(
             .put("payload", payload)
             .toString()
         if (message.toByteArray(StandardCharsets.UTF_8).size <= ContractLimits.MAX_RPC_BYTES) {
-            view.post { if (webView === view && !rendererGone) proxy.postMessage(message) }
+            view.post {
+                if (webView === view && !rendererGone && handshakeComplete && replyProxy === proxy
+                    && (event != GeneratedContract.Events.APP_BACKREQUESTED || visible)) proxy.postMessage(message)
+            }
         }
     }
 

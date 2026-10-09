@@ -14,6 +14,43 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class ContractResourcesTest {
+    @Test public void widgetSettingsAreScopedToTheCallingPlugin() throws Exception {
+        JSONObject params=resource("contracts/capabilities/app-1.json").getJSONObject("methods").getJSONObject("app.openWidgetSettings").getJSONObject("params");
+        assertEquals(false,params.getBoolean("additionalProperties"));
+        assertEquals(1,params.getJSONObject("properties").length());
+        assertTrue(params.getJSONObject("properties").has("instanceId"));
+        assertEquals("app",GeneratedContract.capabilityForMethod("app.openWidgetSettings"));
+        JSONObject properties=resource("contracts/manifest-v3.schema.json").getJSONObject("$defs").getJSONObject("homeWidget").getJSONObject("properties");
+        assertTrue(properties.has("configurationSource"));
+        JSONArray templates=properties.getJSONObject("template").getJSONArray("enum");
+        Set<String> names=new HashSet<>();for(int i=0;i<templates.length();i++)names.add(templates.getString(i));
+        assertTrue(names.contains("trend"));assertTrue(names.contains("rows"));
+    }
+    @Test
+    public void operationReportsExposeOnlyBoundedMetadata() throws Exception {
+        JSONObject method = resource("contracts/capabilities/app-1.json").getJSONObject("methods").getJSONObject("app.reportOperation");
+        JSONObject params = method.getJSONObject("params");
+        assertEquals(false, params.getBoolean("additionalProperties"));
+        JSONObject fields = params.getJSONObject("properties");
+        assertEquals(4, fields.length());
+        assertEquals(96, fields.getJSONObject("id").getInt("maxLength"));
+        assertEquals(80, fields.getJSONObject("label").getInt("maxLength"));
+        assertEquals(240, fields.getJSONObject("detail").getInt("maxLength"));
+        assertEquals("app", GeneratedContract.capabilityForMethod("app.reportOperation"));
+    }
+
+    @Test
+    public void backNavigationContractIsBoundToCallingSession() throws Exception {
+        JSONObject app = resource("contracts/capabilities/app-1.json");
+        JSONObject params = app.getJSONObject("methods").getJSONObject("app.setBackNavigation").getJSONObject("params");
+        assertEquals("enabled", params.getJSONArray("required").getString(0));
+        assertEquals("boolean", params.getJSONObject("properties").getJSONObject("enabled").getString("type"));
+        assertEquals(1, params.getJSONObject("properties").length());
+        assertEquals(false, params.getBoolean("additionalProperties"));
+        assertEquals("app", GeneratedContract.capabilityForMethod("app.setBackNavigation"));
+        assertEquals("app", GeneratedContract.capabilityForEvent("app.backRequested"));
+    }
+
     @Test
     public void indexSchemasAndCapabilitiesAreValidJson() throws Exception {
         JSONObject index = resource("contracts/contract-index.json");

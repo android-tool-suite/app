@@ -1,6 +1,6 @@
 # 独立性能测试版
 
-性能优化开发分支：`codex/performance-optimization`。构建时以该分支当前工作树为准；本地安装不代表正式发布。
+`performance` 是主体工程内的独立测试变体，不要求特定分支。它用于在非调试运行参数下观察加载与交互，本地构建和安装不代表正式发布或性能结论。
 
 从聚合工作树执行：
 
@@ -10,7 +10,7 @@ adb -s <设备序列号> install -r -t .\app\artifacts\android-tool-suite-perfor
 ```
 
 - 应用名：安卓工具合集 性能版。
-- 独立包名：`com.androidtoolsuite.app.performance`，与正式版、Debug 版、旧 benchmark 版并存。
+- 独立包名：`com.androidtoolsuite.app.performance`，与正式版、Debug 版并存，数据空间独立。
 - 基于 `release` 构建类型，`debuggable=false`、`BuildConfig.DEBUG=false`，依赖使用 Release 变体；不包含 Debug Receiver 或 WebView 调试入口。
 - 启用 shell profileable，便于需要时观察具体加载路径；不要求大组跑分或温度／电量采样。
 - 为本机侧载使用现有 Debug 签名配置，签名类型不改变非调试运行参数。这不是正式渠道发布包。

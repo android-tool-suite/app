@@ -468,7 +468,8 @@ public final class MigrationBridgeManager {
             DatasetDescriptor descriptor
     ) {
         List<DatasetRestoreMode> result = new ArrayList<>();
-        for (DatasetRestoreMode mode : descriptor.restoreModes) {
+        // Restore support belongs to the current receiver, including for older backup metadata.
+        for (DatasetRestoreMode mode : DatasetRestoreMode.values()) {
             if (bridge.supportsRestoreMode(descriptor.id, descriptor.dataFormatVersion, mode)) {
                 result.add(mode);
             }
@@ -637,6 +638,12 @@ public final class MigrationBridgeManager {
             List<DatasetOption> available,
             List<DatasetOption> selected
     ) throws IOException {
+        delete(activity, available, selected, ignored -> { });
+    }
+
+    public static void delete(Activity activity, List<DatasetOption> available,
+                              List<DatasetOption> selected,
+                              java.util.function.Consumer<DatasetOption> onDeleted) throws IOException {
         if (selected.isEmpty()) throw new IOException("没有选择要删除的数据项目");
         Set<String> selectedKeys = new LinkedHashSet<>();
         for (DatasetOption option : selected) {
@@ -680,6 +687,7 @@ public final class MigrationBridgeManager {
                     );
                 }
                 remaining.remove(index);
+                onDeleted.accept(option);
                 progressed = true;
             }
             if (!progressed) throw new IOException("数据项目依赖形成循环");

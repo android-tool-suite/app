@@ -2,14 +2,14 @@
 
 ## Dataset 恢复与诊断（仅 Debug）
 
-以下命令从聚合工作区根目录执行；独立 app 仓库中把 `app/tools` 改为 `tools`。
+本文命令从主体应用仓库 `app/` 执行；在聚合工作区先进入该目录。多设备场景给脚本传入 `-Serial`，给原始 ADB 命令传入 `-s`。
 无需系统文件选择器，可检查 v2/v3 归档和恢复已安装插件声明且兼容的 Dataset：
 
 ```powershell
-.\app\tools\adb-debug.ps1 -Serial <serial> -Command list-datasets
-.\app\tools\adb-debug.ps1 -Serial <serial> -Command verify-datasets -Plugin gacha_analysis
-.\app\tools\adb-debug.ps1 -Serial <serial> -Command inspect-backup -BackupFile <本地归档路径>
-.\app\tools\adb-debug.ps1 -Serial <serial> -Command restore-datasets `
+.\tools\adb-debug.ps1 -Serial <serial> -Command list-datasets
+.\tools\adb-debug.ps1 -Serial <serial> -Command verify-datasets -Plugin gacha_analysis
+.\tools\adb-debug.ps1 -Serial <serial> -Command inspect-backup -BackupFile <本地归档路径>
+.\tools\adb-debug.ps1 -Serial <serial> -Command restore-datasets `
   -BackupFile <本地归档路径> `
   -DatasetKeys 'gacha_analysis/gacha-settings','gacha_analysis/genshin-records','gacha_analysis/starrail-records'
 ```
@@ -90,8 +90,8 @@ $adb = "$sdk\platform-tools\adb.exe"
 # 安装最新 debug APK
 & $adb install -r -t .\app\build\outputs\apk\debug\app-debug.apk
 
-# 在模拟器窗口中打开插件管理页
-.\tools\adb-debug.ps1 -Command navigate -Destination manager
+# 在模拟器窗口中打开工具页
+.\tools\adb-debug.ps1 -Command navigate -Destination plugins
 
 # 保持窗口可见，同时用 ADB 查询和修改状态
 .\tools\adb-debug.ps1 -Command status
@@ -118,13 +118,16 @@ $appPid = (& $adb shell pidof com.androidtoolsuite.app.debug).Trim()
 # 首次打开 Shizuku；也可以在模拟器桌面手动点击图标
 & $adb shell monkey -p moe.shizuku.privileged.api 1
 
-# 首次打开后，以 ADB 身份启动 Shizuku 服务
-& $adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh
+# 在 Shizuku 中打开“查看命令”，使用当前安装版本提供的启动程序路径
+$shizukuStarter = '<界面命令中 adb shell 后的设备路径>'
+& $adb shell $shizukuStarter
 ```
+
+启动路径随 Shizuku 版本和设备 ABI 变化；当前版本可能使用安装目录中的 `libshizuku.so`，不要固定依赖旧的 `/sdcard/Android/data/.../start.sh`。命令以已安装管理器显示的路径为准。
 
 回到 Shizuku 图形界面确认服务已启动。导入并启用签名的 `shizuku-auth.atsplugin`，冷启动宿主
 使同包系统功能激活；完全信任的 Shizuku 插件自身不显示权限开关，直接打开该插件请求 Shizuku 授权。
-Provider 未激活前，同包 UI 不加载，管理页显示需要重启。
+Provider 未激活前，同包 UI 不加载，插件详情显示需要重启。
 可用下面的命令回读连接和插件权限状态：
 
 ```powershell
@@ -181,7 +184,7 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | `run-task` | `-Plugin <id> -Task <id>` | 用空输入立即运行清单中声明的后台任务；不接受任意载荷 |
 | `last-task-run` | `-Plugin <id> -Task <id>` | 读取最近一次任务状态、时间和有界结果 |
 | `set-widget-visible` | `-Widget <plugin:id> -Visible $true/$false` | 显示或隐藏主页组件 |
-| `navigate` | `-Destination dashboard/plugins/manager/store/settings/about/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
+| `navigate` | `-Destination dashboard/plugins/store/settings/about/plugin:<id>` | 使用 `adb shell am start` 打开指定页面 |
 | `reset-state` | 无 | 删除外部插件和权限状态，并恢复组件显示状态 |
 
 P0 Runtime 生命周期回归可用专用脚本执行。它会安装集中 Debug APK（可用 `-SkipInstall` 跳过）、临时导入后台任务示例，覆盖冷启动、前后台、旋转重建、权限撤销、任务状态和 Shizuku Provider 重连路径，并在结束时恢复旋转设置、删除示例插件：
@@ -208,7 +211,7 @@ adb shell monkey -p com.androidtoolsuite.app.debug 1
 .\tools\adb-debug.ps1 -Command export-plugin `
   -Plugin accessibility_grant -OutputFile .\artifacts\accessibility-grant-debug.atsplugin
 
-.\tools\adb-debug.ps1 -Command navigate -Destination manager
+.\tools\adb-debug.ps1 -Command navigate -Destination plugins
 ```
 
 有多个设备时，通过 `-Serial emulator-5554` 指定目标。

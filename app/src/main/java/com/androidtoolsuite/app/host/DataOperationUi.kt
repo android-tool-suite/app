@@ -3,6 +3,7 @@
 package com.androidtoolsuite.app.host
 
 import android.os.Build
+import android.view.View
 import android.view.ViewTreeObserver
 import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -54,6 +56,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
@@ -67,6 +71,44 @@ import com.androidtoolsuite.app.ui.SuiteShapes
 import com.androidtoolsuite.app.ui.SuiteSpacing
 import com.androidtoolsuite.app.ui.SuiteTheming
 import com.androidtoolsuite.app.ui.SuiteTopBar
+import com.androidtoolsuite.app.ui.ErrorState
+import kotlin.math.roundToInt
+
+internal class DataOperationNavigation {
+    var reviewing by mutableStateOf(false)
+    val selectionScroll = LazyListState()
+    val confirmationScroll = LazyListState()
+}
+
+internal fun dataOperationViewportSize(
+    width: Int, height: Int, left: Int, top: Int, right: Int, bottom: Int, imeBottom: Int,
+): IntSize = IntSize(
+    (width - left - right).coerceAtLeast(1),
+    (height - top - bottom - (imeBottom - bottom).coerceAtLeast(0)).coerceAtLeast(1),
+)
+
+private fun currentDataOperationViewport(parentView: View, dialogView: View? = null): IntSize {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        // Window metrics update before the old Compose root has completed a new layout.
+        val metrics = parentView.context.getSystemService(WindowManager::class.java).currentWindowMetrics
+        val insets = WindowInsetsCompat.toWindowInsetsCompat(metrics.windowInsets)
+        val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+        return dataOperationViewportSize(metrics.bounds.width(), metrics.bounds.height(), bars.left, bars.top, bars.right, bars.bottom,
+            insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+    }
+    val resources = parentView.resources
+    val configuration = resources.configuration
+    val density = resources.displayMetrics.density
+    val bars = ViewCompat.getRootWindowInsets(parentView)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+    // Legacy configuration sizes already exclude system bars. Read the current configuration
+    // on every layout rather than retaining the root's pre-rotation pixel dimensions.
+    val width = if (configuration.screenWidthDp > 0) (configuration.screenWidthDp * density).roundToInt()
+        else resources.displayMetrics.widthPixels - (bars?.left ?: 0) - (bars?.right ?: 0)
+    val height = if (configuration.screenHeightDp > 0) (configuration.screenHeightDp * density).roundToInt()
+        else resources.displayMetrics.heightPixels - (bars?.top ?: 0) - (bars?.bottom ?: 0)
+    val imeBottom = ViewCompat.getRootWindowInsets(dialogView ?: parentView)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+    return IntSize(width.coerceAtLeast(1), (height - (imeBottom - (bars?.bottom ?: 0)).coerceAtLeast(0)).coerceAtLeast(1))
+}
 
 /** Data selection is a full-height workspace, never a draggable bottom sheet. */
 @Composable
@@ -81,31 +123,28 @@ internal fun DataOperationDialog(
     confirmEnabled: Boolean,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    navigation: DataOperationNavigation,
+    errorMessage: String = "",
+    selectedPreview: List<Pair<String, String>> = emptyList(),
+    onBackToSelection: () -> Unit = {},
     destructive: Boolean = false,
     selection: LazyListScope.() -> Unit,
     confirmation: LazyListScope.() -> Unit,
 ) {
     key(sessionKey) {
-        var reviewing by remember { mutableStateOf(false) }
+        val reviewing = navigation.reviewing
         var confirmExit by remember { mutableStateOf(false) }
-        val selectionScroll = rememberLazyListState()
-        val confirmationScroll = rememberLazyListState()
+        val selectionScroll = navigation.selectionScroll
+        val confirmationScroll = navigation.confirmationScroll
         val reviewStep = reviewing
         val requestExit = { if (hasChanges) confirmExit = true else onDismiss() }
-        val goBack = { if (reviewing) reviewing = false else requestExit() }
+        val goBack = { if (navigation.reviewing) { navigation.reviewing = false; onBackToSelection() } else requestExit() }
         val parentView = LocalView.current
         val configuration = LocalConfiguration.current
         val density = LocalDensity.current
-        val bars = ViewCompat.getRootWindowInsets(parentView)?.getInsets(
-            WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
-        )
-        val screen = IntSize(
-            ((parentView.rootView.width.takeIf { it > 0 } ?: parentView.resources.displayMetrics.widthPixels) -
-                (bars?.left ?: 0) - (bars?.right ?: 0)).coerceAtLeast(1),
-            ((parentView.rootView.height.takeIf { it > 0 } ?: parentView.resources.displayMetrics.heightPixels) -
-                (bars?.top ?: 0) - (bars?.bottom ?: 0)).coerceAtLeast(1),
-        )
-        var viewport by remember(configuration.screenWidthDp, configuration.screenHeightDp) { mutableStateOf(screen) }
+        var viewport by remember(configuration.screenWidthDp, configuration.screenHeightDp, density.density) {
+            mutableStateOf(currentDataOperationViewport(parentView))
+        }
 
         Dialog(
             onDismissRequest = goBack,
@@ -120,20 +159,12 @@ internal fun DataOperationDialog(
             // Size from the activity's stable bounds and keyboard overlap. On some OEMs
             // getWindowVisibleDisplayFrame reports this dialog's already reduced bounds;
             // using it would prevent the dialog from expanding again after the IME closes.
-            DisposableEffect(view, screen) {
+            DisposableEffect(view, parentView, configuration.screenWidthDp, configuration.screenHeightDp, density.density) {
                 val listener = ViewTreeObserver.OnGlobalLayoutListener {
                     // Floating dialogs on newer Android versions receive insets relative
                     // to their already clipped frame. Activity window metrics keep the
                     // keyboard's full display overlap, including when it returns to zero.
-                    val insets = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        WindowInsetsCompat.toWindowInsetsCompat(
-                            parentView.context.getSystemService(WindowManager::class.java)
-                                .currentWindowMetrics.windowInsets,
-                        )
-                    } else ViewCompat.getRootWindowInsets(view)
-                    val imeBottom = insets?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
-                    val keyboardOverlap = (imeBottom - (bars?.bottom ?: 0)).coerceAtLeast(0)
-                    viewport = IntSize(screen.width, (screen.height - keyboardOverlap).coerceAtLeast(1))
+                    viewport = currentDataOperationViewport(parentView, view)
                 }
                 view.viewTreeObserver.addOnGlobalLayoutListener(listener)
                 view.post { listener.onGlobalLayout() }
@@ -141,6 +172,7 @@ internal fun DataOperationDialog(
             }
             SideEffect {
                 (view.parent as? DialogWindowProvider)?.window?.let { window ->
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
                     window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
                     WindowCompat.getInsetsController(window, view).apply {
                         isAppearanceLightStatusBars = !dark
@@ -167,23 +199,54 @@ internal fun DataOperationDialog(
                             Modifier.fillMaxWidth().padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text("1 选择内容", color = if (!reviewing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("2 确认操作", color = if (reviewing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("1 选择内容", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (!reviewing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("2 设置与核对", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = if (reviewing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("3 执行结果", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         HorizontalDivider()
-                        LazyColumn(
-                            state = if (reviewing) confirmationScroll else selectionScroll,
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(SuiteSpacing.xl),
-                            verticalArrangement = Arrangement.spacedBy(SuiteSpacing.lg),
-                        ) {
-                            if (reviewing) {
-                                confirmation()
-                            } else {
-                                item("operation-description") {
-                                    Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (errorMessage.isNotBlank()) ErrorState(
+                            title = "本次操作未完成",
+                            body = errorMessage,
+                            modifier = Modifier.padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md)
+                                .semantics { liveRegion = LiveRegionMode.Assertive },
+                        )
+                        Row(Modifier.fillMaxWidth().weight(1f)) {
+                            LazyColumn(
+                                state = if (reviewing) confirmationScroll else selectionScroll,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(SuiteSpacing.xl),
+                                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.lg),
+                            ) {
+                                if (reviewing) {
+                                    confirmation()
+                                } else {
+                                    item("operation-description") {
+                                        Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    selection()
                                 }
-                                selection()
+                            }
+                            if (configuration.screenWidthDp >= 840) {
+                                Surface(
+                                    Modifier.width(220.dp).fillMaxSize(),
+                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                ) {
+                                    LazyColumn(
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(SuiteSpacing.lg),
+                                        verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md),
+                                    ) {
+                                        item { Text("已选范围", style = MaterialTheme.typography.titleMedium) }
+                                        if (selectedPreview.isEmpty()) item { Text("尚未选择内容", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                        selectedPreview.forEachIndexed { index, (owner, detail) ->
+                                            item(index) {
+                                                Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                                                    Text(owner, style = MaterialTheme.typography.bodyMedium)
+                                                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                         HorizontalDivider()
@@ -200,7 +263,7 @@ internal fun DataOperationDialog(
                                     onClick = {
                                         if (reviewStep) {
                                             if (selectedCount > 0 && confirmEnabled) onConfirm()
-                                        } else if (selectedCount > 0) reviewing = true
+                                        } else if (selectedCount > 0) navigation.reviewing = true
                                     },
                                     enabled = selectedCount > 0 && (!reviewing || confirmEnabled),
                                     modifier = Modifier.weight(1f),
@@ -269,6 +332,19 @@ internal fun DataOperationEntry(title: String, detail: String, content: @Composa
         Text(title, style = MaterialTheme.typography.bodyLarge)
         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         content()
+    }
+}
+
+@Composable
+internal fun DataOperationSection(title: String, summary: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = SuiteShapes.Card, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column {
+            Column(Modifier.padding(SuiteSpacing.lg), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            content()
+        }
     }
 }
 

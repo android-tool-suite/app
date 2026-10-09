@@ -2,7 +2,7 @@
 package com.androidtoolsuite.runtime.contract;
 
 public final class GeneratedContract {
-    public static final String CONTRACT_VERSION = "2.1.0";
+    public static final String CONTRACT_VERSION = "2.2.0";
     public static final int PACKAGE_FORMAT_VERSION = 3;
     public static final String RPC_PROTOCOL = "2.0";
 
@@ -33,6 +33,11 @@ public final class GeneratedContract {
         public static final String APP_CLOSE = "app.close";
         public static final String APP_GETSESSION = "app.getSession";
         public static final String APP_OPENEXTERNAL = "app.openExternal";
+        public static final String APP_OPENPERMISSIONS = "app.openPermissions";
+        public static final String APP_OPENTOOL = "app.openTool";
+        public static final String APP_OPENWIDGETSETTINGS = "app.openWidgetSettings";
+        public static final String APP_REPORTOPERATION = "app.reportOperation";
+        public static final String APP_SETBACKNAVIGATION = "app.setBackNavigation";
         public static final String CLIPBOARD_READ = "clipboard.read";
         public static final String CLIPBOARD_WRITE = "clipboard.write";
         public static final String FILE_EXPORT_SAVE = "file.export.save";
@@ -46,6 +51,7 @@ public final class GeneratedContract {
         public static final String SCHEDULER_RUNNOW = "scheduler.runNow";
         public static final String SHIZUKU_CONNECT = "shizuku.connect";
         public static final String SHIZUKU_GETCONNECTION = "shizuku.getConnection";
+        public static final String SHIZUKU_OPENAPP = "shizuku.openApp";
         public static final String SHIZUKU_REQUESTPERMISSION = "shizuku.requestPermission";
         public static final String STORAGE_BLOB_CLOSE = "storage.blob.close";
         public static final String STORAGE_BLOB_DELETE = "storage.blob.delete";
@@ -75,6 +81,7 @@ public final class GeneratedContract {
     public static final class Events {
         public static final String ACCESSIBILITY_CONNECTIONCHANGED = "accessibility.connectionChanged";
         public static final String ACCESSIBILITY_SERVICESCHANGED = "accessibility.servicesChanged";
+        public static final String APP_BACKREQUESTED = "app.backRequested";
         public static final String APP_CONTAINERCHANGED = "app.containerChanged";
         public static final String APP_PERMISSIONSCHANGED = "app.permissionsChanged";
         public static final String APP_THEMECHANGED = "app.themeChanged";
@@ -92,6 +99,11 @@ public final class GeneratedContract {
             case "app.close": return "app";
             case "app.getSession": return "app";
             case "app.openExternal": return "app";
+            case "app.openPermissions": return "app";
+            case "app.openTool": return "app";
+            case "app.openWidgetSettings": return "app";
+            case "app.reportOperation": return "app";
+            case "app.setBackNavigation": return "app";
             case "storage.blob.close": return "storage";
             case "storage.blob.delete": return "storage";
             case "storage.blob.openRead": return "storage";
@@ -128,6 +140,7 @@ public final class GeneratedContract {
             case "accessibility.setEnabled": return "accessibility.manage";
             case "shizuku.connect": return "shizuku.control";
             case "shizuku.getConnection": return "shizuku.control";
+            case "shizuku.openApp": return "shizuku.control";
             case "shizuku.requestPermission": return "shizuku.control";
             default: return null;
         }
@@ -136,6 +149,7 @@ public final class GeneratedContract {
     public static String capabilityForEvent(String event) {
         if (event == null) return null;
         switch (event) {
+            case "app.backRequested": return "app";
             case "app.containerChanged": return "app";
             case "app.permissionsChanged": return "app";
             case "app.themeChanged": return "app";

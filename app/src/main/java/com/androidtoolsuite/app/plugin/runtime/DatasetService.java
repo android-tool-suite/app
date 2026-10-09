@@ -459,9 +459,18 @@ public final class DatasetService implements AutoCloseable {
         }
         if (!dataset.restoreModes.contains(restoreMode)) throw new IOException("Dataset restore mode is unsupported");
         if ("skip".equals(restoreMode) && hasDataset(pluginId, datasetId)) return;
+        if ("merge".equals(restoreMode)) {
+            if (dataset.mergePolicy == null) throw new IOException("此数据未声明合并规则");
+            mergeDataset(pluginId, dataset, input);
+            return;
+        }
         if (!"replace".equals(restoreMode)) {
             throw new IOException("Opaque 插件运行时 Dataset import currently requires replace mode");
         }
+        writeImportedDataset(pluginId, datasetId, input);
+    }
+
+    private void writeImportedDataset(String pluginId, String datasetId, InputStream input) throws IOException {
         String session = "import:" + UUID.randomUUID();
         String handle = null;
         try {
@@ -484,6 +493,30 @@ public final class DatasetService implements AutoCloseable {
                 PayloadHandle value = handles.get(handle);
                 if (value != null) abortHandle(handle, value);
             }
+        }
+    }
+
+    private void mergeDataset(String pluginId, RuntimePluginManifest.Dataset dataset, InputStream input) throws IOException {
+        File local = null, incoming = null, merged = null;
+        try {
+            incoming = File.createTempFile("dataset-merge-in-", ".payload", context.getCacheDir());
+            try (OutputStream output = new FileOutputStream(incoming)) { copyBounded(input, output, dataset.maxBytes); }
+            if (hasDataset(pluginId, dataset.id)) {
+                local = File.createTempFile("dataset-merge-current-", ".payload", context.getCacheDir());
+                try (OutputStream output = new FileOutputStream(local)) { exportDataset(pluginId, dataset.id, output); }
+            }
+            merged = File.createTempFile("dataset-merge-result-", ".payload", context.getCacheDir());
+            try (OutputStream output = new FileOutputStream(merged)) {
+                DeclarativeDatasetMerger.merge(local, incoming, dataset.mergePolicy, dataset.maxBytes, output);
+            }
+            if (merged.length() > dataset.maxBytes) throw new IOException("合并后数据超过容量限制，原有数据已保留");
+            try (InputStream result = new FileInputStream(merged)) {
+                writeImportedDataset(pluginId, dataset.id, result);
+            }
+        } finally {
+            if (local != null) local.delete();
+            if (incoming != null) incoming.delete();
+            if (merged != null) merged.delete();
         }
     }
 

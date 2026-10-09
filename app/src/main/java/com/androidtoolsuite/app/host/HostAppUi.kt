@@ -26,6 +26,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,9 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AccessibilityNew
+import androidx.compose.material.icons.rounded.QueryStats
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Build
@@ -101,6 +105,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -140,6 +148,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -187,12 +196,13 @@ import kotlinx.coroutines.launch
 private const val DASHBOARD = 0
 private const val PLUGINS = 1
 private const val MANAGER = 2
-private const val STORE = 3
-private const val SETTINGS = 4
-private const val ABOUT = 5
+private const val STORE = 6
+private const val SETTINGS = 3
+private const val ABOUT = 4
 
 /** State bridge for Java-host callbacks. MutableState is observed by Compose directly. */
 class HostUiState {
+    val dataDrafts: MutableMap<String, Any> = mutableMapOf()
     private val downloadProgress = mutableStateMapOf<String, Float>()
     var revision: Int by mutableIntStateOf(0)
         private set
@@ -225,10 +235,11 @@ class HostUiState {
  * 自己调一次这个函数。
  */
 @Composable
-private fun hostRevision(activity: MainActivity): Int = activity.uiStateForUi().revision
+internal fun hostRevision(activity: MainActivity): Int = activity.uiStateForUi().revision
 
 @Composable
-private fun rememberPageListState(activity: MainActivity, page: String): LazyListState {
+internal fun rememberPageListState(activity: MainActivity, page: String): LazyListState {
+    return key(page) {
     val state = rememberLazyListState(
         initialFirstVisibleItemIndex = activity.scrollIndexForUi(page),
         initialFirstVisibleItemScrollOffset = activity.scrollOffsetForUi(page),
@@ -237,7 +248,8 @@ private fun rememberPageListState(activity: MainActivity, page: String): LazyLis
         snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
             .collect { (index, offset) -> activity.saveScrollPositionForUi(page, index, offset) }
     }
-    return state
+        state
+    }
 }
 
 fun createHostAppView(activity: MainActivity): View {
@@ -328,7 +340,6 @@ private fun View.updateRequestedFrameRate(rate: Float) {
 private val destinations = listOf(
     Destination(DASHBOARD, "主页", Icons.Rounded.Home),
     Destination(PLUGINS, "工具", Icons.Rounded.Apps),
-    Destination(MANAGER, "管理", Icons.Rounded.Tune),
     Destination(STORE, "仓库", Icons.Rounded.Storefront),
     Destination(SETTINGS, "设置", Icons.Rounded.Settings),
 )
@@ -339,32 +350,37 @@ private fun HostApp(activity: MainActivity) {
     val selectedSection = activity.currentSectionForUi()
     val selectedPlugin = activity.selectedPluginForUi()
     val pagerState = rememberPagerState(
-        initialPage = selectedSection.coerceIn(DASHBOARD, SETTINGS),
+        initialPage = destinations.indexOfFirst { it.section == selectedSection }.coerceAtLeast(0),
         pageCount = destinations::size,
     )
     val navigationScope = rememberCoroutineScope()
     var navigationJob by remember { mutableStateOf<Job?>(null) }
     val navigateTo: (Int) -> Unit = { requestedPage ->
-        val targetPage = requestedPage.coerceIn(DASHBOARD, SETTINGS)
+        val targetPage = destinations.indexOfFirst { it.section == requestedPage }.coerceAtLeast(0)
         navigationJob?.cancel()
         navigationJob = navigationScope.launch { pagerState.animateToSection(targetPage) }
     }
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(selectedSection, selectedPlugin) {
-        if (selectedPlugin == null && selectedSection in DASHBOARD..SETTINGS) {
-            if (pagerState.settledPage != selectedSection || pagerState.currentPageOffsetFraction != 0f) {
+        if (selectedPlugin == null && destinations.any { it.section == selectedSection }) {
+            val targetPage = destinations.indexOfFirst { it.section == selectedSection }
+            if (pagerState.settledPage != targetPage || pagerState.currentPageOffsetFraction != 0f) {
                 navigationJob?.cancel()
-                navigationJob = navigationScope.launch { pagerState.animateToSection(selectedSection) }
+                navigationJob = navigationScope.launch { pagerState.animateToSection(targetPage) }
             }
         }
     }
     BackHandler(enabled = activity.canHandleBackForUi()) { activity.handleBackForUi() }
-    LaunchedEffect(refreshVersion) {
+    LaunchedEffect(activity.snackbarRevisionForUi()) {
         val snackbarMessage = activity.consumeSnackbarMessageForUi()
         val snackbarAction = activity.consumeSnackbarActionForUi()
+        val callback = activity.consumeSnackbarCallbackForUi()
         if (!snackbarMessage.isNullOrBlank()) {
-            val result = snackbarHostState.showSnackbar(snackbarMessage, snackbarAction)
-            if (result == SnackbarResult.ActionPerformed) activity.retrySnackbarActionForUi()
+            val result = snackbarHostState.showSnackbar(snackbarMessage, snackbarAction, withDismissAction = true,
+                duration = if (snackbarAction == null) androidx.compose.material3.SnackbarDuration.Short else androidx.compose.material3.SnackbarDuration.Long)
+            if (result == SnackbarResult.ActionPerformed) {
+                if (callback != null) callback.run() else activity.retrySnackbarActionForUi()
+            }
         }
     }
 
@@ -376,11 +392,11 @@ private fun HostApp(activity: MainActivity) {
             .semantics { stateDescription = "host-refresh-$refreshVersion" },
     ) {
         val expanded = maxWidth >= 840.dp
-        val showMainNavigation = selectedPlugin == null && selectedSection in DASHBOARD..SETTINGS
+        val showMainNavigation = activity.widgetSettingsPluginForUi() == null && activity.managedPluginIdForUi() == null && selectedPlugin == null && destinations.any { it.section == selectedSection }
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
-            topBar = { AppTopBar(activity, selectedSection, selectedPlugin) },
+            topBar = { if (activity.managedPluginIdForUi() == null && activity.widgetSettingsPluginForUi() == null) AppTopBar(activity, if (showMainNavigation) destinations[pagerState.currentPage].section else selectedSection, selectedPlugin) },
             bottomBar = {
                 if (!expanded && showMainNavigation) {
                     AppNavigationBar(
@@ -392,7 +408,7 @@ private fun HostApp(activity: MainActivity) {
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
         ) { padding ->
-            Row(Modifier.fillMaxSize().padding(padding)) {
+            Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 if (expanded && showMainNavigation) {
                     AppNavigationRail(
                         activity,
@@ -406,7 +422,7 @@ private fun HostApp(activity: MainActivity) {
                         refreshVersion,
                         snackbarHostState,
                         pagerState,
-                        modifier = Modifier.fillMaxSize().widthIn(max = 720.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
@@ -417,6 +433,8 @@ private fun HostApp(activity: MainActivity) {
     MigrationBridgeExportDialog(activity)
     MigrationBridgeImportDialog(activity)
     MigrationBridgeDeleteDialog(activity)
+    HomeWidgetSettingsDialog(activity)
+    CollectionDialogs(activity)
 }
 
 @Composable
@@ -429,26 +447,18 @@ private fun AppTopBar(
     when {
         plugin != null -> SuiteTopBar(
             title = plugin.title(),
-            onBack = activity::closePluginForUi,
+            onBack = activity::handleBackForUi,
             actions = {
-                IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text("在管理中设置") },
-                        onClick = { menuExpanded = false; activity.navigateForUi(MANAGER) },
-                    )
-                    if (plugin.removable()) {
-                        DropdownMenuItem(
-                            text = { Text("删除插件") },
-                            leadingIcon = { Icon(Icons.Rounded.Delete, null) },
-                            onClick = { menuExpanded = false; activity.requestDeletePluginForUi(plugin.id()) },
-                        )
-                    }
-                }
+                IconButton(onClick = { activity.showPluginManagementForUi(plugin.id(), "detail") }) { Icon(Icons.Rounded.Tune, "插件设置") }
             },
         )
         // 关于是设置的子页，所以有返回箭头；设置本身是底栏分区，没有。
         section == ABOUT -> SuiteTopBar("关于", onBack = activity::handleBackForUi)
+        section == 5 -> SuiteTopBar("数据管理", onBack = activity::handleBackForUi)
+        section == 7 -> SuiteTopBar("任务与结果", onBack = activity::handleBackForUi)
+        section == 8 -> SuiteTopBar("旧数据迁移", onBack = activity::handleBackForUi)
+        section == 9 -> SuiteTopBar("开源许可", onBack = activity::handleBackForUi)
+        else -> SuiteTopBar(destinations.firstOrNull { it.section == section }?.label ?: "Android Tool Suite")
     }
 }
 
@@ -458,7 +468,7 @@ private fun AppNavigationBar(
     pagerState: PagerState,
     onNavigate: (Int) -> Unit,
 ) {
-    val selectedSection = pagerState.currentPage
+    val selectedSection = destinations[pagerState.currentPage].section
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         BoxWithConstraints(Modifier.fillMaxWidth().height(80.dp)) {
             val itemWidth = maxWidth / destinations.size
@@ -491,8 +501,8 @@ private fun AppNavigationBar(
                         icon = {
                             BadgedBox(
                                 badge = {
-                                    if (destination.section == STORE && activity.availableUpdateCountForUi() > 0) {
-                                        Badge { Text(activity.availableUpdateCountForUi().toString()) }
+                                    if (destination.section == MANAGER && activity.availablePluginUpdatesForUi().isNotEmpty()) {
+                                        Badge { Text(activity.availablePluginUpdatesForUi().size.toString()) }
                                     }
                                 },
                             ) { Icon(destination.icon, contentDescription = destination.label) }
@@ -511,7 +521,7 @@ private fun AppNavigationRail(
     pagerState: PagerState,
     onNavigate: (Int) -> Unit,
 ) {
-    val selectedSection = pagerState.currentPage
+    val selectedSection = destinations[pagerState.currentPage].section
     NavigationRail(
         modifier = Modifier.fillMaxHeight(),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -541,7 +551,7 @@ private fun AppContent(
     val widgetSnapshots = remember(activity) {
         com.androidtoolsuite.app.plugin.runtime.PluginRuntime.get(activity).widgetSnapshots()
     }
-    val mainPagesVisible = selected == null && section != ABOUT
+    val mainPagesVisible = activity.widgetSettingsPluginForUi() == null && selected == null && destinations.any { it.section == section } && activity.managedPluginIdForUi() == null
     LaunchedEffect(widgetSnapshots, pagerState, mainPagesVisible) {
         // Bottom navigation and swipes update PagerState without invalidating the Java host.
         // Observe the actual settled page so returning Home resumes pending widget reads.
@@ -550,22 +560,35 @@ private fun AppContent(
     }
     // Keep the two most recently used tools mounted; ordinary navigation preserves JS state.
     var recent by remember(activity) { mutableStateOf<List<HostTool>>(emptyList()) }
-    val available = activity.pluginsForUi()
+    val available = activity.allToolsForUi()
     val retained = (recent.filter { it in available && it !== selected } + listOfNotNull(selected)).takeLast(2)
     androidx.compose.runtime.SideEffect { if (recent != retained) recent = retained }
     Box(modifier.fillMaxSize()) {
-        RetainedPage(selected == null && section != ABOUT) {
+        RetainedPage(activity.widgetSettingsPluginForUi() == null && selected == null && destinations.any { it.section == section } && activity.managedPluginIdForUi() == null) {
             SectionPager(activity, pagerState, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
         }
         retained.forEach { plugin ->
             key(plugin) {
-                androidx.compose.runtime.SideEffect { plugin.onVisibilityChanged(plugin === selected) }
-                RetainedPage(plugin === selected) {
+                androidx.compose.runtime.SideEffect { plugin.onVisibilityChanged(plugin === selected && activity.managedPluginIdForUi() == null && activity.widgetSettingsPluginForUi() == null) }
+                RetainedPage(plugin === selected && activity.managedPluginIdForUi() == null && activity.widgetSettingsPluginForUi() == null) {
                     PluginDetailScreen(activity, plugin, refreshVersion, Modifier.fillMaxSize())
                 }
             }
         }
-        if (section == ABOUT && selected == null) AboutScreen(activity, refreshVersion, Modifier.fillMaxSize())
+        if (destinations.none { it.section == section } && selected == null) RetainedPage(activity.managedPluginIdForUi() == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.widthIn(max = if (section == 5) 1100.dp else 720.dp).fillMaxSize()) {
+                    when (section) {
+                        ABOUT -> AboutScreen(activity, refreshVersion, Modifier.fillMaxSize())
+                        5 -> DataCenterScreen(activity)
+                        7 -> HostTasksScreen(activity)
+                        8 -> CompatibilityScreen(activity)
+                        9 -> OpenSourceScreen(activity)
+                    }
+                }
+            }
+        }
+        activity.managedPluginIdForUi()?.let { PluginManagementScreen(activity, it) }
     }
 
 }
@@ -614,7 +637,8 @@ private fun SectionPager(
     }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
-            if (page != activity.currentSectionForUi()) activity.setMainSectionFromPagerForUi(page)
+            val section = destinations[page].section
+            if (section != activity.currentSectionForUi()) activity.setMainSectionFromPagerForUi(section)
         }
     }
     HorizontalPager(
@@ -626,12 +650,15 @@ private fun SectionPager(
         beyondViewportPageCount = 1,
         key = { it },
     ) { page ->
-        when (page) {
-            DASHBOARD -> DashboardScreen(activity, refreshVersion, Modifier.fillMaxSize())
-            PLUGINS -> PluginListScreen(activity, refreshVersion, Modifier.fillMaxSize())
-            MANAGER -> ManagerScreen(activity, refreshVersion, Modifier.fillMaxSize())
-            STORE -> PluginRepositoryScreen(activity, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
-            else -> SettingsScreen(activity, refreshVersion, snackbarHostState, Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        val pageModifier = Modifier.widthIn(max = 720.dp).fillMaxSize()
+        when (destinations[page].section) {
+            DASHBOARD -> DashboardScreen(activity, refreshVersion, pageModifier)
+            PLUGINS -> ToolCollectionsScreen(activity, refreshVersion, pageModifier)
+            MANAGER -> PluginCenterScreen(activity, discover = false, modifier = pageModifier)
+            STORE -> PluginCenterScreen(activity, discover = true, modifier = pageModifier)
+            else -> SettingsScreen(activity, refreshVersion, snackbarHostState, pageModifier)
+        }
         }
     }
 }
@@ -665,620 +692,6 @@ private suspend fun PagerState.animateToSection(targetPage: Int) {
     )
 }
 
-@Composable
-private fun DashboardScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
-    hostRevision(activity)
-    val plugins = activity.pluginsForUi()
-    val widgets = activity.widgetsForUi()
-    val hidden = activity.allWidgetsForUi().filterNot(activity::isWidgetVisibleForUi)
-    var addSheetVisible by remember { mutableStateOf(false) }
-    val listState = rememberPageListState(activity, "dashboard")
-    if (addSheetVisible) {
-        AddWidgetSheet(activity, hidden) { addSheetVisible = false }
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier.semantics { stateDescription = "dashboard-$refreshVersion" },
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Text(
-                SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(Date()),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text("工具台", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "点击进入 · 长按编辑 · 拖动排序",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        item {
-            Text(
-                "${plugins.size} 个工具可用 · ${widgets.size} 个主页小部件",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        item {
-            // 隐藏项的入口跟着「有没有隐藏项」出现在分段标题右侧，而不是常驻一个空位。
-            SectionHeader("主页小部件", "长按调整大小或移除 · 长按拖动排序") {
-                if (hidden.isNotEmpty()) {
-                    TextButton(onClick = { addSheetVisible = true }) { Text("添加 ${hidden.size}") }
-                }
-            }
-        }
-        if (widgets.isEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-                    if (hidden.isEmpty()) {
-                        EmptyState("主页很清爽", "在管理中开启插件的主页显示。")
-                        OutlinedButton(onClick = { activity.navigateForUi(MANAGER) }) { Text("前往管理") }
-                    } else {
-                        EmptyState("主页很清爽", "${hidden.size} 个小部件被移除了，可以重新添加回来。")
-                        OutlinedButton(onClick = { addSheetVisible = true }) { Text("添加小部件") }
-                    }
-                }
-            }
-        } else {
-            item {
-                WidgetGrid(widgets, activity, Modifier.fillMaxWidth())
-            }
-        }
-    }
-}
-
-private fun widgetKey(widget: HostHomeWidget) = widget.pluginId() + ":" + widget.id()
-
-private data class ReorderSlot(
-    val key: String,
-    val index: Int,
-    val left: Int,
-    val top: Int,
-    val width: Int,
-    val height: Int,
-) {
-    val centerX get() = left + width / 2f
-    val centerY get() = top + height / 2f
-
-    fun contains(x: Float, y: Float) = x >= left && x <= left + width && y >= top && y <= top + height
-}
-
-private class DropPreviewState {
-    var draggedKey by mutableStateOf<String?>(null)
-        private set
-    var targetIndex by mutableIntStateOf(-1)
-        private set
-    var offsetX by mutableFloatStateOf(0f)
-        private set
-    var offsetY by mutableFloatStateOf(0f)
-        private set
-
-    private var baseSlots: List<ReorderSlot> = emptyList()
-    private var frozenSlots: List<ReorderSlot> = emptyList()
-
-    fun updateBaseSlots(slots: List<ReorderSlot>) {
-        if (draggedKey == null) baseSlots = slots
-    }
-
-    fun start(key: String, fallbackIndex: Int) {
-        frozenSlots = baseSlots.toList()
-        val source = frozenSlots.firstOrNull { it.key == key }
-        targetIndex = source?.index ?: fallbackIndex
-        offsetX = 0f
-        offsetY = 0f
-        draggedKey = key
-    }
-
-    fun dragBy(dx: Float, dy: Float) {
-        val source = frozenSlots.firstOrNull { it.key == draggedKey } ?: return
-        offsetX += dx
-        offsetY += dy
-        val centerX = source.centerX + offsetX
-        val centerY = source.centerY + offsetY
-        val target = frozenSlots.firstOrNull { it.contains(centerX, centerY) }
-            ?: frozenSlots.minByOrNull {
-                val deltaX = centerX - it.centerX
-                val deltaY = centerY - it.centerY
-                deltaX * deltaX + deltaY * deltaY
-            }
-        if (target != null) targetIndex = target.index
-    }
-
-    fun sourceSlot(): ReorderSlot? = frozenSlots.firstOrNull { it.key == draggedKey }
-
-    fun finish(): Int {
-        val result = targetIndex
-        reset()
-        return result
-    }
-
-    fun cancel() = reset()
-
-    private fun reset() {
-        draggedKey = null
-        targetIndex = -1
-        offsetX = 0f
-        offsetY = 0f
-        frozenSlots = emptyList()
-    }
-}
-
-@Composable
-private fun DropPreview(modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(24.dp)
-    Box(
-        modifier
-            .zIndex(20f)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-            .border(3.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.82f), shape),
-    )
-}
-
-@Composable
-private fun WidgetGrid(widgets: List<HostHomeWidget>, activity: MainActivity, modifier: Modifier = Modifier) {
-    val gap = 12.dp
-    val orderKey = widgets.joinToString("\n") { widgetKey(it) }
-    val dragState = remember(orderKey) { DropPreviewState() }
-    val draggedKey = dragState.draggedKey
-    val draggedIndex = widgets.indexOfFirst { widgetKey(it) == draggedKey }
-    val targetIndex = dragState.targetIndex.coerceIn(0, (widgets.size - 1).coerceAtLeast(0))
-    Layout(
-        modifier = modifier,
-        content = {
-            widgets.forEachIndexed { index, widget ->
-                key(widgetKey(widget)) {
-                    WidgetTile(
-                        activity = activity,
-                        widget = widget,
-                        modifier = Modifier,
-                        onClick = { activity.openPluginForUi(widget.pluginId()) },
-                        dragState = dragState,
-                        sourceIndex = index,
-                        onDrop = { destination ->
-                            widgets.getOrNull(destination)?.let { target ->
-                                if (target !== widget) activity.moveWidgetToUi(widget, target)
-                            }
-                        },
-                        onMoveEarlier = {
-                            widgets.getOrNull(index - 1)?.let { activity.moveWidgetToUi(widget, it) }
-                        },
-                        onMoveLater = {
-                            widgets.getOrNull(index + 1)?.let { activity.moveWidgetToUi(widget, it) }
-                        },
-                        onMoveFirst = {
-                            widgets.firstOrNull()?.takeIf { it !== widget }?.let { activity.moveWidgetToUi(widget, it) }
-                        },
-                        onMoveLast = {
-                            widgets.lastOrNull()?.takeIf { it !== widget }?.let { activity.moveWidgetToUi(widget, it) }
-                        },
-                    )
-                }
-            }
-            if (draggedIndex >= 0) {
-                DropPreview()
-            }
-        },
-    ) { measurables, constraints ->
-        val gridWidth = constraints.maxWidth
-        val gapPx = gap.roundToPx()
-        val unitWidth = ((gridWidth - gapPx * 3).coerceAtLeast(0)) / 4f
-        val placeables = arrayOfNulls<androidx.compose.ui.layout.Placeable>(measurables.size)
-        val positions = Array(measurables.size) { IntArray(2) }
-        val placeholderIndex = widgets.size
-        val logicalIndices = widgets.indices.toMutableList()
-        if (draggedIndex >= 0) {
-            logicalIndices.remove(draggedIndex)
-            logicalIndices.add(targetIndex.coerceAtMost(logicalIndices.size), -1)
-        }
-        val rowMeasurableIndices = mutableListOf<Int>()
-        var usedUnits = 0
-        var rowHeight = 0
-        var y = 0
-
-        fun finishRow() {
-            rowMeasurableIndices.forEach { positions[it][1] = y }
-            if (rowMeasurableIndices.isNotEmpty()) y += rowHeight + gapPx
-            rowMeasurableIndices.clear()
-            usedUnits = 0
-            rowHeight = 0
-        }
-
-        // 摆一格：算出它落在当前行还是下一行，量好、记下位置。
-        fun placeCell(measurableIndex: Int, widthUnits: Int, heightUnits: Int) {
-            val units = widthUnits.coerceIn(1, 4)
-            if (usedUnits > 0 && usedUnits + units > 4) finishRow()
-            val itemWidth = (unitWidth * units + gapPx * (units - 1)).roundToInt()
-            val itemHeight = (72.dp * heightUnits + gap * (heightUnits - 1)).roundToPx()
-            val placeable = measurables[measurableIndex].measure(Constraints.fixed(itemWidth, itemHeight))
-            placeables[measurableIndex] = placeable
-            positions[measurableIndex][0] = ((unitWidth + gapPx) * usedUnits).roundToInt()
-            rowMeasurableIndices += measurableIndex
-            usedUnits += units
-            rowHeight = maxOf(rowHeight, placeable.height)
-            if (usedUnits == 4) finishRow()
-        }
-
-        logicalIndices.forEach { logicalIndex ->
-            val isPlaceholder = logicalIndex < 0
-            val widgetIndex = if (isPlaceholder) draggedIndex else logicalIndex
-            val measurableIndex = if (isPlaceholder) placeholderIndex else widgetIndex
-            val widget = widgets[widgetIndex]
-            placeCell(
-                measurableIndex = measurableIndex,
-                widthUnits = activity.widgetWidthUnitsForUi(widget),
-                heightUnits = activity.widgetHeightUnitsForUi(widget).coerceAtLeast(1),
-            )
-        }
-        if (rowMeasurableIndices.isNotEmpty()) finishRow()
-
-        if (draggedIndex >= 0) {
-            val widget = widgets[draggedIndex]
-            val sourceSlot = dragState.sourceSlot()
-            val itemWidth = sourceSlot?.width ?: gridWidth
-            val itemHeight = sourceSlot?.height ?: (72.dp * activity.widgetHeightUnitsForUi(widget)).roundToPx()
-            placeables[draggedIndex] = measurables[draggedIndex].measure(Constraints.fixed(itemWidth, itemHeight))
-            positions[draggedIndex][0] = sourceSlot?.left ?: 0
-            positions[draggedIndex][1] = sourceSlot?.top ?: 0
-        } else {
-            dragState.updateBaseSlots(
-                widgets.indices.map { index ->
-                    val placeable = requireNotNull(placeables[index])
-                    ReorderSlot(
-                        key = widgetKey(widgets[index]),
-                        index = index,
-                        left = positions[index][0],
-                        top = positions[index][1],
-                        width = placeable.width,
-                        height = placeable.height,
-                    )
-                },
-            )
-        }
-        val gridHeight = (y - gapPx).coerceAtLeast(0)
-
-        layout(gridWidth, gridHeight.coerceIn(constraints.minHeight, constraints.maxHeight)) {
-            placeables.forEachIndexed { index, placeable ->
-                placeable?.placeRelative(
-                    positions[index][0],
-                    positions[index][1],
-                    zIndex = when (index) {
-                        placeholderIndex -> 20f
-                        draggedIndex -> 10f
-                        else -> 0f
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun WidgetTile(
-    activity: MainActivity,
-    widget: HostHomeWidget,
-    modifier: Modifier,
-    onClick: () -> Unit,
-    dragState: DropPreviewState,
-    sourceIndex: Int,
-    onDrop: (Int) -> Unit,
-    onMoveEarlier: () -> Unit,
-    onMoveLater: () -> Unit,
-    onMoveFirst: () -> Unit,
-    onMoveLast: () -> Unit,
-) {
-    val shape = SuiteShapes.Card
-    var menuExpanded by remember(widget.pluginId(), widget.id()) { mutableStateOf(false) }
-    val width = activity.widgetWidthUnitsForUi(widget)
-    val height = activity.widgetHeightUnitsForUi(widget)
-    Box(
-        modifier = modifier
-            .dropPreviewReorder(
-                key = widgetKey(widget),
-                onClick = onClick,
-                onLongPress = { menuExpanded = true },
-                dragState = dragState,
-                sourceIndex = sourceIndex,
-                onDrop = onDrop,
-                allowHorizontalDrag = true,
-            )
-            .semantics {
-                customActions = listOf(
-                    CustomAccessibilityAction("上移") { onMoveEarlier(); true },
-                    CustomAccessibilityAction("下移") { onMoveLater(); true },
-                    CustomAccessibilityAction("移到开头") { onMoveFirst(); true },
-                    CustomAccessibilityAction("移到末尾") { onMoveLast(); true },
-                    CustomAccessibilityAction("从主页移除") {
-                        activity.setWidgetVisibleForUi(widget, false)
-                        true
-                    },
-                )
-            }
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        key(widget) {
-            PluginAndroidView(Modifier.fillMaxSize()) { widget.createView(activity, activity) }
-        }
-        // 小部件里的 View 会把触摸事件吃掉，外层的点按、长按和拖动就都收不到了。
-        // 这层透明覆盖只拦事件不消费，手势判定仍然由上面的 dropPreviewReorder 做。
-        Box(
-            Modifier
-                .matchParentSize()
-                .pointerInput(widget.pluginId(), widget.id()) {
-                    awaitPointerEventScope {
-                        while (true) awaitPointerEvent()
-                    }
-                },
-        )
-        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-            widget.supportedSizes().forEach { size ->
-                val selected = width == size.widthUnits && height == size.heightUnits
-                DropdownMenuItem(
-                    text = { Text("尺寸 ${size.widthUnits}×${size.heightUnits}") },
-                    leadingIcon = { if (selected) Icon(Icons.Rounded.Check, "当前尺寸") },
-                    onClick = {
-                        activity.setWidgetSizeForUi(widget, size.widthUnits, size.heightUnits)
-                        menuExpanded = false
-                    },
-                )
-            }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("从主页移除") },
-                leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
-                onClick = {
-                    activity.setWidgetVisibleForUi(widget, false)
-                    menuExpanded = false
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun AddWidgetSheet(activity: MainActivity, hidden: List<HostHomeWidget>, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text("添加小部件", modifier = Modifier.padding(horizontal = SuiteSpacing.xl), style = MaterialTheme.typography.titleLarge)
-        if (hidden.isEmpty()) {
-            // 「全都显示了」和「根本没有小部件可用」是两种情况，出口也不一样。
-            val nothingAvailable = activity.allWidgetsForUi().isEmpty()
-            Text(
-                if (nothingAvailable) "已启用的插件都没有提供主页小部件，可在管理中启用更多插件。"
-                else "所有小部件都已显示在主页。",
-                modifier = Modifier.padding(SuiteSpacing.xl),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            hidden.forEach { widget ->
-                SuiteSettingsRow(
-                    widget.title(),
-                    supportingText = "${widget.supportedSizes().size} 种尺寸",
-                    leadingIcon = Icons.Rounded.Add,
-                    onClick = {
-                        activity.setWidgetVisibleForUi(widget, true)
-                        onDismiss()
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.height(SuiteSpacing.xxl))
-    }
-}
-
-/**
- * 长按拿起、拖动排序、点击打开——三件事共用一次手势判定。
- *
- * 不用 `combinedClickable` 叠 `detectDragGesturesAfterLongPress`：那样长按会先触发点击语义，
- * 再由拖动接手，松手时容易同时算成「点开插件」和「排序」。这里自己判距离与时长，
- * 位移没超过 touchSlop 才算点按或长按，超过就交给下面的拖动识别。
- */
-@Composable
-private fun Modifier.dropPreviewReorder(
-    key: String,
-    onClick: () -> Unit,
-    onLongPress: () -> Unit,
-    dragState: DropPreviewState,
-    sourceIndex: Int,
-    onDrop: (Int) -> Unit,
-    allowHorizontalDrag: Boolean,
-): Modifier {
-    val dragging = dragState.draggedKey == key
-    val viewConfiguration = LocalViewConfiguration.current
-    return this
-        .zIndex(if (dragging) 10f else 0f)
-        .graphicsLayer {
-            translationX = if (dragging && allowHorizontalDrag) dragState.offsetX else 0f
-            translationY = if (dragging) dragState.offsetY else 0f
-            alpha = if (dragging) 0.94f else 1f
-        }
-        .pointerInput(key) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                var pointer = down
-                var maxDistance = 0f
-                while (pointer.pressed) {
-                    val event = awaitPointerEvent(PointerEventPass.Final)
-                    pointer = event.changes.firstOrNull { it.id == down.id } ?: break
-                    maxDistance = maxOf(maxDistance, (pointer.position - down.position).getDistance())
-                }
-                if (maxDistance <= viewConfiguration.touchSlop) {
-                    if (pointer.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) onLongPress()
-                    else onClick()
-                }
-            }
-        }
-        .pointerInput(key, sourceIndex, allowHorizontalDrag) {
-            detectDragGesturesAfterLongPress(
-                onDragStart = { dragState.start(key, sourceIndex) },
-                onDragCancel = dragState::cancel,
-                onDragEnd = { onDrop(dragState.finish()) },
-            ) { change, dragAmount ->
-                change.consume()
-                dragState.dragBy(if (allowHorizontalDrag) dragAmount.x else 0f, dragAmount.y)
-            }
-        }
-}
-
-@Composable
-private fun PluginListScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
-    hostRevision(activity)
-    val plugins = activity.pluginsForUi()
-    val hiddenCount = activity.allToolsForUi().count { !activity.isToolVisibleForUi(it) }
-    val listState = rememberPageListState(activity, "tools")
-    LazyColumn(
-        state = listState,
-        modifier = modifier.semantics { stateDescription = "tools-$refreshVersion" },
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text("全部工具", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.height(SuiteSpacing.sm))
-            Text(
-                "点击打开 · 长按拖动排序或调整",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(SuiteSpacing.xs))
-        }
-        if (plugins.isEmpty()) item { EmptyState("没有可用工具", "请先在插件管理中启用插件。") }
-        if (plugins.isNotEmpty()) item { ToolReorderList(activity, plugins, Modifier.fillMaxWidth()) }
-        if (hiddenCount > 0) {
-            // 隐藏项不在这一页出现，得说清它们去哪了，否则「工具少了一个」看不出是自己隐藏的。
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "$hiddenCount 个工具已隐藏",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TextButton(onClick = { activity.navigateForUi(MANAGER) }) { Text("在管理中恢复") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ToolReorderList(
-    activity: MainActivity,
-    plugins: List<HostTool>,
-    modifier: Modifier = Modifier,
-) {
-    val gap = 12.dp
-    val orderKey = plugins.joinToString("\n", transform = HostTool::id)
-    val dragState = remember(orderKey) { DropPreviewState() }
-    val draggedIndex = plugins.indexOfFirst { it.id() == dragState.draggedKey }
-    val targetIndex = dragState.targetIndex.coerceIn(0, (plugins.size - 1).coerceAtLeast(0))
-    Layout(
-        modifier = modifier,
-        content = {
-            plugins.forEachIndexed { index, plugin ->
-                key(plugin.id()) {
-                    fun moveTo(target: HostTool?) {
-                        target?.takeIf { it !== plugin }?.let { activity.moveToolToUi(plugin.id(), it.id()) }
-                    }
-                    PluginListCard(
-                        activity = activity,
-                        plugin = plugin,
-                        interaction = { onLongPress ->
-                            Modifier.dropPreviewReorder(
-                                key = plugin.id(),
-                                onClick = { activity.openPluginForUi(plugin) },
-                                onLongPress = onLongPress,
-                                dragState = dragState,
-                                sourceIndex = index,
-                                onDrop = { destination -> moveTo(plugins.getOrNull(destination)) },
-                                allowHorizontalDrag = false,
-                            )
-                        },
-                        modifier = Modifier.semantics {
-                            customActions = listOf(
-                                CustomAccessibilityAction("上移") { moveTo(plugins.getOrNull(index - 1)); true },
-                                CustomAccessibilityAction("下移") { moveTo(plugins.getOrNull(index + 1)); true },
-                                CustomAccessibilityAction("移到开头") { moveTo(plugins.firstOrNull()); true },
-                                CustomAccessibilityAction("移到末尾") { moveTo(plugins.lastOrNull()); true },
-                                CustomAccessibilityAction("从工具页隐藏") {
-                                    activity.setToolVisibleForUi(plugin, false)
-                                    true
-                                },
-                            )
-                        },
-                    )
-                }
-            }
-            if (draggedIndex >= 0) DropPreview()
-        },
-    ) { measurables, constraints ->
-        val listWidth = constraints.maxWidth
-        val gapPx = gap.roundToPx()
-        val placeholderIndex = plugins.size
-        val logicalIndices = plugins.indices.toMutableList()
-        if (draggedIndex >= 0) {
-            logicalIndices.remove(draggedIndex)
-            logicalIndices.add(targetIndex.coerceAtMost(logicalIndices.size), -1)
-        }
-        val placeables = arrayOfNulls<androidx.compose.ui.layout.Placeable>(measurables.size)
-        val positions = Array(measurables.size) { IntArray(2) }
-        var y = 0
-
-        logicalIndices.forEach { logicalIndex ->
-            val isPlaceholder = logicalIndex < 0
-            val measurableIndex = if (isPlaceholder) placeholderIndex else logicalIndex
-            val placeable = if (isPlaceholder) {
-                val height = dragState.sourceSlot()?.height ?: 132.dp.roundToPx()
-                measurables[measurableIndex].measure(Constraints.fixed(listWidth, height))
-            } else {
-                measurables[measurableIndex].measure(Constraints(minWidth = listWidth, maxWidth = listWidth))
-            }
-            placeables[measurableIndex] = placeable
-            positions[measurableIndex][1] = y
-            y += placeable.height + gapPx
-        }
-
-        if (draggedIndex >= 0) {
-            val sourceSlot = dragState.sourceSlot()
-            placeables[draggedIndex] = measurables[draggedIndex].measure(Constraints(minWidth = listWidth, maxWidth = listWidth))
-            positions[draggedIndex][1] = sourceSlot?.top ?: 0
-        } else {
-            dragState.updateBaseSlots(
-                plugins.indices.map { index ->
-                    val placeable = requireNotNull(placeables[index])
-                    ReorderSlot(
-                        key = plugins[index].id(),
-                        index = index,
-                        left = 0,
-                        top = positions[index][1],
-                        width = placeable.width,
-                        height = placeable.height,
-                    )
-                },
-            )
-        }
-
-        val listHeight = (y - gapPx).coerceAtLeast(0)
-        layout(listWidth, listHeight.coerceIn(constraints.minHeight, constraints.maxHeight)) {
-            placeables.forEachIndexed { index, placeable ->
-                placeable?.placeRelative(
-                    0,
-                    positions[index][1],
-                    zIndex = when (index) {
-                        placeholderIndex -> 20f
-                        draggedIndex -> 10f
-                        else -> 0f
-                    },
-                )
-            }
-        }
-    }
-}
-
 /**
  * 图标底座：圆角方块 + secondaryContainer 底色。
  *
@@ -1287,7 +700,7 @@ private fun ToolReorderList(
  * [dense] 对应管理屏那种一行一项的密排场景。
  */
 @Composable
-private fun IconBox(
+internal fun IconBox(
     icon: ImageVector,
     contentDescription: String?,
     dense: Boolean = false,
@@ -1318,70 +731,6 @@ private fun IconBox(
  * 但手势判定要和排序拖动共用一次 pointerInput，只能在外面拼。
  */
 @Composable
-private fun PluginListCard(
-    activity: MainActivity,
-    plugin: HostTool,
-    interaction: @Composable (onLongPress: () -> Unit) -> Modifier,
-    modifier: Modifier = Modifier,
-) {
-    var menuExpanded by remember(plugin.id()) { mutableStateOf(false) }
-    Box(modifier = modifier) {
-        SuiteCard(modifier = interaction { menuExpanded = true }) {
-            Row(horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
-                IconBox(pluginIcon(plugin), "${plugin.title()}工具")
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
-                    // 版本号在标题右侧做次要标签，而不是标题下方的独立 chip：
-                    // chip 的视觉重量跟「可点」暗示都太强，版本号只是参考信息。
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm)) {
-                        Text(plugin.title(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                        Text(
-                            "v${plugin.version()}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Text(
-                        plugin.description(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-            DropdownMenuItem(
-                text = { Text("从工具页隐藏") },
-                leadingIcon = { Icon(Icons.Rounded.VisibilityOff, null) },
-                onClick = {
-                    menuExpanded = false
-                    activity.setToolVisibleForUi(plugin, false)
-                },
-            )
-            if (activity.canDisablePluginForUi(plugin)) {
-                DropdownMenuItem(
-                    text = { Text("停用插件") },
-                    leadingIcon = { Icon(Icons.Rounded.RemoveCircle, null) },
-                    onClick = {
-                        menuExpanded = false
-                        activity.disablePluginForUi(plugin)
-                    },
-                )
-            }
-            DropdownMenuItem(
-                text = { Text("在管理中设置") },
-                leadingIcon = { Icon(Icons.Rounded.Tune, null) },
-                onClick = {
-                    menuExpanded = false
-                    activity.navigateForUi(MANAGER)
-                },
-            )
-        }
-    }
-}
-
-@Composable
 private fun PluginDetailScreen(activity: MainActivity, plugin: HostTool, refreshVersion: Int, modifier: Modifier = Modifier) {
     hostRevision(activity)
     val contentModifier = if (activity.isRuntimeToolForUi(plugin)) {
@@ -1397,593 +746,37 @@ private fun PluginDetailScreen(activity: MainActivity, plugin: HostTool, refresh
 }
 
 @Composable
-private fun ManagerScreen(activity: MainActivity, refreshVersion: Int, modifier: Modifier = Modifier) {
+internal fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.PluginRelease) {
     hostRevision(activity)
-    val optionalBuiltIns = activity.optionalBuiltInPlugins()
-    val imported = activity.importedDescriptorsForUi()
-    val listState = rememberPageListState(activity, "manager")
-    LazyColumn(
-        state = listState,
-        modifier = modifier.semantics { stateDescription = "manager-$refreshVersion" },
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Text("控制插件是否启用，以及在哪里显示。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (optionalBuiltIns.isNotEmpty()) {
-            item { SectionHeader("系统工具") }
-            items(optionalBuiltIns, key = HostTool::id) { plugin ->
-                ManagedPluginCard(
-                    pluginId = plugin.id(),
-                    title = plugin.title(),
-                    version = plugin.version(),
-                    icon = pluginIcon(plugin),
-                    enabled = activity.isBuiltInPluginEnabled(plugin.id()),
-                    loadedPlugin = activity.findToolForUi(plugin.id()),
-                    refreshVersion = refreshVersion,
-                    onEnabledChange = { activity.setBuiltInPluginEnabled(plugin.id(), it) },
-                    activity = activity,
-                )
-            }
-        }
-        item { SectionHeader("已安装插件", "${imported.size} 个") }
-        if (imported.isEmpty()) item { EmptyState("尚未安装插件", "可在仓库中安装，或导入本地插件包。") }
-        items(imported, key = ImportedPluginDescriptor::id) { descriptor ->
-            ManagedPluginCard(
-                pluginId = descriptor.id,
-                title = descriptor.title,
-                version = descriptor.version,
-                icon = Icons.Rounded.Extension,
-                enabled = activity.isImportedPluginEnabled(descriptor.id),
-                loadedPlugin = activity.findToolForUi(descriptor.id),
-                refreshVersion = refreshVersion,
-                onEnabledChange = { activity.setImportedPluginEnabled(descriptor.id, it) },
-                activity = activity,
-                removable = true,
-                activationPending = activity.isRuntimeActivationPendingForUi(descriptor.id),
-                loadFailed = activity.isImportedPluginEnabled(descriptor.id) &&
-                    !activity.isPluginLoadedForUi(descriptor.id) &&
-                    !activity.isRuntimeActivationPendingForUi(descriptor.id),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ManagedPluginCard(
-    activity: MainActivity,
-    pluginId: String,
-    title: String,
-    version: String,
-    icon: ImageVector,
-    enabled: Boolean,
-    loadedPlugin: HostTool?,
-    refreshVersion: Int,
-    onEnabledChange: (Boolean) -> Unit,
-    removable: Boolean = false,
-    loadFailed: Boolean = false,
-    activationPending: Boolean = false,
-) {
-    var expanded by remember(title) { mutableStateOf(false) }
-    val hasHomeWidgets = enabled && loadedPlugin != null && activity.hasHomeWidgetsForUi(loadedPlugin)
-    val toolVisible = loadedPlugin?.let(activity::isToolVisibleForUi) ?: false
-    val homeVisible = loadedPlugin?.let(activity::isPluginHomeVisibleForUi) ?: false
-    val permissions = activity.pluginPermissionsForUi(pluginId)
-    val trustedProvider = activity.isTrustedProviderForUi(pluginId)
-    val visibilitySummary = when {
-        toolVisible && hasHomeWidgets && homeVisible -> "工具页 · 主页"
-        toolVisible -> "仅工具页"
-        hasHomeWidgets && homeVisible -> "仅主页"
-        else -> "已隐藏"
-    }
-    val summary = buildString {
-        append(
-            when {
-                !enabled -> "v$version · 已停用"
-                activationPending -> "v$version · 等待重启激活"
-                else -> "v$version · $visibilitySummary"
-            },
-        )
-        if (enabled && trustedProvider) append(" · 完全信任")
-        // 关掉更新检查是个容易忘的设置，收起时也得看得见。
-        if (removable && !activity.isPluginUpdateCheckEnabledForUi(pluginId)) append(" · 不检查更新")
-    }
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { stateDescription = "managed-plugin-$title-$refreshVersion" },
-        shape = SuiteShapes.Card,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
-        Column {
-            // 整行进入该插件的设置面板，保留列表滚动位置。
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    // 停用后仍可管理权限、数据和插件包。
-                    .clickable { expanded = !expanded }
-                    .padding(horizontal = SuiteSpacing.lg, vertical = SuiteSpacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md),
-            ) {
-                IconBox(icon, null, dense = true)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = enabled, onCheckedChange = onEnabledChange)
-                Icon(
-                    Icons.Rounded.ChevronRight,
-                    "插件设置",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (activationPending) {
-                TextButton(
-                    onClick = { activity.requestPluginRestartForUi(pluginId) },
-                    modifier = Modifier.padding(horizontal = SuiteSpacing.md),
-                ) { Text("重启以激活") }
-            }
-            if (loadFailed) {
-                Column(Modifier.padding(start = SuiteSpacing.lg, end = SuiteSpacing.lg, bottom = SuiteSpacing.md)) {
-                    ErrorState("插件无法加载", "请重新安装插件。", onRetry = activity::importPlugin)
-                }
-            }
-        }
-    }
-    if (expanded) {
-        ModalBottomSheet(
-            onDismissRequest = { expanded = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        ) {
-            Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.md),
-                verticalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-            ) {
-                SectionHeader(title, "v$version") {
-                    TextButton(onClick = { expanded = false }) { Text("关闭") }
-                }
-                VisibilitySwitch("启用插件", enabled, onEnabledChange)
-                HorizontalDivider()
-
-                    if (loadedPlugin != null) {
-                        VisibilitySwitch(
-                            "在工具页显示",
-                            toolVisible,
-                            { activity.setToolVisibleForUi(loadedPlugin, it) },
-                            modifier = Modifier.heightIn(min = 40.dp),
-                        )
-                        if (hasHomeWidgets) {
-                            VisibilitySwitch(
-                                "在主页显示",
-                                homeVisible,
-                                { activity.setPluginHomeVisibleForUi(loadedPlugin, it) },
-                                modifier = Modifier.heightIn(min = 40.dp),
-                            )
-                        } else {
-                            // 明确说清「没有」，否则少一行开关会被当成加载失败。
-                            Text(
-                                "此插件没有主页小部件",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = SuiteSpacing.sm),
-                            )
-                        }
-                    }
-                    if (permissions.isNotEmpty()) {
-                        Text(
-                            "插件权限",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(top = SuiteSpacing.sm, bottom = SuiteSpacing.sm),
-                        )
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.md),
-                            shape = SuiteShapes.Inner,
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column {
-                                permissions.forEachIndexed { index, permission ->
-                                    PluginPermissionRow(
-                                        permission = permission,
-                                        scope = activity.pluginPermissionScopeForUi(permission),
-                                        onGrantedChange = {
-                                            activity.setPluginPermissionForUi(pluginId, permission.capabilityId, it)
-                                        },
-                                    )
-                                    if (index != permissions.lastIndex) HorizontalDivider()
-                                }
-                            }
-                        }
-                    } else if (trustedProvider) {
-                        Notice(
-                            "这是完全信任的系统插件。启用后，它可以直接使用本应用拥有的系统权限，无法逐项限制。其他插件使用它提供的系统功能时，仍需单独获得允许。",
-                            warning = true,
-                            modifier = Modifier.padding(bottom = SuiteSpacing.md),
-                        )
-                    } else if (removable && !activity.isRuntimePluginForUi(pluginId)) {
-                        Notice(
-                            "此旧版插件可以直接使用应用拥有的功能，无法逐项限制。请只安装来源可信的版本。",
-                            warning = true,
-                            modifier = Modifier.padding(bottom = SuiteSpacing.md),
-                        )
-                    }
-                    // 外部插件才有更新与删除；内置插件跟着应用走。
-                    if (removable) {
-                        VisibilitySwitch(
-                            "检查更新",
-                            activity.isPluginUpdateCheckEnabledForUi(pluginId),
-                            { activity.setPluginUpdateCheckEnabledForUi(pluginId, it) },
-                            modifier = Modifier.heightIn(min = 40.dp),
-                        )
-                        Row(
-                            Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.sm),
-                            horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-                        ) {
-                            OutlinedButton(onClick = { expanded = false; activity.exportPlugin(pluginId) }, modifier = Modifier.weight(1f)) {
-                                Text("导出")
-                            }
-                            OutlinedButton(
-                                onClick = { expanded = false; activity.requestDeletePluginForUi(pluginId) },
-                                modifier = Modifier.weight(1f),
-                            ) { Text("删除") }
-                        }
-                    }
-                    if (activity.hasPluginDataForUi(pluginId, loadedPlugin)) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(bottom = SuiteSpacing.sm),
-                            horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.sm),
-                        ) {
-                            OutlinedButton(
-                                onClick = { expanded = false; activity.prepareMigrationBridgeExportForPluginUi(pluginId) },
-                                modifier = Modifier.weight(1f),
-                            ) { Text("导出数据") }
-                            OutlinedButton(
-                                onClick = { expanded = false; activity.importMigrationBridgeForPluginUi(pluginId) },
-                                modifier = Modifier.weight(1f),
-                            ) { Text("导入数据") }
-                            OutlinedButton(
-                                onClick = { expanded = false; activity.prepareMigrationBridgeDeleteForPluginUi(pluginId) },
-                                modifier = Modifier.weight(1f),
-                            ) { Text("清除数据") }
-                        }
-                    }
-
-                Spacer(Modifier.height(SuiteSpacing.lg))
-            }
-        }
-    }
-
-}
-
-@Composable
-private fun VisibilitySwitch(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.labelLarge,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
-    }
-}
-
-@Composable
-private fun PluginRepositoryScreen(
-    activity: MainActivity,
-    refreshVersion: Int,
-    snackbarHostState: SnackbarHostState,
-    modifier: Modifier = Modifier,
-) {
-    hostRevision(activity)
-    val scope = rememberCoroutineScope()
-    val plugins = activity.repositoryPluginsForUi()
-    val installed = activity.importedDescriptorsForUi()
-    val installedIds = installed.mapTo(mutableSetOf(), ImportedPluginDescriptor::id)
-    val available = plugins.filterNot { it.id in installedIds }
-    val appUpdate = activity.appUpdateForUi()
-    val listState = rememberPageListState(activity, "plugin-repository")
-    var showRisk by remember { mutableStateOf(activity.shouldShowStoreRiskForUi()) }
-    if (showRisk) {
-        AlertDialog(
-            onDismissRequest = { showRisk = false; activity.acknowledgeStoreRiskForUi() },
-            title = { Text("安装可信插件") },
-            text = { Text("普通插件只能使用你允许的功能；完全信任的系统插件会以应用身份运行，安装前请确认来源可靠。") },
-            confirmButton = {
-                TextButton(onClick = { showRisk = false; activity.acknowledgeStoreRiskForUi() }) { Text("知道了") }
-            },
-        )
-    }
-    LazyColumn(
-        state = listState,
-        modifier = modifier.semantics { stateDescription = "plugin-repository-$refreshVersion" },
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        if (appUpdate != null) {
-            item {
-                SuiteCard {
-                    val appUpdateBusy = activity.isUpdateOperationRunningForUi("__app__")
-                    Text("应用更新 ${appUpdate.versionName}", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "部分新插件需要先更新应用。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Button(
-                        onClick = activity::installAppUpdateForUi,
-                        enabled = !appUpdateBusy,
-                    ) {
-                        Text("更新应用")
-                    }
-                    if (appUpdateBusy) {
-                        RepositoryDownloadProgress(activity, "__app__")
-                    }
-                }
-            }
-        }
-        item {
-            // 副标题同时给出总数和可更新数，「全部更新」按钮出现的原因就在旁边写着。
-            val updatableCount = activity.availablePluginUpdatesForUi().size
-            SectionHeader(
-                "已安装",
-                if (updatableCount > 0) "${installed.size} 个 · $updatableCount 项可更新" else "${installed.size} 个",
-            ) {
-                IconButton(
-                    onClick = {
-                        scope.launch { snackbarHostState.showSnackbar("正在刷新…") }
-                        activity.refreshUpdatesForUi()
-                    },
-                    enabled = !activity.isUpdateOperationRunningForUi("__check__"),
-                ) { Icon(Icons.Rounded.Refresh, "刷新仓库") }
-                if (activity.availableUpdateCountForUi() > 0) {
-                    TextButton(onClick = activity::installAllUpdatesForUi) { Text("全部更新") }
-                }
-            }
-        }
-        if (activity.updateCheckStateForUi() == MainActivity.UpdateCheckState.FAILED) {
-            item { ErrorState("仓库刷新失败", activity.updateErrorForUi(), activity::refreshUpdatesForUi) }
-        }
-        if (installed.isEmpty()) item { EmptyState("还没有安装外部插件", "从下方选择插件，或导入本地插件包。") }
-        items(installed, key = ImportedPluginDescriptor::id) { descriptor ->
-            InstalledRepositoryCard(activity, descriptor, plugins.firstOrNull { it.id == descriptor.id })
-        }
-        item { SectionHeader("可安装", "${available.size} 个") }
-        if (plugins.isEmpty() && activity.updateCheckStateForUi() != MainActivity.UpdateCheckState.CHECKING) {
-            item { EmptyState("仓库暂不可用", "请检查网络后刷新；首次发布完成前仓库也可能为空。") }
-        } else if (available.isEmpty()) {
-            item { EmptyState("没有更多插件", "所有可用插件都已经安装。") }
-        }
-        items(available, key = UpdateCatalog.PluginRelease::id) { release ->
-            RepositoryPluginCard(activity, release)
-        }
-        item {
-            OutlinedButton(onClick = activity::importPlugin, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Rounded.Add, null)
-                Spacer(Modifier.width(SuiteSpacing.sm))
-                Text("导入本地插件包")
-            }
-        }
-    }
-}
-
-@Composable
-private fun InstalledRepositoryCard(
-    activity: MainActivity,
-    descriptor: ImportedPluginDescriptor,
-    latest: UpdateCatalog.PluginRelease?,
-) {
-    hostRevision(activity)
-    var menuExpanded by remember(descriptor.id) { mutableStateOf(false) }
-    var versionSheetVisible by remember(descriptor.id) { mutableStateOf(false) }
-    val versions = activity.repositoryPluginVersionsForUi(descriptor.id)
-    val hasUpdate = latest != null && activity.isRepositoryPluginUpdateAvailableForUi(latest)
-    val updateChecked = activity.isPluginUpdateCheckEnabledForUi(descriptor.id)
-    val busy = activity.isUpdateOperationRunningForUi(descriptor.id)
-    if (versionSheetVisible) {
-        VersionPickerSheet(activity, descriptor.title, versions) { versionSheetVisible = false }
-    }
-    SuiteCard {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
-            IconBox(Icons.Rounded.Extension, null, dense = true)
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
-                    Text(descriptor.title, style = MaterialTheme.typography.titleMedium)
-                    if (activity.isRepositoryVerifiedForUi(descriptor.id)) Icon(Icons.Rounded.Verified, "已验证", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                }
-                // 副标题直接说清「要往哪走」，而不是只报一个当前版本号。
-                Text(
-                    when {
-                        hasUpdate -> "${descriptor.version} → ${latest?.versionName}"
-                        !updateChecked -> "不检查更新 · ${descriptor.version}"
-                        else -> "已是最新 · ${descriptor.version}"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Box {
-                IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    // 已安装的插件不在「可安装」列表里出现，切版本、降级的入口只能挂在这张卡上。
-                    if (versions.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("选择版本…") },
-                            leadingIcon = { Icon(Icons.Rounded.Tune, null) },
-                            onClick = { menuExpanded = false; versionSheetVisible = true },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(if (updateChecked) "不检查此插件更新" else "检查此插件更新") },
-                        leadingIcon = { Icon(if (updateChecked) Icons.Rounded.NotificationsOff else Icons.Rounded.Notifications, null) },
-                        onClick = {
-                            menuExpanded = false
-                            activity.setPluginUpdateCheckEnabledForUi(descriptor.id, !updateChecked)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("导出插件包") },
-                        leadingIcon = { Icon(Icons.Rounded.FileUpload, null) },
-                        onClick = { menuExpanded = false; activity.exportPlugin(descriptor.id) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("删除") },
-                        leadingIcon = { Icon(Icons.Rounded.Delete, null) },
-                        onClick = { menuExpanded = false; activity.requestDeletePluginForUi(descriptor.id) },
-                    )
-                }
-            }
-        }
-        if (busy) {
-            RepositoryDownloadProgress(activity, descriptor.id)
-        }
-        if (hasUpdate) {
-            Button(
-                onClick = { activity.installRepositoryPluginVersionForUi(requireNotNull(latest)) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("更新到 v${latest.versionName}") }
-        }
-    }
-}
-
-/**
- * 版本列表。每一行自己说明这次跳转是升级、降级还是被拦下的，点了直接装。
- *
- * 不做「先选中再确认」两步：选版本这件事本身就只有一个后续动作。
- */
-@Composable
-private fun VersionPickerSheet(
-    activity: MainActivity,
-    title: String,
-    versions: List<UpdateCatalog.PluginRelease>,
-    onDismiss: () -> Unit,
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text(title, modifier = Modifier.padding(horizontal = SuiteSpacing.xl), style = MaterialTheme.typography.titleLarge)
-        Text(
-            "可切换到其他已发布版本。降级需要目标版本能读取当前数据格式。",
-            modifier = Modifier.padding(horizontal = SuiteSpacing.xl, vertical = SuiteSpacing.sm),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        LazyColumn(Modifier.heightIn(max = 420.dp)) {
-            items(versions, key = UpdateCatalog.PluginRelease::sha256) { version ->
-                val installed = activity.isRepositoryPluginVersionInstalledForUi(version)
-                val selectable = activity.isRepositoryPluginVersionSelectableForUi(version)
-                val label = version.versionName
-                SuiteSettingsRow(
-                    label,
-                    supportingText = activity.repositoryPluginTransitionLabelForUi(version),
-                    leading = { if (installed) Icon(Icons.Rounded.Check, "当前安装") else Spacer(Modifier.size(24.dp)) },
-                    trailingText = if (selectable) activity.repositoryPluginActionLabelForUi(version) else null,
-                    emphasized = selectable,
-                    onClick = if (selectable) {
-                        {
-                            activity.installRepositoryPluginVersionForUi(version)
-                            onDismiss()
-                        }
-                    } else {
-                        null
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.height(SuiteSpacing.xxl))
-    }
-}
-
-@Composable
-private fun RepositoryPluginCard(activity: MainActivity, release: UpdateCatalog.PluginRelease) {
-    hostRevision(activity)
-    var menuExpanded by remember(release.id) { mutableStateOf(false) }
-    var versionSheetVisible by remember(release.id) { mutableStateOf(false) }
-    val versions = activity.repositoryPluginVersionsForUi(release.id)
+    val installed = activity.isRepositoryPluginVersionInstalledForUi(release)
+    val selectable = activity.isRepositoryPluginVersionSelectableForUi(release)
     val compatible = activity.isRepositoryPluginCompatibleForUi(release)
     val busy = activity.isUpdateOperationRunningForUi(release.id)
-    val selectable = activity.isRepositoryPluginVersionSelectableForUi(release)
-    val actionText = activity.repositoryPluginActionLabelForUi(release)
-    if (versionSheetVisible) {
-        VersionPickerSheet(activity, release.title, versions) { versionSheetVisible = false }
-    }
     SuiteCard {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.md),
-        ) {
-            IconBox(Icons.Rounded.Extension, null, dense = true)
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
-                    Text(release.title, style = MaterialTheme.typography.titleMedium)
-                    Icon(Icons.Rounded.Verified, "已验证发布", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                }
-                Text(
-                    release.versionName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                if (versions.size > 1) {
-                    DropdownMenuItem(
-                        text = { Text("选择版本…") },
-                        leadingIcon = { Icon(Icons.Rounded.Tune, null) },
-                        onClick = { menuExpanded = false; versionSheetVisible = true },
-                    )
-                }
-            }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("v${release.versionName}", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            if (installed) SuiteStatusChip("已安装", positive = true)
         }
-        Text(
-            activity.repositoryPluginTransitionLabelForUi(release),
-            style = MaterialTheme.typography.bodySmall,
-            color = if (selectable || activity.isRepositoryPluginVersionInstalledForUi(release)) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.error
-            },
-        )
-        Text(
-            release.description,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (release.dependencies.isNotEmpty()) {
-            Text(
-                "依赖：${release.dependencies.joinToString()}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        if (!compatible) {
+        Text("${release.publishedAt.take(10)} · ${release.size / 1024} KB · Android ${androidVersionLabel(release.minAndroidApi)}+", style = MaterialTheme.typography.bodySmall)
+        Text(activity.repositoryPluginTransitionLabelForUi(release), style = MaterialTheme.typography.bodySmall,
+            color = if (selectable || installed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+        if (release.dependencies.isNotEmpty()) Text("依赖：${release.dependencies.joinToString()}", style = MaterialTheme.typography.bodySmall)
+        if (busy) RepositoryDownloadProgress(activity, release.id)
+        if (Build.VERSION.SDK_INT < release.minAndroidApi) {
+            Notice("需要 Android ${androidVersionLabel(release.minAndroidApi)} 或更高版本；请先升级系统。", warning = true)
+        } else if (!compatible) {
             Notice("需要应用 ${activity.requiredAppVersionLabelForUi(release.minHostVersionCode)} 或更高版本", warning = true)
-            Button(onClick = activity::installAppUpdateForUi, modifier = Modifier.fillMaxWidth(), enabled = activity.appUpdateForUi() != null) {
-                Text("更新应用")
-            }
+            if (!activity.isDebugBuildForUi()) OutlinedButton(onClick = activity::installAppUpdateForUi, enabled = activity.appUpdateForUi() != null) { Text("更新应用") }
         } else {
-            if (busy) {
-                RepositoryDownloadProgress(activity, release.id)
-            }
-            Button(
-                onClick = { activity.installRepositoryPluginVersionForUi(release) },
-                enabled = !busy && selectable,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(actionText) }
+            val action=activity.repositoryPluginActionLabelForUi(release)
+            if(action=="安装"||action=="更新") Button(onClick={activity.installRepositoryPluginVersionForUi(release)},enabled=selectable&&!busy,modifier=Modifier.fillMaxWidth()) { Text(action) }
+            else OutlinedButton(onClick={activity.installRepositoryPluginVersionForUi(release)},enabled=selectable&&!busy,modifier=Modifier.fillMaxWidth()) { Text(action) }
         }
     }
 }
 
 @Composable
-private fun RepositoryDownloadProgress(activity: MainActivity, pluginId: String) {
+internal fun RepositoryDownloadProgress(activity: MainActivity, pluginId: String) {
     val progress = activity.downloadProgressForUi(pluginId)
     LinearProgressIndicator(
         progress = { progress },
@@ -2032,7 +825,7 @@ private fun SettingsScreen(
                     onSelected = activity::setThemePreferenceForUi,
                 )
                 SettingsDropdownRow(
-                    title = "配色",
+                    title = "应用配色",
                     selectedValue = activity.colorPreferenceForUi(),
                     selectedLabel = colorLabel,
                     options = listOf("brand" to "应用自带", "dynamic" to "跟随壁纸"),
@@ -2043,46 +836,48 @@ private fun SettingsScreen(
             }
         }
         item {
-            SuiteSettingsGroup("更新") {
+            SuiteSettingsGroup("应用更新") {
+                if (activity.isDebugBuildForUi()) SuiteSettingsRow("本地 Debug 构建", leadingIcon = Icons.Rounded.Info, supportingText = "通过本地安装更新，不提供远端应用更新")
+                else {
+                    SuiteSettingsSwitchRow("自动检查应用更新", supportingText = "只检查正式发布的应用版本", checked = activity.autoCheckAppUpdatesForUi(), onCheckedChange = activity::setAutoCheckAppUpdatesForUi)
+                    SuiteSettingsRow("检查应用更新", leadingIcon = Icons.Rounded.Refresh, onClick = activity::checkAppUpdatesForUi, emphasized = true)
+                    activity.appUpdateForUi()?.let { release -> SuiteSettingsRow("更新到 ${release.versionName}", onClick = activity::installAppUpdateForUi) }
+                }
+            }
+        }
+        item {
+            SuiteSettingsGroup("插件更新") {
                 SuiteSettingsSwitchRow(
-                    "自动检查更新",
+                    "自动检查插件更新",
+                    supportingText = "所有构建均使用正式插件目录",
                     checked = autoCheckUpdates,
                     onCheckedChange = activity::setAutoCheckUpdatesForUi,
                 )
                 SuiteSettingsRow(
-                    "立即检查更新",
+                    "检查插件更新",
+                    leadingIcon = Icons.Rounded.Refresh,
+                    supportingText = "正式插件目录 · 上次检查：${formatLastChecked(activity.lastUpdateCheckForUi())}",
                     onClick = {
                         scope.launch { snackbarHostState.showSnackbar("正在检查更新…") }
-                        activity.checkUpdatesManuallyForUi()
+                        activity.checkPluginUpdatesForUi()
                     },
                     trailingText = if (activity.isUpdateOperationRunningForUi("__check__")) "正在检查…" else null,
                     emphasized = true,
                 )
-                SuiteSettingsRow("上次检查", trailingText = formatLastChecked(activity.lastUpdateCheckForUi()))
             }
         }
         item {
-            SuiteSettingsGroup("备份与迁移") {
-                SuiteSettingsRow(
-                    "导出数据包",
-                    onClick = activity::prepareMigrationBridgeExportForUi,
-                )
-                SuiteSettingsRow(
-                    "导入数据包",
-                    onClick = activity::importMigrationBridgeForUi,
-                )
-                SuiteSettingsRow(
-                    "删除插件数据",
-                    onClick = activity::prepareMigrationBridgeDeleteForUi,
-                )
+            SuiteSettingsGroup("管理") {
+                SuiteSettingsRow("数据管理", leadingIcon = Icons.Rounded.Folder, supportingText = "所有插件的备份、恢复与清理", onClick = { activity.showDataManagementForUi(null) })
+                SuiteSettingsRow("任务与结果", leadingIcon = Icons.Rounded.Notifications, supportingText = "本次应用使用中的操作与结果", onClick = activity::showTaskListForUi)
             }
         }
         item {
             SuiteSettingsGroup("关于") {
                 SuiteSettingsRow(
-                    "安卓工具合集",
+                    "关于 Android Tool Suite",
                     supportingText = activity.appVersionNameForUi(),
-                    leading = { IconBox(Icons.Rounded.Build, null, dense = true) },
+                    leading = { IconBox(Icons.Rounded.Info, null, dense = true) },
                     trailing = { Icon(Icons.Rounded.ChevronRight, null) },
                     onClick = activity::showAboutForUi,
                 )
@@ -2106,6 +901,7 @@ private fun SettingsDropdownRow(
         SuiteSettingsRow(
             title = title,
             supportingText = supportingText,
+            leadingIcon = if (title == "主题") Icons.Rounded.LightMode else Icons.Rounded.Palette,
             trailingText = selectedLabel,
             trailing = {
                 Icon(
@@ -2214,6 +1010,7 @@ private fun AboutScreen(activity: MainActivity, refreshVersion: Int, modifier: M
                     trailing = { Icon(Icons.Rounded.ChevronRight, null) },
                     onClick = activity::openProjectForUi,
                 )
+                SuiteSettingsRow("发布中心", supportingText = "应用和插件的正式下载目录", trailing = { Icon(Icons.Rounded.ChevronRight, null) }, onClick = { activity.openSourceUrlForUi("https://android-tool-suite.github.io/plugin-registry/") })
                 SuiteSettingsRow(
                     "开源许可",
                     trailing = { Icon(Icons.Rounded.ChevronRight, null) },
@@ -2243,11 +1040,11 @@ private fun UpdatePromptRow(icon: ImageVector, title: String, transition: String
 private fun UpdatePrompt(activity: MainActivity) {
     hostRevision(activity)
     if (!activity.isUpdatePromptVisibleForUi()) return
-    val appUpdate = activity.appUpdateForUi()
-    val pluginUpdates = activity.availablePluginUpdatesForUi()
+    val appUpdate = activity.promptAppUpdateForUi()
+    val pluginUpdates = activity.promptPluginUpdatesForUi()
     AlertDialog(
         onDismissRequest = activity::closeUpdatePromptForUi,
-        title = { Text("发现 ${activity.availableUpdateCountForUi()} 项更新") },
+        title = { Text("发现 ${activity.promptUpdateCountForUi()} 项更新") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(SuiteSpacing.md)) {
                 if (appUpdate != null) {
@@ -2270,7 +1067,7 @@ private fun UpdatePrompt(activity: MainActivity) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = activity::dismissCurrentUpdatesForUi) { Text("本次不再提示") }
                 TextButton(onClick = activity::closeUpdatePromptForUi) { Text("稍后") }
-                Button(onClick = activity::installAllUpdatesForUi) { Text("全部更新") }
+                Button(onClick = activity::installPromptUpdatesForUi) { Text("全部更新") }
             }
         },
     )
@@ -2280,6 +1077,7 @@ private fun UpdatePrompt(activity: MainActivity) {
 private fun ComposeDialog(activity: MainActivity) {
     hostRevision(activity)
     val dialog = activity.composeDialogForUi() ?: return
+    var migrationExplanation by remember(dialog) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = { if (dialog.dismissible) activity.dismissComposeDialogForUi() },
         properties = androidx.compose.ui.window.DialogProperties(
@@ -2287,7 +1085,13 @@ private fun ComposeDialog(activity: MainActivity) {
             dismissOnClickOutside = dialog.dismissible,
         ),
         title = { Text(dialog.title) },
-        text = { Text(dialog.message) },
+        text = { Column {
+            Text(dialog.message)
+            if (dialog.title == "导入旧版 Android Tool Suite 迁移包？") {
+                TextButton(onClick = { migrationExplanation = !migrationExplanation }) { Text(if(migrationExplanation) "收起迁移说明" else "查看迁移说明") }
+                if(migrationExplanation) Text("未迁移的旧插件数据应先在支持 Migration Bridge 的旧版中导出。当前仅恢复可识别的应用状态，不安装旧插件代码，也不继承旧 Shizuku 授权。原有业务数据不会因此清理。",style=MaterialTheme.typography.bodySmall)
+            }
+        } },
         dismissButton = {
             if (dialog.dismissLabel.isNotBlank()) {
                 TextButton(onClick = activity::dismissComposeDialogForUi) { Text(dialog.dismissLabel) }
@@ -2304,127 +1108,7 @@ private fun ComposeDialog(activity: MainActivity) {
 }
 
 @Composable
-private fun MigrationBridgeExportDialog(activity: MainActivity) {
-    hostRevision(activity)
-    val options = activity.migrationBridgeExportOptionsForUi()
-    if (options.isEmpty()) return
-    val grouped = options.groupBy { it.pluginId }
-    var expanded by remember(options) { mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet()) }
-    val initialSelected = remember(options) {
-        closeRestoreSelection(options, options.filter {
-            it.isHostItem || it.descriptor.category == DatasetCategory.SETTINGS ||
-                (it.descriptor.category == DatasetCategory.DATA && it.descriptor.estimatedSize <= 32L * 1024L * 1024L)
-        }.map { it.key() })
-    }
-    val initialProtected: Set<String> = remember(options) {
-        options.filter { it.key() in initialSelected && exportDatasetIsSensitive(it) }.mapTo(linkedSetOf()) { it.key() }
-    }
-    var selected by remember(options) { mutableStateOf(initialSelected) }
-    var passwordProtected by remember(options) { mutableStateOf(initialProtected) }
-    var password by remember(options) { mutableStateOf("") }
-    val encryptedCount = selected.count { it in passwordProtected }
-    val plainCount = selected.size - encryptedCount
-    val plainSensitive = options.filter { it.key() in selected && it.key() !in passwordProtected && exportDatasetIsSensitive(it) }
-
-    fun updateSelection(updated: Set<String>) {
-        val addedSensitive = options.filter { it.key() in updated && it.key() !in selected && exportDatasetIsSensitive(it) }.map { it.key() }
-        passwordProtected = (passwordProtected + addedSensitive).intersect(updated)
-        selected = updated
-    }
-
-    DataOperationDialog(
-        sessionKey = options,
-        title = "导出数据包",
-        description = "选择要导出的内容，再确认保护方式和保存位置。敏感数据默认加密，关联项目会自动一并选择。",
-        selectedCount = selected.size,
-        summary = "已选择 ${selected.size} 项 · $plainCount 项明文 · $encryptedCount 项加密",
-        hasChanges = selected != initialSelected || passwordProtected != initialProtected || password.isNotEmpty(),
-        confirmLabel = "选择保存位置",
-        confirmEnabled = encryptedCount == 0 || password.length >= 8,
-        onDismiss = activity::dismissMigrationBridgeExportForUi,
-        onConfirm = { activity.confirmMigrationBridgeExportForUi(selected.toList(), passwordProtected.toList(), password) },
-        selection = {
-            item("export-protection") {
-                DataOperationChoices {
-                    OutlinedButton(enabled = selected.isNotEmpty(), onClick = { passwordProtected = selected.toSet() }) { Text("所选全部加密") }
-                    TextButton(enabled = selected.isNotEmpty(), onClick = { passwordProtected = emptySet() }) { Text("所选全部明文") }
-                }
-            }
-            grouped.forEach { (ownerId, ownerOptions) ->
-                item("export-$ownerId") {
-                    val ownerKeys = ownerOptions.mapTo(linkedSetOf()) { it.key() }
-                    val count = ownerKeys.count { it in selected }
-                    val selectionState = when (count) {
-                        0 -> ToggleableState.Off
-                        ownerKeys.size -> ToggleableState.On
-                        else -> ToggleableState.Indeterminate
-                    }
-                    DataOperationGroup(
-                        title = ownerOptions.first().pluginTitle,
-                        summary = "已选 $count / ${ownerOptions.size} 项",
-                        expanded = ownerId in expanded,
-                        onExpand = { expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId },
-                        selectionState = selectionState,
-                        onSelectGroup = {
-                            updateSelection(if (selectionState == ToggleableState.On) pruneRestoreSelection(options, selected - ownerKeys)
-                                else closeRestoreSelection(options, selected + ownerKeys))
-                        },
-                    ) {
-                        ownerOptions.forEach { option ->
-                            val checked = option.key() in selected
-                            val encrypted = option.key() in passwordProtected
-                            DataOperationEntry(
-                                option.descriptor.name,
-                                "${bridgeCategoryLabel(option.descriptor.category)} · ${bridgeDatasetSize(option.descriptor.estimatedSize)}" +
-                                    if (exportDatasetIsSensitive(option)) " · 敏感数据" else "",
-                            ) {
-                                if (option.isPluginPackage()) Text("恢复安装包时仍会检查兼容性与来源。", style = MaterialTheme.typography.bodySmall)
-                                DataOperationChoices {
-                                    FilterChip(selected = !checked, onClick = {
-                                        updateSelection(pruneRestoreSelection(options, selected - option.key()))
-                                    }, label = { Text("不导出") })
-                                    FilterChip(selected = checked && !encrypted, onClick = {
-                                        updateSelection(closeRestoreSelection(options, selected + option.key()))
-                                        passwordProtected = passwordProtected - option.key()
-                                    }, label = { Text("明文") })
-                                    FilterChip(selected = checked && encrypted, onClick = {
-                                        updateSelection(closeRestoreSelection(options, selected + option.key()))
-                                        passwordProtected = passwordProtected + option.key()
-                                    }, label = { Text("加密") })
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmation = {
-            item("export-review-description") { Text("确认导出范围", style = MaterialTheme.typography.titleLarge) }
-            grouped.forEach { (ownerId, ownerOptions) ->
-                val chosen = ownerOptions.filter { it.key() in selected }
-                if (chosen.isNotEmpty()) item("export-review-$ownerId") {
-                    DataOperationReviewGroup(ownerOptions.first().pluginTitle, chosen.map {
-                        it.descriptor.name to ((if (it.key() in passwordProtected) "密码加密" else "明文") + " · ${bridgeDatasetSize(it.descriptor.estimatedSize)}")
-                    })
-                }
-            }
-            if (encryptedCount > 0) item("export-password") {
-                OutlinedTextField(
-                    value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("数据包密码") }, supportingText = { Text("至少 8 位；仅用于此次导出") },
-                    visualTransformation = PasswordVisualTransformation(), singleLine = true, isError = password.length in 1..7,
-                )
-            }
-            if (plainSensitive.isNotEmpty()) item("export-sensitive-warning") {
-                Notice("${plainSensitive.size} 项敏感数据将以明文导出。能读取文件的人可能看到其中的凭据或隐私数据，可返回选择改为加密。", warning = true)
-            }
-            item("export-destination") { Notice("下一步选择保存位置；导出不会删除或替换本机数据。") }
-        },
-    )
-}
-
-@Composable
-private fun PluginPermissionRow(
+internal fun PluginPermissionRow(
     permission: PluginPermissionManager.Permission,
     scope: String,
     onGrantedChange: (Boolean) -> Unit,
@@ -2464,312 +1148,12 @@ private fun PluginPermissionRow(
             }
         }
         Switch(
+            modifier = Modifier.semantics { contentDescription = permission.title },
             checked = granted,
             onCheckedChange = onGrantedChange,
             enabled = true,
         )
     }
-}
-
-private fun exportDatasetIsSensitive(option: MigrationBridgeManager.DatasetOption): Boolean =
-    option.descriptor.sensitive || option.descriptor.category == DatasetCategory.SECRET
-
-@Composable
-private fun MigrationBridgeImportDialog(activity: MainActivity) {
-    hostRevision(activity)
-    val options = activity.migrationBridgeImportOptionsForUi()
-    if (options.isEmpty()) return
-    val grouped = options.groupBy { it.pluginId }
-    var expanded by remember(options) { mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet()) }
-    val initialActions: Map<String, DatasetRestoreMode?> = remember(options) {
-        options.associate { option -> option.key() to if (option.hasExistingData && DatasetRestoreMode.MERGE !in option.descriptor.restoreModes) null else preferredImportMode(option) }
-    }
-    var actions by remember(options) { mutableStateOf(initialActions) }
-    var password by remember(options) { mutableStateOf("") }
-    val selected = actions.filterValues { it != null }.keys
-    val needsPassword = options.any { it.key() in selected && activity.migrationBridgeImportProtectionForUi(it.key()) == "PASSWORD" }
-    val replacing = options.count { it.hasExistingData && actions[it.key()] == DatasetRestoreMode.REPLACE }
-
-    fun updateAction(option: MigrationBridgeManager.DatasetOption, mode: DatasetRestoreMode?) {
-        val currentKeys = actions.filterValues { it != null }.keys
-        val nextKeys = if (mode == null) pruneRestoreSelection(options, currentKeys - option.key()) else closeRestoreSelection(options, currentKeys + option.key())
-        val next = actions.toMutableMap()
-        options.forEach { candidate ->
-            next[candidate.key()] = when {
-                candidate.key() !in nextKeys -> null
-                candidate.key() == option.key() && mode != null -> mode
-                next[candidate.key()] != null -> next[candidate.key()]
-                else -> preferredImportMode(candidate)
-            }
-        }
-        actions = next
-    }
-
-    DataOperationDialog(
-        sessionKey = options,
-        title = "导入数据包",
-        description = "来源：${activity.migrationBridgeImportSourceForUi()}\n选择恢复内容和处理方式，再确认操作。确认前不会更改本机数据。",
-        selectedCount = selected.size,
-        summary = "已选择 ${selected.size} 项 · $replacing 项替换现有数据",
-        hasChanges = actions != initialActions || password.isNotEmpty(),
-        confirmLabel = "开始导入",
-        confirmEnabled = !needsPassword || password.length >= 8,
-        onDismiss = activity::dismissMigrationBridgeImportForUi,
-        onConfirm = {
-            activity.confirmMigrationBridgeImportForUi(
-                actions.filterValues { it == DatasetRestoreMode.REPLACE }.keys.toList(),
-                actions.filterValues { it == DatasetRestoreMode.MERGE }.keys.toList(), password,
-            )
-        },
-        selection = {
-            grouped.forEach { (ownerId, ownerOptions) ->
-                item("import-$ownerId") {
-                    DataOperationGroup(
-                        title = ownerOptions.first().pluginTitle,
-                        summary = "已选 ${ownerOptions.count { actions[it.key()] != null }} / ${ownerOptions.size} 项",
-                        expanded = ownerId in expanded,
-                        onExpand = { expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId },
-                        onSkipGroup = {
-                            val base = pruneRestoreSelection(options, selected - ownerOptions.map { it.key() }.toSet())
-                            actions = actions.mapValues { (key, value) -> if (key in base) value else null }
-                        },
-                    ) {
-                        ownerOptions.forEach { option ->
-                            val mode = actions[option.key()]
-                            val protection = if (activity.migrationBridgeImportProtectionForUi(option.key()) == "PASSWORD") "加密" else "明文"
-                            DataOperationEntry(
-                                option.descriptor.name,
-                                "${if (option.hasExistingData) "已有数据" else "当前没有数据"} · $protection · ${bridgeCategoryLabel(option.descriptor.category)}",
-                            ) {
-                                if (option.isPluginPackage()) Text("安装包仍按本地导入规则校验；新装插件保持停用，完全信任仍需单独确认。", style = MaterialTheme.typography.bodySmall)
-                                DataOperationChoices {
-                                    FilterChip(selected = mode == null, onClick = { updateAction(option, null) }, label = { Text("跳过") })
-                                    if (!option.hasExistingData) {
-                                        FilterChip(selected = mode != null, onClick = { updateAction(option, preferredImportMode(option)) }, label = { Text("导入") })
-                                    } else {
-                                        if (DatasetRestoreMode.REPLACE in option.descriptor.restoreModes) FilterChip(
-                                            selected = mode == DatasetRestoreMode.REPLACE, onClick = { updateAction(option, DatasetRestoreMode.REPLACE) }, label = { Text("替换") },
-                                        )
-                                        if (DatasetRestoreMode.MERGE in option.descriptor.restoreModes) FilterChip(
-                                            selected = mode == DatasetRestoreMode.MERGE, onClick = { updateAction(option, DatasetRestoreMode.MERGE) }, label = { Text("合并") },
-                                        )
-                                    }
-                                }
-                                if (option.hasExistingData && DatasetRestoreMode.MERGE !in option.descriptor.restoreModes) Text(
-                                    "此项不支持合并，替换会覆盖现有数据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmation = {
-            item("import-review-description") { Text("确认恢复范围", style = MaterialTheme.typography.titleLarge) }
-            if (replacing > 0) item("import-replace-warning") { Notice("$replacing 项现有数据将被替换。请逐项核对，必要时返回选择改为跳过。", warning = true) }
-            grouped.forEach { (ownerId, ownerOptions) ->
-                val chosen = ownerOptions.filter { it.key() in selected }
-                if (chosen.isNotEmpty()) item("import-review-$ownerId") {
-                    DataOperationReviewGroup(ownerOptions.first().pluginTitle, chosen.map { option ->
-                        option.descriptor.name to when {
-                            !option.hasExistingData -> "导入新数据"
-                            actions[option.key()] == DatasetRestoreMode.MERGE -> "与现有数据合并"
-                            else -> "替换现有数据"
-                        }
-                    })
-                }
-            }
-            if (needsPassword) item("import-password") {
-                OutlinedTextField(
-                    value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("数据包密码") }, supportingText = { Text("输入导出时设置的密码，至少 8 位") },
-                    visualTransformation = PasswordVisualTransformation(), singleLine = true, isError = password.length in 1..7,
-                )
-            }
-            item("import-validation") { Notice("所有所选项目会先完成校验，再按确认的方式处理。插件包恢复不会跳过来源、兼容性和权限检查。") }
-        },
-    )
-}
-
-private fun preferredImportMode(option: MigrationBridgeManager.DatasetOption): DatasetRestoreMode = when {
-    option.hasExistingData && DatasetRestoreMode.MERGE in option.descriptor.restoreModes -> DatasetRestoreMode.MERGE
-    DatasetRestoreMode.REPLACE in option.descriptor.restoreModes -> DatasetRestoreMode.REPLACE
-    else -> option.descriptor.restoreModes.first()
-}
-
-@Composable
-private fun MigrationBridgeDeleteDialog(activity: MainActivity) {
-    hostRevision(activity)
-    val options = activity.migrationBridgeDeleteOptionsForUi()
-    if (options.isEmpty()) return
-    val grouped = options.groupBy { it.pluginId }
-    var expanded by remember(options) { mutableStateOf(grouped.keys.firstOrNull()?.let(::setOf) ?: emptySet()) }
-    var selected by remember(options) { mutableStateOf<Set<String>>(emptySet()) }
-    var confirmed by remember(options, selected) { mutableStateOf(false) }
-
-    fun toggle(keys: Set<String>, remove: Boolean) {
-        selected = if (remove) pruneDeleteSelection(options, selected - keys) else closeDeleteSelection(options, selected + keys)
-    }
-
-    DataOperationDialog(
-        sessionKey = options,
-        title = "删除插件数据",
-        description = "先选择数据，再核对删除范围。删除不可撤销；存在依赖关系时会自动选择相关项目。插件包不会因此被卸载。",
-        selectedCount = selected.size,
-        summary = "已选择 ${selected.size} 项 · 尚未删除任何数据",
-        hasChanges = selected.isNotEmpty(),
-        confirmLabel = "永久删除",
-        confirmEnabled = confirmed,
-        onDismiss = activity::dismissMigrationBridgeDeleteForUi,
-        onConfirm = { activity.confirmMigrationBridgeDeleteForUi(selected.toList()) },
-        destructive = true,
-        selection = {
-            grouped.forEach { (ownerId, ownerOptions) ->
-                item("delete-$ownerId") {
-                    val ownerKeys = ownerOptions.mapTo(linkedSetOf()) { it.key() }
-                    val count = ownerKeys.count { it in selected }
-                    DataOperationGroup(
-                        title = ownerOptions.first().pluginTitle,
-                        summary = "已选 $count / ${ownerOptions.size} 项",
-                        expanded = ownerId in expanded,
-                        onExpand = { expanded = if (ownerId in expanded) expanded - ownerId else expanded + ownerId },
-                        selectionState = when (count) { 0 -> ToggleableState.Off; ownerKeys.size -> ToggleableState.On; else -> ToggleableState.Indeterminate },
-                        onSelectGroup = { toggle(ownerKeys, count == ownerKeys.size) },
-                    ) {
-                        ownerOptions.forEach { option ->
-                            val checked = option.key() in selected
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            Row(
-                                Modifier.fillMaxWidth().clickable { toggle(setOf(option.key()), checked) }.padding(SuiteSpacing.md),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(checked = checked, onCheckedChange = null)
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SuiteSpacing.xs)) {
-                                    Text(option.descriptor.name, style = MaterialTheme.typography.bodyLarge)
-                                    Text(
-                                        "${bridgeCategoryLabel(option.descriptor.category)} · ${bridgeDatasetSize(option.descriptor.estimatedSize)}" +
-                                            if (option.descriptor.dependencies.isNotEmpty()) " · 含关联数据" else "",
-                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmation = {
-            item("delete-review-warning") { Notice("将永久删除下面 ${selected.size} 项数据，无法撤销。请确认已导出需要保留的内容。", warning = true) }
-            grouped.forEach { (ownerId, ownerOptions) ->
-                val chosen = ownerOptions.filter { it.key() in selected }
-                if (chosen.isNotEmpty()) item("delete-review-$ownerId") {
-                    DataOperationReviewGroup(ownerOptions.first().pluginTitle, chosen.map { it.descriptor.name to "永久删除 · ${bridgeCategoryLabel(it.descriptor.category)}" })
-                }
-            }
-            item("delete-acknowledgement") {
-                Row(Modifier.fillMaxWidth().clickable { confirmed = !confirmed }, verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = confirmed, onCheckedChange = null)
-                    Text("我确认永久删除所选数据", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                }
-            }
-        },
-    )
-}
-
-private fun closeRestoreSelection(
-    options: List<MigrationBridgeManager.DatasetOption>,
-    initial: Collection<String>,
-): Set<String> {
-    val result = initial.toMutableSet()
-    var changed: Boolean
-    do {
-        changed = false
-        options.filter { it.key() in result }.forEach { option ->
-            if (option.requiresBridgeResolution()) {
-                val packageKey = "${MigrationBridgeManager.HOST_OWNER_ID}/" +
-                    "${MigrationBridgeManager.HOST_PLUGIN_PACKAGE_PREFIX}${option.pluginId}"
-                if (result.add(packageKey)) changed = true
-            }
-            option.descriptor.dependencies.forEach { dependency ->
-                if (result.add("${option.pluginId}/$dependency")) changed = true
-            }
-        }
-    } while (changed)
-    return result
-}
-
-private fun pruneRestoreSelection(
-    options: List<MigrationBridgeManager.DatasetOption>,
-    initial: Collection<String>,
-): Set<String> {
-    val result = initial.toMutableSet()
-    var changed: Boolean
-    do {
-        changed = false
-        options.filter { it.key() in result }.forEach { option ->
-            val requiredPackageKey = "${MigrationBridgeManager.HOST_OWNER_ID}/" +
-                "${MigrationBridgeManager.HOST_PLUGIN_PACKAGE_PREFIX}${option.pluginId}"
-            val packageMissing = option.requiresBridgeResolution() && requiredPackageKey !in result
-            if (packageMissing || option.descriptor.dependencies.any { "${option.pluginId}/$it" !in result }) {
-                result.remove(option.key())
-                changed = true
-            }
-        }
-    } while (changed)
-    return result
-}
-
-private fun closeDeleteSelection(
-    options: List<MigrationBridgeManager.DatasetOption>,
-    initial: Collection<String>,
-): Set<String> {
-    val result = initial.toMutableSet()
-    var changed: Boolean
-    do {
-        changed = false
-        options.forEach { option ->
-            if (option.descriptor.dependencies.any { "${option.pluginId}/$it" in result }) {
-                if (result.add(option.key())) changed = true
-            }
-        }
-    } while (changed)
-    return result
-}
-
-private fun pruneDeleteSelection(
-    options: List<MigrationBridgeManager.DatasetOption>,
-    initial: Collection<String>,
-): Set<String> {
-    val result = initial.toMutableSet()
-    var changed: Boolean
-    do {
-        changed = false
-        options.filter { it.key() in result }.forEach { parent ->
-            val missingDependent = options.any { dependent ->
-                dependent.pluginId == parent.pluginId && dependent.key() !in result &&
-                    parent.descriptor.id in dependent.descriptor.dependencies
-            }
-            if (missingDependent) {
-                result.remove(parent.key())
-                changed = true
-            }
-        }
-    } while (changed)
-    return result
-}
-
-private fun bridgeCategoryLabel(category: DatasetCategory): String = when (category) {
-    DatasetCategory.SETTINGS -> "设置"
-    DatasetCategory.DATA -> "业务数据"
-    DatasetCategory.SECRET -> "凭据"
-    DatasetCategory.CACHE -> "缓存"
-}
-
-private fun bridgeDatasetSize(bytes: Long): String = when {
-    bytes <= 0L -> "大小未知"
-    bytes < 1024L -> "$bytes B"
-    bytes < 1024L * 1024L -> String.format(Locale.ROOT, "%.1f KiB", bytes / 1024.0)
-    else -> String.format(Locale.ROOT, "%.1f MiB", bytes / (1024.0 * 1024.0))
 }
 
 @Composable
@@ -2781,14 +1165,19 @@ private fun PluginMetadata(plugin: HostTool) {
     Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
 }
 
-private fun pluginIcon(plugin: HostTool): ImageVector = when {
-    plugin.id().contains("shizuku") -> Icons.Rounded.Security
-    plugin.id().contains("host") -> Icons.Rounded.Settings
+internal fun pluginIcon(plugin: HostTool): ImageVector = pluginIconForId(plugin.id())
+
+internal fun pluginIconForId(id: String): ImageVector = when {
+    id.contains("shizuku") -> Icons.Rounded.Security
+    id.contains("phigros") -> Icons.Rounded.QueryStats
+    id.contains("gacha") -> Icons.Rounded.AutoAwesome
+    id.contains("accessibility") -> Icons.Rounded.AccessibilityNew
+    id.contains("host") -> Icons.Rounded.Settings
     else -> Icons.Rounded.Extension
 }
 
 @Composable
-private fun PluginAndroidView(
+internal fun PluginAndroidView(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     factory: () -> View,

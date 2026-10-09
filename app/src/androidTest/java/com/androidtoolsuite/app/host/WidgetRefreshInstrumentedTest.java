@@ -35,7 +35,7 @@ public final class WidgetRefreshInstrumentedTest {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> activity.navigateForUi(0));
             awaitVisibility(scenario, true);
-            selectTab(scenario, "仓库", 3);
+            selectTab(scenario, "插件", 2);
             awaitVisibility(scenario, false);
             selectTab(scenario, "主页", 0);
             awaitVisibility(scenario, true);
@@ -54,7 +54,9 @@ public final class WidgetRefreshInstrumentedTest {
                     } catch (Exception error) { throw new AssertionError(error); }
                 });
                 awaitValue(scenario, 1);
-                selectTab(scenario, "仓库", 3);
+                selectTab(scenario, "插件", 2);
+                awaitVisibility(scenario, false);
+                selectDiscovery(scenario);
                 scenario.onActivity(activity -> {
                     try { install(activity, 2); } catch (Exception error) { throw new AssertionError(error); }
                 });
@@ -95,6 +97,25 @@ public final class WidgetRefreshInstrumentedTest {
             SystemClock.sleep(100);
         }
         assertEquals("Pager did not settle", Integer.valueOf(expected), section.get());
+    }
+
+    private static void selectDiscovery(ActivityScenario<MainActivity> scenario) {
+        boolean clicked = false;
+        for (int attempt = 0; attempt < 50 && !clicked; attempt++) {
+            AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+            AccessibilityNodeInfo node = findLabel(root, "发现");
+            while (node != null && !node.isClickable()) node = node.getParent();
+            if (node != null) clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            if (!clicked) SystemClock.sleep(100);
+        }
+        assertTrue("Plugin discovery tab unavailable", clicked);
+        AtomicReference<Boolean> discovery = new AtomicReference<>(false);
+        for (int attempt = 0; attempt < 50; attempt++) {
+            scenario.onActivity(activity -> discovery.set(activity.discoverPluginsForUi()));
+            if (discovery.get()) return;
+            SystemClock.sleep(100);
+        }
+        assertTrue("Plugin discovery did not become selected", discovery.get());
     }
 
     private static AccessibilityNodeInfo findLabel(AccessibilityNodeInfo node, String label) {

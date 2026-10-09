@@ -52,7 +52,7 @@ public final class MigrationToolPlugin implements HostTool {
         public List<DatasetDescriptor> datasets(Activity activity) throws IOException {
             List<DatasetDescriptor> result = new ArrayList<>();
             for (RuntimePluginManifest.Dataset dataset : installed.manifest.datasets) {
-                if (!dataset.restoreModes.contains("replace") || !datasets.hasDataset(id(), dataset.id)) continue;
+                if (restoreModes(dataset).isEmpty() || !datasets.hasDataset(id(), dataset.id)) continue;
                 result.add(new DatasetDescriptor(
                         dataset.id,
                         dataset.title,
@@ -60,7 +60,7 @@ public final class MigrationToolPlugin implements HostTool {
                         datasets.datasetSize(id(), dataset.id),
                         dataset.formatVersion,
                         dataset.sensitive,
-                        Collections.singletonList(DatasetRestoreMode.REPLACE),
+                        restoreModes(dataset),
                         dataset.dependsOn
                 ));
             }
@@ -77,7 +77,7 @@ public final class MigrationToolPlugin implements HostTool {
         public boolean supportsImport(String datasetId, int dataFormatVersion) {
             RuntimePluginManifest.Dataset dataset = descriptor(datasetId);
             return dataset != null && dataset.formatVersion == dataFormatVersion
-                    && dataset.restoreModes.contains("replace");
+                    && !restoreModes(dataset).isEmpty();
         }
 
         @Override
@@ -92,7 +92,9 @@ public final class MigrationToolPlugin implements HostTool {
                 int dataFormatVersion,
                 DatasetRestoreMode restoreMode
         ) {
-            return restoreMode == DatasetRestoreMode.REPLACE && supportsImport(datasetId, dataFormatVersion);
+            RuntimePluginManifest.Dataset dataset = descriptor(datasetId);
+            return dataset != null && dataset.formatVersion == dataFormatVersion
+                    && restoreModes(dataset).contains(restoreMode);
         }
 
         @Override
@@ -106,7 +108,7 @@ public final class MigrationToolPlugin implements HostTool {
             if (!supportsRestoreMode(datasetId, dataFormatVersion, restoreMode)) {
                 throw new IOException("插件运行时 Dataset format or restore mode is unsupported");
             }
-            datasets.importDataset(id(), datasetId, "replace", input);
+            datasets.importDataset(id(), datasetId, restoreMode == DatasetRestoreMode.MERGE ? "merge" : "replace", input);
         }
 
         @Override
@@ -136,5 +138,12 @@ public final class MigrationToolPlugin implements HostTool {
             case "secret": return DatasetCategory.SECRET;
             default: return DatasetCategory.DATA;
         }
+    }
+
+    private static List<DatasetRestoreMode> restoreModes(RuntimePluginManifest.Dataset dataset) {
+        List<DatasetRestoreMode> result = new ArrayList<>();
+        if (dataset.restoreModes.contains("merge") && dataset.mergePolicy != null) result.add(DatasetRestoreMode.MERGE);
+        if (dataset.restoreModes.contains("replace")) result.add(DatasetRestoreMode.REPLACE);
+        return result;
     }
 }

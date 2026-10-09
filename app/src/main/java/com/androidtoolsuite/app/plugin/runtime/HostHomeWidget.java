@@ -14,6 +14,8 @@ public interface HostHomeWidget {
     String title();
     String pluginId();
 
+    default void setDisplaySize(HomeWidgetSize size) {}
+
     default List<HomeWidgetSize> supportedSizes() {
         return Arrays.asList(new HomeWidgetSize(2, 2), new HomeWidgetSize(4, 2));
     }

@@ -14,7 +14,40 @@
       "params": { "type": "object", "required": ["url"], "properties": { "url": { "type": "string" } } },
       "result": { "type": "object", "required": ["opened"], "properties": { "opened": { "type": "boolean" } } }
     },
+    "app.openTool": {
+      "params": { "type": "object", "required": ["pluginId"], "properties": { "pluginId": { "type": "string", "maxLength": 128 }, "toolId": { "type": "string", "maxLength": 128 } } },
+      "result": { "type": "object", "required": ["opened"], "properties": { "opened": { "type": "boolean" } } },
+      "description": "在用户操作后打开已安装工具，返回时恢复来源工具；不授予目标插件权限。"
+    },
+    "app.openPermissions": {
+      "params": { "type": "object", "additionalProperties": false },
+      "result": { "type": "object", "required": ["opened"], "properties": { "opened": { "type": "boolean" } } },
+      "description": "在用户操作后查看当前调用插件的权限，不接受其他插件标识。"
+    },
+    "app.setBackNavigation": {
+      "params": { "type": "object", "required": ["enabled"], "additionalProperties": false, "properties": { "enabled": { "type": "boolean" } } },
+      "result": { "type": "object" },
+      "description": "设置当前调用会话是否接收原生返回。开启后，仅可见且已握手的工具接收 app.backRequested 事件；根页须关闭。设置不要求手势，不接受插件或会话覆盖字段，页面重载、释放与进程错误后清除。app.close 始终请求退出工具。"
+    },
+    "app.reportOperation": {
+      "params": {
+        "type": "object", "required": ["id", "label", "status"], "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 96 },
+          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "status": { "type": "string", "enum": ["running", "success", "failed", "cancelled"] },
+          "detail": { "type": "string", "maxLength": 240 }
+        }
+      },
+      "result": { "type": "object", "required": ["taskId", "status"], "properties": { "taskId": { "type": "string" }, "status": { "type": "string" } } },
+      "description": "报告当前插件页面中真实主动操作的显示状态，不启动或取消业务。id仅在当前UI会话内有效，label固定；首次running须请求到达时页面可见且有有效手势，宿主在消息入口保存资格，后续打开系统文件选择器不会撤销该请求；已有同会话任务可后台更新。结束后不可复活，页面会话关闭时未结束报告标记cancelled。仅允许固定、单行、安全的label/detail，禁止凭据、URL、账号标识、原始异常和业务payload。最多每会话4项、全局16项活跃，单会话最多1024个唯一id。"
+    },
+    "app.openWidgetSettings": {
+      "params": { "type": "object", "additionalProperties": false, "properties": { "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
+      "result": { "type": "object", "required": ["opened"], "properties": { "opened": { "type": "boolean" } } },
+      "description": "在用户操作后打开当前调用插件的小部件配置；省略 instanceId 时管理该插件的全部实例。仅前台有效会话可用，禁止跨插件访问，配置由宿主保存。"
+    },
     "app.close": { "params": { "type": "object" }, "result": { "type": "object" } }
   },
-  "events": ["app.themeChanged", "app.containerChanged", "app.visibilityChanged", "app.permissionsChanged"]
+  "events": ["app.themeChanged", "app.containerChanged", "app.visibilityChanged", "app.permissionsChanged", "app.backRequested"]
 }

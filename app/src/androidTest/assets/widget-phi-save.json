@@ -1,0 +1,57 @@
+{
+  "formatVersion": 2,
+  "profile": {
+    "playerId": "fixture-player",
+    "objectId": "fixture-object",
+    "avatar": "avatar.0",
+    "background": "background.0",
+    "selfIntro": "migration fixture",
+    "challengeModeRank": 523,
+    "money": [512, 4, 1, 0, 0],
+    "officialRks": 15.73,
+    "saveUpdatedAt": "2026-08-30T12:34:56.000Z",
+    "gameVersion": 104,
+    "cleared": [120, 118, 111, 24],
+    "fullCombo": [90, 86, 73, 12],
+    "phi": [50, 46, 31, 4]
+  },
+  "records": [
+    {
+      "id": "fixture.song.one",
+      "title": "Fixture One",
+      "level": "AT",
+      "levelIndex": 3,
+      "constant": 15.9,
+      "score": 1000000,
+      "accuracy": 100.0,
+      "fc": true,
+      "illustrationUrl": "https://example.invalid/one.png"
+    },
+    {
+      "id": "fixture.song.two",
+      "title": "Fixture Two",
+      "level": "IN",
+      "levelIndex": 2,
+      "constant": 15.4,
+      "score": 982500,
+      "accuracy": 98.25,
+      "fc": true,
+      "illustrationUrl": "https://example.invalid/two.png"
+    },
+    {
+      "id": "fixture.song.three",
+      "title": "Fixture Three",
+      "level": "IN",
+      "levelIndex": 2,
+      "constant": 14.8,
+      "score": 965000,
+      "accuracy": 96.5,
+      "fc": false,
+      "illustrationUrl": ""
+    }
+  ],
+  "pushTargets": [
+    { "identity": "fixture.song.two|IN", "targetAccuracy": 98.3112, "resultingRks": 1.96 },
+    { "identity": "fixture.song.three|IN", "targetAccuracy": null, "resultingRks": 1.9537606995884775 }
+  ]
+}
