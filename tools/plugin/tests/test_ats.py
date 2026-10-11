@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,50 @@ ats = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = ats
 SPEC.loader.exec_module(ats)
+
+SDK_UI = SCRIPT.parents[2] / "plugin-sdk" / "src" / "main" / "java" / "com" / "androidtoolsuite" / "app" / "ui"
+DEV_THEME = SCRIPT.parents[0] / "templates" / "web-tool" / "web" / "dev-theme.css"
+
+
+def parse_color_entries(block):
+    """`name = Color(0xAARRGGBB)` and `name = Color.White` → {name: #RRGGBB}."""
+    values = {}
+    for match in re.finditer(r"(\w+) = (?:Color\(0x([0-9A-Fa-f]{8})\)|Color\.(\w+))", block):
+        if match.group(2):
+            values[match.group(1)] = f"#{match.group(2)[2:].upper()}"
+        else:
+            named = NAMED_COLORS.get(match.group(3))
+            if named:
+                values[match.group(1)] = named
+    return values
+
+
+NAMED_COLORS = {"White": "#FFFFFF", "Black": "#000000"}
+
+
+def parse_color_scheme(source, name):
+    """`private val LightColors = lightColorScheme(...)` → {property: #RRGGBB}."""
+    block = re.search(rf"private val {name} = (?:light|dark)ColorScheme\((.*?)\n\)", source, re.S)
+    assert block is not None, f"{name} not found in SuiteDesignSystem.kt"
+    return parse_color_entries(block.group(1))
+
+
+def parse_semantic_colors(source, name):
+    """`internal val LightSemanticColors = SuiteSemanticColors(...)` → {property: #RRGGBB}."""
+    block = re.search(rf"internal val {name} = SuiteSemanticColors\((.*?)\n\)", source, re.S)
+    assert block is not None, f"{name} not found in SuiteTokens.kt"
+    return parse_color_entries(block.group(1))
+
+
+def parse_dev_theme(text):
+    """The dev snapshot's light declarations and its dark override block."""
+    stripped = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    root = re.search(r":root\s*\{(.*?)\}", stripped, re.S)
+    assert root is not None, "dev-theme.css has no :root block"
+    light = dict(re.findall(r"(--ats-[a-z0-9-]+)\s*:\s*([^;]+);", root.group(1)))
+    media = re.search(r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{(.*?)\}", stripped, re.S)
+    dark = dict(re.findall(r"(--ats-[a-z0-9-]+)\s*:\s*([^;]+);", media.group(1))) if media else {}
+    return light, dark
 
 
 class AtsCliTest(unittest.TestCase):
@@ -250,6 +295,43 @@ class AtsCliTest(unittest.TestCase):
         ).decode("utf-8")
         self.assertIn('content="device-session"', native)
         self.assertNotIn("/__ats_dev/transport.js", native)
+
+    def test_dev_theme_matches_the_host_theme(self):
+        """`ats dev` must serve the same tokens the host injects at runtime.
+
+        The dev snapshot drifted before: it was missing every `--ats-type-*`
+        token and carried stale semantic colours, so a browser preview fell back
+        to browser default typography and wrong status colours while the device
+        looked correct. Parsing both sides keeps the two honest without either
+        one maintaining a second copy of the values.
+        """
+        design = (SDK_UI / "SuiteDesignSystem.kt").read_text(encoding="utf-8")
+        tokens = (SDK_UI / "SuiteTokens.kt").read_text(encoding="utf-8")
+        light_colors = parse_color_scheme(design, "LightColors")
+        dark_colors = parse_color_scheme(design, "DarkColors")
+        light_semantic = parse_semantic_colors(tokens, "LightSemanticColors")
+        dark_semantic = parse_semantic_colors(tokens, "DarkSemanticColors")
+
+        colors = []
+        for match in re.finditer(r'cssColor\("([a-z-]+)",\s*(colors|semantic)\.(\w+)\)', design):
+            name, source, key = match.groups()
+            palette = (light_colors, dark_colors) if source == "colors" else (light_semantic, dark_semantic)
+            colors.append((f"--ats-{name}", palette[0][key], palette[1][key]))
+        self.assertGreaterEqual(len(colors), 33, "SuiteWebTheme.css() no longer emits the full palette")
+
+        literals = set(re.findall(r"(--ats-[a-z0-9-]+):", design))
+        expected = {name for name, _, _ in colors} | literals
+        self.assertIn("--ats-type-body-large-size", expected)
+
+        light, dark = parse_dev_theme(DEV_THEME.read_text(encoding="utf-8"))
+        missing = sorted(expected - set(light))
+        self.assertEqual(missing, [], f"dev-theme.css is missing {missing}")
+
+        for name, light_value, dark_value in colors:
+            with self.subTest(token=name):
+                self.assertEqual(light[name].upper(), light_value)
+                self.assertIn(name, dark, f"dev-theme.css does not override {name} for dark mode")
+                self.assertEqual(dark[name].upper(), dark_value)
 
     def test_repository_examples_are_packable(self):
         examples = SCRIPT.parents[2] / "examples" / "plugins"

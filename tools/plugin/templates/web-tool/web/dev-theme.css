@@ -1,1 +1,127 @@
-:root{color-scheme:light dark;--ats-primary:#006B5F;--ats-on-primary:#FFFFFF;--ats-primary-container:#C3E4DC;--ats-on-primary-container:#00201B;--ats-secondary-container:#D5E7E2;--ats-on-secondary-container:#10201D;--ats-background:#F7FAF8;--ats-on-background:#191C1B;--ats-surface:#F7FAF8;--ats-on-surface:#191C1B;--ats-surface-low:#F0F5F2;--ats-surface-container:#EAF0ED;--ats-surface-high:#E3EAE6;--ats-surface-highest:#DCE5E1;--ats-on-surface-variant:#3F4946;--ats-outline:#6F7976;--ats-outline-variant:#BFC9C5;--ats-error:#BA1A1A;--ats-on-error:#FFFFFF;--ats-error-container:#FFDAD6;--ats-on-error-container:#410002;--ats-success:#146C2E;--ats-on-success:#FFFFFF;--ats-success-container:#A7F5AE;--ats-on-success-container:#002107;--ats-warning:#7A5900;--ats-on-warning:#FFFFFF;--ats-warning-container:#FFE08A;--ats-on-warning-container:#261A00;--ats-info:#2F628C;--ats-on-info:#FFFFFF;--ats-info-container:#CEE5FF;--ats-on-info-container:#001D32;--ats-space-xs:4px;--ats-space-sm:8px;--ats-space-md:12px;--ats-space-lg:16px;--ats-space-xl:20px;--ats-space-xxl:24px;--ats-space-xxxl:32px;--ats-card-radius:24px;--ats-inner-radius:16px;--ats-chip-radius:12px;--ats-dialog-radius:28px;--ats-content-max-width:720px;--ats-font-family:system-ui,-apple-system,'Noto Sans SC',sans-serif}@media(prefers-color-scheme:dark){:root{--ats-primary:#82D5C6;--ats-on-primary:#003730;--ats-primary-container:#005047;--ats-on-primary-container:#A0F2E3;--ats-secondary-container:#334B47;--ats-on-secondary-container:#CDE8E1;--ats-background:#0E1513;--ats-on-background:#DEE4E1;--ats-surface:#0E1513;--ats-on-surface:#DEE4E1;--ats-surface-low:#151C1A;--ats-surface-container:#1A2220;--ats-surface-high:#252D2A;--ats-surface-highest:#303936;--ats-on-surface-variant:#BFC9C5;--ats-outline:#89938F;--ats-outline-variant:#3F4946}}
+/*
+ * `ats dev` 在 /__ats__/theme.css 返回这份快照，让浏览器预览与宿主注入的样式一致。
+ *
+ * 宿主每次只下发一个已解析的主题（浅色或深色，由应用设置决定，不看系统），预览需要在同一个浏览器里
+ * 同时看到两档，所以这里保留 prefers-color-scheme 媒体查询；插件的 styles.css 不得这样做。
+ *
+ * 取值必须与 app/plugin-sdk 的 SuiteWebTheme.css()、LightColors/DarkColors 和
+ * Light/DarkSemanticColors 保持一致，tools/plugin/tests/test_ats.py 会逐项核对。
+ * 排版、间距和圆角与主题无关，只在 :root 声明一次。
+ */
+:root {
+  color-scheme: light dark;
+
+  --ats-primary: #006B5F;
+  --ats-on-primary: #FFFFFF;
+  --ats-primary-container: #C3E4DC;
+  --ats-on-primary-container: #00201B;
+  --ats-secondary-container: #D5E7E2;
+  --ats-on-secondary-container: #0B1F1B;
+  --ats-background: #F7FAF8;
+  --ats-on-background: #191C1B;
+  --ats-surface: #F7FAF8;
+  --ats-on-surface: #191C1B;
+  --ats-surface-low: #F0F5F2;
+  --ats-surface-container: #EAF0ED;
+  --ats-surface-high: #E3EAE6;
+  --ats-surface-highest: #DCE5E1;
+  --ats-on-surface-variant: #3F4946;
+  --ats-outline: #6F7976;
+  --ats-outline-variant: #BFC9C5;
+  --ats-error: #BA1A1A;
+  --ats-on-error: #FFFFFF;
+  --ats-error-container: #FFDAD6;
+  --ats-on-error-container: #410002;
+  --ats-success: #176B45;
+  --ats-on-success: #FFFFFF;
+  --ats-success-container: #B8ECCE;
+  --ats-on-success-container: #002512;
+  --ats-warning: #7A4B00;
+  --ats-on-warning: #FFFFFF;
+  --ats-warning-container: #FFDDB3;
+  --ats-on-warning-container: #281800;
+  --ats-info: #245D91;
+  --ats-on-info: #FFFFFF;
+  --ats-info-container: #D2E4FF;
+  --ats-on-info-container: #001C37;
+
+  --ats-space-xs: 4px;
+  --ats-space-sm: 8px;
+  --ats-space-md: 12px;
+  --ats-space-lg: 16px;
+  --ats-space-xl: 20px;
+  --ats-space-xxl: 24px;
+  --ats-space-xxxl: 32px;
+  --ats-card-radius: 24px;
+  --ats-inner-radius: 16px;
+  --ats-chip-radius: 12px;
+  --ats-dialog-radius: 28px;
+  --ats-content-max-width: 720px;
+  --ats-font-family: system-ui, -apple-system, 'Noto Sans SC', sans-serif;
+
+  --ats-type-headline-large-size: 32px;
+  --ats-type-headline-large-line: 40px;
+  --ats-type-headline-large-weight: 700;
+  --ats-type-headline-small-size: 24px;
+  --ats-type-headline-small-line: 32px;
+  --ats-type-headline-small-weight: 600;
+  --ats-type-title-large-size: 22px;
+  --ats-type-title-large-line: 28px;
+  --ats-type-title-large-weight: 600;
+  --ats-type-title-medium-size: 16px;
+  --ats-type-title-medium-line: 24px;
+  --ats-type-title-medium-weight: 600;
+  --ats-type-body-large-size: 16px;
+  --ats-type-body-large-line: 24px;
+  --ats-type-body-large-weight: 400;
+  --ats-type-body-medium-size: 14px;
+  --ats-type-body-medium-line: 20px;
+  --ats-type-body-medium-weight: 400;
+  --ats-type-body-small-size: 12px;
+  --ats-type-body-small-line: 16px;
+  --ats-type-body-small-weight: 400;
+  --ats-type-label-large-size: 14px;
+  --ats-type-label-large-line: 20px;
+  --ats-type-label-large-weight: 600;
+  --ats-type-label-medium-size: 12px;
+  --ats-type-label-medium-line: 16px;
+  --ats-type-label-medium-weight: 500;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ats-primary: #82D5C6;
+    --ats-on-primary: #00372F;
+    --ats-primary-container: #005047;
+    --ats-on-primary-container: #9EF2E2;
+    --ats-secondary-container: #334B47;
+    --ats-on-secondary-container: #D5E7E2;
+    --ats-background: #0E1513;
+    --ats-on-background: #DEE4E1;
+    --ats-surface: #0E1513;
+    --ats-on-surface: #DEE4E1;
+    --ats-surface-low: #151C1A;
+    --ats-surface-container: #1A2220;
+    --ats-surface-high: #252D2A;
+    --ats-surface-highest: #303936;
+    --ats-on-surface-variant: #BFC9C5;
+    --ats-outline: #89938F;
+    --ats-outline-variant: #3F4946;
+    --ats-error: #FFB4AB;
+    --ats-on-error: #690005;
+    --ats-error-container: #93000A;
+    --ats-on-error-container: #FFDAD6;
+    --ats-success: #88D5A6;
+    --ats-on-success: #00391F;
+    --ats-success-container: #00522F;
+    --ats-on-success-container: #A4F2C3;
+    --ats-warning: #F3BD6F;
+    --ats-on-warning: #432C00;
+    --ats-warning-container: #5D4200;
+    --ats-on-warning-container: #FFDDB3;
+    --ats-info: #A3C9FF;
+    --ats-on-info: #00315C;
+    --ats-info-container: #074875;
+    --ats-on-info-container: #D2E4FF;
+  }
+}
