@@ -54,6 +54,7 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val entries = linkedMapOf<String, Entry>()
+    private val taskEvents = linkedMapOf<String, AutoCloseable>()
     private var visible = true
 
     class Entry internal constructor(
@@ -99,6 +100,8 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
             if (removed) entry.job?.cancel()
             removed
         }
+        taskEvents.keys.filter { id -> entries.values.none { it.installed.manifest.plugin.id == id } }
+            .forEach { id -> taskEvents.remove(id)?.close() }
         preferences.edit().apply {
             preferences.all.keys.filter { it.substringBefore('/') !in active }.forEach(::remove)
         }.apply()
@@ -123,13 +126,32 @@ class WidgetSnapshotStore(context: Context, private val runtime: PluginRuntime) 
             } else null
         }.getOrNull() else null
         if (BuildConfig.DEBUG) Log.d("AtsWidget", "entry plugin=${installed.manifest.plugin.id} restored=${cached != null}")
-        return Entry(installed, contribution, persistent, cached,instanceId,JSONObject(configuration.toString()),configurationRevision).also { entries[key] = it }
+        return Entry(installed, contribution, persistent, cached,instanceId,JSONObject(configuration.toString()),configurationRevision).also {
+            entries[key] = it
+            observeTasks(installed.manifest.plugin.id)
+        }
+    }
+
+    private fun observeTasks(pluginId: String) {
+        if (pluginId in taskEvents) return
+        taskEvents[pluginId] = runtime.capabilities().subscribeEvents(
+            pluginId, setOf(GeneratedContract.Capabilities.SCHEDULER)
+        ) { event, payload ->
+            if (event == GeneratedContract.Events.SCHEDULER_RUNCHANGED &&
+                payload.optString("status") in setOf("succeeded", "failed", "cancelled")) {
+                // A task can change live system state without committing a Dataset.
+                main.post { invalidate(pluginId, false) }
+            }
+        }
     }
 
     fun forgetInstance(pluginId:String,instanceId:String) {
         val key="$pluginId/$instanceId"
         entries.remove(key)?.let {entry->entry.job?.cancel();entry.job=null;entry.value=null}
         preferences.edit().remove(key).apply()
+        if (entries.values.none { it.installed.manifest.plugin.id == pluginId }) {
+            taskEvents.remove(pluginId)?.close()
+        }
     }
 
     fun observe(entry: Entry): AutoCloseable {

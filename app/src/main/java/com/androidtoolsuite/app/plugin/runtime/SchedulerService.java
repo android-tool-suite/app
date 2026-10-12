@@ -385,7 +385,6 @@ public final class SchedulerService implements CapabilityProvider {
                 )
                 .addTag(pluginTag(installed.manifest.plugin.id))
                 .addTag(taskTag(installed.manifest.plugin.id, task.id));
-        if ("app-foreground".equals(source)) builder.setInitialDelay(3, TimeUnit.SECONDS);
         return builder.build();
     }
 

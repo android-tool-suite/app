@@ -36,6 +36,7 @@ public final class WidgetStartupInstrumentedTest {
     private final CountDownLatch called = new CountDownLatch(1);
     private final AtomicInteger calls = new AtomicInteger();
     private volatile boolean offline;
+    private volatile int liveValue;
 
     @Before public void setUp() throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
@@ -61,7 +62,7 @@ public final class WidgetStartupInstrumentedTest {
                 calls.incrementAndGet();
                 called.countDown();
                 if (offline) throw new CapabilityFailure("PROVIDER_OFFLINE", "Service stopped", true);
-                try { return new JSONObject().put("state", "ready").put("connected", true).put("title", "Ready"); }
+                try { return new JSONObject().put("state", "ready").put("connected", true).put("title", "Ready").put("value", liveValue); }
                 catch (Exception error) { throw new AssertionError(error); }
             }
         }, ID, 1000);
@@ -112,6 +113,33 @@ public final class WidgetStartupInstrumentedTest {
         assertFalse(runtime.permissions().isGranted(manifest, "shizuku.control"));
     }
 
+    @Test public void taskCompletionRefreshesOnlyItsOwnLiveWidgetWithoutHostOrDatasetChange() throws Exception {
+        main(() -> { observation = store.observe(entry); });
+        awaitState(true);
+        int initialCalls = calls.get();
+        liveValue = 7;
+        JSONObject completed = new JSONObject().put("taskId", "restore").put("status", "succeeded");
+        runtime.capabilities().emitPluginEvent("test.unrelated_widget", "scheduler.runChanged", completed);
+        runtime.capabilities().emitPluginEvent(ID, "scheduler.runChanged",
+            new JSONObject().put("taskId", "restore").put("status", "running"));
+        main(() -> assertEquals(initialCalls, calls.get()));
+        runtime.capabilities().emitPluginEvent(ID, "scheduler.runChanged", completed);
+        awaitValue(7);
+    }
+
+    @Test public void hiddenWidgetDefersTaskRefreshUntilVisible() throws Exception {
+        main(() -> { observation = store.observe(entry); });
+        awaitState(true);
+        int initialCalls = calls.get();
+        main(() -> store.setVisible(false));
+        liveValue = 9;
+        runtime.capabilities().emitPluginEvent(ID, "scheduler.runChanged",
+            new JSONObject().put("taskId", "restore").put("status", "succeeded"));
+        main(() -> assertEquals(initialCalls, calls.get()));
+        main(() -> store.setVisible(true));
+        awaitValue(9);
+    }
+
     @Test public void fetchedResultWaitsForCardCompositionBeforeReleasingFirstFrame() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
@@ -145,6 +173,16 @@ public final class WidgetStartupInstrumentedTest {
             SystemClock.sleep(50);
         }
         fail("Live widget did not reach expected state: ready=" + ready);
+    }
+
+    private void awaitValue(int expected) {
+        for (int i = 0; i < 60; i++) {
+            boolean[] done = {false};
+            main(() -> done[0] = entry.getValue() != null && entry.getValue().optInt("value", -1) == expected);
+            if (done[0]) return;
+            SystemClock.sleep(50);
+        }
+        fail("Task completion did not update live widget: expected=" + expected);
     }
 
     private static void main(Runnable action) {
