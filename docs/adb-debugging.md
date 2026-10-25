@@ -175,7 +175,7 @@ adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 | `help` | 无 | 返回协议和命令列表 |
 | `status` | 无 | 返回版本、SDK、Shizuku、组件和插件状态 |
 | `list-plugins` | 无 | 列出内置/外部插件、依赖和活动状态 |
-| `import-plugin` | `-PluginFile <本机文件>`，或 `-Path <收件箱相对路径>`；开发中可追加 `-ReplaceSameVersion` | 导入完整 `.atsplugin`；同版本开发替换只在 Debug ADB 入口显式开启，仍使用原子 generation 切换并保留 Dataset |
+| `import-plugin` | `-PluginFile <本机文件>`，或 `-Path <收件箱相对路径>` | 与应用内共用安装校验；支持数据契约兼容的降级和同版本替换，原子切换 generation 并保留 Dataset、启用状态；`-ReplaceSameVersion` 为兼容旧脚本保留，已无需追加 |
 | `export-plugin` | `-Plugin <id> [-OutputFile <本机文件>]` | 导出外部插件包并通过 ADB 拉取到电脑 |
 | `delete-plugin` | `-Plugin <id>` | 删除外部插件；有已启用依赖方时拒绝 |
 | `set-plugin-enabled` | `-Plugin <id> -Enabled $true/$false` | 启停插件并校验依赖 |

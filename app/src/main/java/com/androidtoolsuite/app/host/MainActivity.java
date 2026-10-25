@@ -3030,33 +3030,11 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
     ) throws IOException, ContractException, JSONException {
         PluginPackageStore.InstallSession session = null;
         try {
-            session = pluginPackageStore.install(
-                    packageBytes,
-                    release.releaseUrl,
-                    release.channel,
-                    true,
-                    false
-            );
+            session = com.androidtoolsuite.app.plugin.runtime.RuntimePackageInstaller.beginRepository(
+                    pluginPackageStore, packageBytes, release);
             PluginPackageStore.InstalledPlugin installed = pluginPackageStore.find(session.pluginId);
             if (installed == null) throw new IOException("安装后的插件不可读");
             RuntimePluginManifest manifest = installed.manifest;
-            if (!release.id.equals(manifest.plugin.id)
-                    || release.versionCode != manifest.plugin.versionCode
-                    || !release.versionName.equals(manifest.plugin.version)
-                    || release.minHostVersionCode != manifest.plugin.minHostVersionCode
-                    || release.minAndroidApi != manifest.plugin.minAndroidApi) {
-                throw new IOException("下载包与仓库索引元数据不一致");
-            }
-            if (!release.dependencies.equals(manifest.legacyPluginDependencyLabels())) {
-                throw new IOException("下载包依赖与仓库索引不一致");
-            }
-            if (manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
-                throw new IOException("当前应用版本不兼容此插件");
-            }
-            if (manifest.plugin.minAndroidApi > Build.VERSION.SDK_INT) {
-                throw new IOException("此插件需要 Android " + manifest.plugin.minAndroidApi + "+");
-            }
-            if (isBuiltInPluginId(session.pluginId)) throw new IOException("插件 ID 与内置插件冲突");
             permissionManager.reconcile(manifest);
             boolean wasEnabled = pluginPackageStore.isEnabled(session.pluginId);
             boolean updating = !session.newInstall;
@@ -3843,16 +3821,6 @@ public class MainActivity extends ComponentActivity implements HostServices, Hos
                 PluginPackageStore.InstalledPlugin installed = pluginPackageStore.find(pluginId);
                 if (installed == null) throw new IOException("安装后的新版插件不可读");
                 permissionManager.reconcile(installed.manifest);
-                if (isBuiltInPluginId(pluginId)) {
-                    throw new IOException("插件 ID 与现有插件冲突");
-                }
-                if (installed.manifest.plugin.minHostVersionCode > BuildConfig.VERSION_CODE) {
-                    throw new IOException("当前应用版本不兼容此插件");
-                }
-                if (installed.manifest.plugin.minAndroidApi > Build.VERSION.SDK_INT) {
-                    throw new IOException("此插件需要 Android "
-                            + installed.manifest.plugin.minAndroidApi + "+");
-                }
                 boolean wasEnabled = pluginPackageStore.isEnabled(pluginId);
                 boolean updating = !runtimeSession.newInstall;
                 reloadPluginsKeepingCurrentPage();

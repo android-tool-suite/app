@@ -64,13 +64,29 @@ public final class PluginPackageStore {
         return install(packageBytes, source, channel, repositoryVerified, false);
     }
 
-    /** Debug tooling may explicitly replace a same-version development generation. */
+    /** Shared installer validates compatibility when explicitly switching package versions. */
     public synchronized InstallSession install(
             byte[] packageBytes,
             String source,
             String channel,
             boolean repositoryVerified,
-            boolean allowSameVersionReplacement
+            boolean allowVersionReplacement
+    ) throws IOException, ContractException {
+        return install(packageBytes, source, channel, repositoryVerified, allowVersionReplacement, null);
+    }
+
+    @FunctionalInterface
+    interface InstallValidator {
+        void validate(RuntimePluginManifest previous, RuntimePluginManifest target) throws IOException;
+    }
+
+    synchronized InstallSession install(
+            byte[] packageBytes,
+            String source,
+            String channel,
+            boolean repositoryVerified,
+            boolean allowVersionReplacement,
+            InstallValidator validator
     ) throws IOException, ContractException {
         ensureDirectory(stagingRoot);
         File staging = new File(stagingRoot, UUID.randomUUID().toString());
@@ -79,7 +95,16 @@ public final class PluginPackageStore {
         );
         RuntimePluginManifest manifest = verified.manifest;
         InstalledPlugin existing = find(manifest.plugin.id);
-        if (existing != null && manifest.plugin.versionCode < existing.manifest.plugin.versionCode) {
+        if (validator != null) {
+            try {
+                validator.validate(existing == null ? null : existing.manifest, manifest);
+            } catch (IOException | RuntimeException error) {
+                deleteRecursively(staging);
+                throw error;
+            }
+        }
+        if (existing != null && manifest.plugin.versionCode < existing.manifest.plugin.versionCode
+                && !allowVersionReplacement) {
             deleteRecursively(staging);
             throw new ContractException("默认禁止降级 插件运行时 插件");
         }
@@ -97,7 +122,7 @@ public final class PluginPackageStore {
         if (existing != null
                 && manifest.plugin.versionCode == existing.manifest.plugin.versionCode
                 && !generationName.equals(existing.generationDirectory.getName())
-                && !allowSameVersionReplacement) {
+                && !allowVersionReplacement) {
             deleteRecursively(staging);
             throw new ContractException("相同 versionCode 的 插件运行时 插件内容不同");
         }
@@ -144,7 +169,8 @@ public final class PluginPackageStore {
                 previous == null || previous.isEmpty(),
                 previousSource,
                 previousChannel,
-                previousVerified
+                previousVerified,
+                existing == null ? null : existing.manifest
         );
     }
 
@@ -472,6 +498,7 @@ public final class PluginPackageStore {
         final String previousSource;
         final String previousChannel;
         final boolean previousVerified;
+        public final RuntimePluginManifest previousManifest;
 
         InstallSession(
                 String pluginId,
@@ -481,7 +508,8 @@ public final class PluginPackageStore {
                 boolean newInstall,
                 String previousSource,
                 String previousChannel,
-                boolean previousVerified
+                boolean previousVerified,
+                RuntimePluginManifest previousManifest
         ) {
             this.pluginId = pluginId;
             this.originKey = originKey;
@@ -491,6 +519,7 @@ public final class PluginPackageStore {
             this.previousSource = previousSource;
             this.previousChannel = previousChannel;
             this.previousVerified = previousVerified;
+            this.previousManifest = previousManifest;
         }
     }
 

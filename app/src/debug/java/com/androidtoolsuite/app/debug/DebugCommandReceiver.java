@@ -18,6 +18,7 @@ import com.androidtoolsuite.app.plugin.runtime.HostTool;
 import com.androidtoolsuite.app.plugin.runtime.ToolRegistry;
 import com.androidtoolsuite.app.plugin.store.BuiltInPluginStateStore;
 import com.androidtoolsuite.app.plugin.runtime.PluginPackageStore;
+import com.androidtoolsuite.app.plugin.runtime.RuntimePackageInstaller;
 import com.androidtoolsuite.app.plugin.runtime.CapabilityRouter;
 import com.androidtoolsuite.app.plugin.runtime.PluginPackageArchive;
 import com.androidtoolsuite.app.plugin.runtime.PluginPermissionManager;
@@ -118,8 +119,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             case "import-plugin":
                 return importPlugin(
                         context,
-                        requiredString(intent, "path"),
-                        intent.getBooleanExtra("replace_same_version", false)
+                        requiredString(intent, "path")
                 );
             case "export-plugin":
                 return exportPlugin(
@@ -332,8 +332,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
     private JSONObject importPlugin(
             Context context,
-            String relativePath,
-            boolean replaceSameVersion
+            String relativePath
     ) throws Exception {
         File packageFile = resolveInboxFile(context, relativePath);
         if (!packageFile.isFile()) {
@@ -349,16 +348,13 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
         }
         if (PluginPackageArchive.hasFormatV3Manifest(packageBytes)) {
             PluginRuntime runtime = PluginRuntime.get(context);
-            PluginPackageStore.InstallSession session = runtime.packages().install(
-                    packageBytes, "adb-debug", "debug", false, replaceSameVersion
+            PluginPackageStore.InstallSession session = RuntimePackageInstaller.begin(
+                    runtime.packages(), packageBytes, null, "adb-debug", "debug"
             );
             try {
                 PluginPackageStore.InstalledPlugin installed = runtime.packages().find(session.pluginId);
                 if (installed == null) throw new IOException("插件运行时 install generation is unreadable");
                 runtime.permissions().reconcile(installed.manifest);
-                if (isReservedPluginId(session.pluginId)) {
-                    throw new IllegalArgumentException("插件 ID 与现有插件冲突：" + session.pluginId);
-                }
                 if (session.newInstall) runtime.packages().setEnabled(session.pluginId, false);
                 runtime.packages().confirmInstall(session);
                 runtime.scheduler().syncPlugin(session.pluginId);
@@ -373,7 +369,11 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                         .put("title", installed.manifest.plugin.title)
                         .put("formatVersion", 3)
                         .put("updated", !session.newInstall)
-                        .put("sameVersionReplacement", replaceSameVersion && !session.newInstall)
+                        .put("sameVersionReplacement", session.previousManifest != null
+                                && session.previousManifest.plugin.versionCode == installed.manifest.plugin.versionCode
+                                && !session.previousGeneration.equals(session.generationName))
+                        .put("downgraded", session.previousManifest != null
+                                && session.previousManifest.plugin.versionCode > installed.manifest.plugin.versionCode)
                         .put("enabled", runtime.packages().isEnabled(session.pluginId))
                         .put("pendingPermissions", pendingPermissions);
             } catch (Throwable error) {
@@ -773,20 +773,6 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
             }
         }
         return match;
-    }
-
-    private boolean isReservedPluginId(String id) {
-        if ("plugin_manager".equals(id)) {
-            return true;
-        }
-        for (HostTool plugin : ToolRegistry.createBuiltInPlugins()) {
-            boolean matches = plugin.id().equals(id);
-            plugin.onDestroy();
-            if (matches) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean isShizukuReady() {

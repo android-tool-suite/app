@@ -100,4 +100,35 @@ public final class RuntimePackageBackupInstrumentedTest {
         assertArrayEquals(before, actual.toByteArray());
         assertEquals("before", service.secretGet(ID, "credentials", "test-token").getString("value"));
     }
+
+    @Test public void backupPackageDowngradePreservesDataAndRollsBackUntilCommitted() throws Exception {
+        byte[] newer = DatasetServiceInstrumentedTest.packageBytes(2);
+        runtime.packages().confirmInstall(RuntimePackageInstaller.begin(runtime.packages(), newer, ID));
+        runtime.packages().setEnabled(ID, true);
+        byte[] data = "{\"formatVersion\":1,\"value\":\"preserved\"}".getBytes(StandardCharsets.UTF_8);
+        runtime.datasets().importDataset(ID, "settings", "replace", new ByteArrayInputStream(data));
+        byte[] lower = DatasetServiceInstrumentedTest.packageBytes(1);
+        File staged = new File(context.getCacheDir(), "backup-downgrade.atsplugin");
+        try (FileOutputStream output = new FileOutputStream(staged)) { output.write(lower); }
+        MigrationBridgeManager.DatasetOption option = MigrationBridgeManager.hostPluginPackageExportOption(
+                ID, "Install fixture", lower.length);
+        List<MigrationBridgeManager.ImportSelection> selected = List.of(
+                new MigrationBridgeManager.ImportSelection(option, DatasetRestoreMode.REPLACE));
+        try {
+            try (RuntimePackageRestore packages = new RuntimePackageRestore(runtime.packages())) {
+                packages.install(selected, Map.of(option.key(), staged));
+                assertArrayEquals(lower, runtime.packages().exportPackage(ID));
+            }
+            assertArrayEquals(newer, runtime.packages().exportPackage(ID));
+            try (RuntimePackageRestore packages = new RuntimePackageRestore(runtime.packages())) {
+                packages.install(selected, Map.of(option.key(), staged));
+                packages.commit();
+            }
+            assertArrayEquals(lower, runtime.packages().exportPackage(ID));
+            assertTrue(runtime.packages().isEnabled(ID));
+            ByteArrayOutputStream actual = new ByteArrayOutputStream();
+            runtime.datasets().exportDataset(ID, "settings", actual);
+            assertArrayEquals(data, actual.toByteArray());
+        } finally { assertTrue(staged.delete()); }
+    }
 }

@@ -96,11 +96,48 @@ public final class RepositoryRuntimeInstallInstrumentedTest {
         }
     }
 
+    @Test
+    public void repositoryInstallPathDowngradesWithoutRemovingTheEnabledPlugin() throws Exception {
+        byte[] newer = packageBytes(2);
+        byte[] lower = packageBytes(1);
+        UpdateCatalog.PluginRelease newerRelease = catalog(sha256(newer), newer.length, 2).findPlugin(PLUGIN_ID);
+        UpdateCatalog.PluginRelease lowerRelease = catalog(sha256(lower), lower.length, 1).findPlugin(PLUGIN_ID);
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                PluginRuntime runtime = PluginRuntime.get(activity);
+                try {
+                    Method install = MainActivity.class.getDeclaredMethod("installRepositoryRuntimePlugin",
+                            byte[].class, UpdateCatalog.PluginRelease.class);
+                    install.setAccessible(true);
+                    install.invoke(activity, newer, newerRelease);
+                    runtime.packages().setEnabled(PLUGIN_ID, true);
+                    install.invoke(activity, lower, lowerRelease);
+                    assertEquals(1, runtime.packages().find(PLUGIN_ID).manifest.plugin.versionCode);
+                    assertTrue(runtime.packages().isEnabled(PLUGIN_ID));
+                    assertTrue(runtime.packages().find(PLUGIN_ID).repositoryVerified);
+                    assertTrue(activity.isRepositoryPluginVersionInstalledForUi(lowerRelease));
+                } catch (Exception error) {
+                    throw new AssertionError(error);
+                } finally {
+                    runtime.scheduler().cancelPlugin(PLUGIN_ID);
+                    try {
+                        if (runtime.packages().find(PLUGIN_ID) != null) runtime.packages().delete(PLUGIN_ID);
+                    } catch (Exception error) { throw new AssertionError(error); }
+                    runtime.permissions().removePlugin(PLUGIN_ID);
+                }
+            });
+        }
+    }
+
     private static byte[] packageBytes() throws Exception {
+        return packageBytes(1);
+    }
+
+    private static byte[] packageBytes(int versionCode) throws Exception {
         String manifest = "{"
                 + "\"format\":\"ats-plugin\",\"formatVersion\":3,"
                 + "\"plugin\":{\"id\":\"" + PLUGIN_ID + "\",\"title\":\"Repository Runtime\","
-                + "\"description\":\"Repository fixture\",\"version\":\"1.0.0\",\"versionCode\":1,"
+                + "\"description\":\"Repository fixture\",\"version\":\"1.0.0\",\"versionCode\":" + versionCode + ","
                 + "\"minHostVersionCode\":24,\"minAndroidApi\":26,\"publisher\":\"test.publisher\",\"kind\":\"tool\"},"
                 + "\"platforms\":[\"android\"],"
                 + "\"runtime\":{\"ui\":[{\"id\":\"main\",\"type\":\"declarative\",\"entry\":\"ui/main.json\"}],\"background\":[],\"providers\":[]},"

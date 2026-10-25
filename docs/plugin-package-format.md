@@ -227,6 +227,8 @@ WebView 页面还必须使用宿主 `theme.css` 提供的 `--ats-type-*` 字号�
 - 手动导入不取得仓库信誉；
 - 无论来源，包内 format v3 校验规则相同；Native Provider 仍必须命中受信 publisher key。
 
+应用内文件导入、仓库安装、ADB 调试导入和备份中的插件包恢复共用安装器。降级与同版本包替换不需要先移除插件：切换前检查插件 ID、最低宿主/Android 版本及数据契约，沿用原子 generation 切换，保留 Dataset 和启用状态，事务失败恢复上一代安装包。降级或同版本替换时，同 ID Dataset 的 `formatVersion` 和 `sensitive` 必须保持兼容；仓库安装还检查已签名索引中的数据可读范围。目标版本未声明的 Dataset 保留，不自动清理或改写。
+
 ## 9. 数据格式兼容与降级
 
 需要支持历史版本选择的插件在仓库根目录维护 `data-compatibility.json`：

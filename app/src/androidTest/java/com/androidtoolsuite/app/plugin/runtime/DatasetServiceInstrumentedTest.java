@@ -218,16 +218,22 @@ public final class DatasetServiceInstrumentedTest {
     }
 
     static byte[] packageBytes(int versionCode) throws Exception {
+        return packageBytes(versionCode, 1, 1, 24, "插件运行时 data test");
+    }
+
+    static byte[] packageBytes(int versionCode, int datasetFormat, int minHostVersion, int minAndroidApi,
+                               String title) throws Exception {
         JSONObject manifest = new JSONObject()
                 .put("format", "ats-plugin")
                 .put("formatVersion", 3)
                 .put("plugin", new JSONObject()
                         .put("id", PLUGIN_ID)
-                        .put("title", "插件运行时 data test")
+                        .put("title", title)
                         .put("description", "Instrumentation fixture")
                         .put("version", "1.0.0")
                         .put("versionCode", versionCode)
-                        .put("minHostVersionCode", 1)
+                        .put("minHostVersionCode", minHostVersion)
+                        .put("minAndroidApi", minAndroidApi)
                         .put("publisher", "android_tool_suite.tests"))
                 .put("platforms", new JSONArray().put("android"))
                 .put("runtime", new JSONObject()
@@ -251,8 +257,8 @@ public final class DatasetServiceInstrumentedTest {
                         .put("tools", new JSONArray().put(new JSONObject().put("id", "main").put("uiEntry", "main")))
                         .put("homeWidgets", new JSONArray()))
                 .put("datasets", new JSONArray()
-                        .put(dataset("settings", false))
-                        .put(dataset("credentials", true)))
+                        .put(dataset("settings", false).put("formatVersion", datasetFormat))
+                        .put(dataset("credentials", true).put("formatVersion", datasetFormat)))
                 .put("tasks", new JSONArray());
         List<Item> payloads = new ArrayList<>();
         payloads.add(new Item("manifest.json", manifest.toString().getBytes(StandardCharsets.UTF_8)));
